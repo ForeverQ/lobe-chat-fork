@@ -1,10 +1,16 @@
 // @vitest-environment node
 import { Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ChatCompletionTool } from '@/libs/agent-runtime';
+
+import * as anthropicHelpers from '../utils/anthropicHelpers';
 import * as debugStreamModule from '../utils/debugStream';
 import { LobeAnthropicAI } from './index';
 
 const provider = 'anthropic';
+
+const bizErrorType = 'ProviderBizError';
+const invalidErrorType = 'InvalidProviderAPIKey';
 
 // Mock the console.error to avoid polluting test output
 vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -233,6 +239,28 @@ describe('LobeAnthropicAI', () => {
       process.env.DEBUG_ANTHROPIC_CHAT_COMPLETION = originalDebugValue;
     });
 
+    describe('chat with tools', () => {
+      it('should call client.beta.tools.messages.create when tools are provided', async () => {
+        // Arrange
+        const tools: ChatCompletionTool[] = [
+          { function: { name: 'tool1', description: 'desc1' }, type: 'function' },
+        ];
+        const spyOn = vi.spyOn(anthropicHelpers, 'buildAnthropicTools');
+
+        // Act
+        await instance.chat({
+          messages: [{ content: 'Hello', role: 'user' }],
+          model: 'claude-3-haiku-20240307',
+          temperature: 1,
+          tools,
+        });
+
+        // Assert
+        expect(instance['client'].messages.create).toHaveBeenCalled();
+        expect(spyOn).toHaveBeenCalledWith(tools);
+      });
+    });
+
     describe('Error', () => {
       it('should throw InvalidAnthropicAPIKey error on API_KEY_INVALID error', async () => {
         // Arrange
@@ -260,7 +288,7 @@ describe('LobeAnthropicAI', () => {
           expect(e).toEqual({
             endpoint: 'https://api.anthropic.com',
             error: apiError,
-            errorType: 'InvalidAnthropicAPIKey',
+            errorType: invalidErrorType,
             provider,
           });
         }
@@ -291,7 +319,7 @@ describe('LobeAnthropicAI', () => {
           expect(e).toEqual({
             endpoint: 'https://api.anthropic.com',
             error: apiError,
-            errorType: 'AnthropicBizError',
+            errorType: bizErrorType,
             provider,
           });
         }
@@ -301,8 +329,148 @@ describe('LobeAnthropicAI', () => {
         try {
           new LobeAnthropicAI({});
         } catch (e) {
-          expect(e).toEqual({ errorType: 'InvalidAnthropicAPIKey' });
+          expect(e).toEqual({ errorType: invalidErrorType });
         }
+      });
+    });
+
+    describe('Error handling', () => {
+      it('should throw LocationNotSupportError on 403 error', async () => {
+        // Arrange
+        const apiError = { status: 403 };
+        (instance['client'].messages.create as Mock).mockRejectedValue(apiError);
+
+        // Act & Assert
+        await expect(
+          instance.chat({
+            messages: [{ content: 'Hello', role: 'user' }],
+            model: 'claude-3-haiku-20240307',
+            temperature: 1,
+          }),
+        ).rejects.toEqual({
+          endpoint: 'https://api.anthropic.com',
+          error: apiError,
+          errorType: 'LocationNotSupportError',
+          provider,
+        });
+      });
+
+      it('should throw AnthropicBizError on other error status codes', async () => {
+        // Arrange
+        const apiError = { status: 500 };
+        (instance['client'].messages.create as Mock).mockRejectedValue(apiError);
+
+        // Act & Assert
+        await expect(
+          instance.chat({
+            messages: [{ content: 'Hello', role: 'user' }],
+            model: 'claude-3-haiku-20240307',
+            temperature: 1,
+          }),
+        ).rejects.toEqual({
+          endpoint: 'https://api.anthropic.com',
+          error: apiError,
+          errorType: bizErrorType,
+          provider,
+        });
+      });
+
+      it('should desensitize custom baseURL in error message', async () => {
+        // Arrange
+        const apiError = { status: 401 };
+        const customInstance = new LobeAnthropicAI({
+          apiKey: 'test',
+          baseURL: 'https://api.custom.com/v1',
+        });
+        vi.spyOn(customInstance['client'].messages, 'create').mockRejectedValue(apiError);
+
+        // Act & Assert
+        await expect(
+          customInstance.chat({
+            messages: [{ content: 'Hello', role: 'user' }],
+            model: 'claude-3-haiku-20240307',
+            temperature: 0,
+          }),
+        ).rejects.toEqual({
+          endpoint: 'https://api.cu****om.com/v1',
+          error: apiError,
+          errorType: invalidErrorType,
+          provider,
+        });
+      });
+    });
+
+    describe('Options', () => {
+      it('should pass signal to API call', async () => {
+        // Arrange
+        const controller = new AbortController();
+
+        // Act
+        await instance.chat(
+          {
+            messages: [{ content: 'Hello', role: 'user' }],
+            model: 'claude-3-haiku-20240307',
+            temperature: 1,
+          },
+          { signal: controller.signal },
+        );
+
+        // Assert
+        expect(instance['client'].messages.create).toHaveBeenCalledWith(
+          expect.objectContaining({}),
+          { signal: controller.signal },
+        );
+      });
+
+      it('should apply callback to the returned stream', async () => {
+        // Arrange
+        const callback = vi.fn();
+
+        // Act
+        await instance.chat(
+          {
+            messages: [{ content: 'Hello', role: 'user' }],
+            model: 'claude-3-haiku-20240307',
+            temperature: 0,
+          },
+          {
+            callback: { onStart: callback },
+          },
+        );
+
+        // Assert
+        expect(callback).toHaveBeenCalled();
+      });
+
+      it('should set headers on the response', async () => {
+        // Arrange
+        const headers = { 'X-Test-Header': 'test' };
+
+        // Act
+        const result = await instance.chat(
+          {
+            messages: [{ content: 'Hello', role: 'user' }],
+            model: 'claude-3-haiku-20240307',
+            temperature: 1,
+          },
+          { headers },
+        );
+
+        // Assert
+        expect(result.headers.get('X-Test-Header')).toBe('test');
+      });
+    });
+
+    describe('Edge cases', () => {
+      it('should handle empty messages array', async () => {
+        // Act & Assert
+        await expect(
+          instance.chat({
+            messages: [],
+            model: 'claude-3-haiku-20240307',
+            temperature: 1,
+          }),
+        ).resolves.toBeInstanceOf(Response);
       });
     });
   });

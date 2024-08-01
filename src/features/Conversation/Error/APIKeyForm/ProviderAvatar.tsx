@@ -1,14 +1,21 @@
 import {
+  Ai360,
+  AiMass,
   Anthropic,
+  Baichuan,
+  DeepSeek,
   Google,
   Groq,
   Minimax,
   Mistral,
   Moonshot,
+  Novita,
   OpenAI,
   OpenRouter,
   Perplexity,
+  Stepfun,
   Together,
+  Tongyi,
   ZeroOne,
   Zhipu,
 } from '@lobehub/icons';
@@ -53,6 +60,14 @@ const ProviderAvatar = memo<ProviderAvatarProps>(({ provider }) => {
       return <Anthropic color={Anthropic.colorPrimary} size={52} />;
     }
 
+    case ModelProvider.Baichuan: {
+      return <Baichuan color={Baichuan.colorPrimary} size={56} />;
+    }
+
+    case ModelProvider.DeepSeek: {
+      return <DeepSeek color={DeepSeek.colorPrimary} size={56} />;
+    }
+
     case ModelProvider.Groq: {
       return <Groq color={Groq.colorPrimary} size={56} />;
     }
@@ -61,12 +76,31 @@ const ProviderAvatar = memo<ProviderAvatarProps>(({ provider }) => {
       return <OpenRouter color={OpenRouter.colorPrimary} size={56} />;
     }
 
+    case ModelProvider.Qwen: {
+      return <Tongyi color={Tongyi.colorPrimary} size={56} />;
+    }
+
+    case ModelProvider.Stepfun: {
+      return <Stepfun color={Stepfun.colorPrimary} size={56} />;
+    }
+
+    case ModelProvider.Taichu: {
+      return <AiMass.Color size={56} />;
+    }
+
     case ModelProvider.TogetherAI: {
       return <Together color={Together.colorPrimary} size={56} />;
     }
 
     case ModelProvider.ZeroOne: {
       return <ZeroOne color={ZeroOne.colorPrimary} size={56} />;
+    }
+    case ModelProvider.Novita: {
+      return <Novita color={Novita.colorPrimary} size={56} />;
+    }
+
+    case ModelProvider.Ai360: {
+      return <Ai360 color={Ai360.colorPrimary} size={56} />;
     }
 
     default:

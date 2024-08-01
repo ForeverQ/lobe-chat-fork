@@ -5,21 +5,17 @@ import { Button } from 'antd';
 import isEqual from 'fast-deep-equal';
 import { isString } from 'lodash-es';
 import { Wand2 } from 'lucide-react';
-import dynamic from 'next/dynamic';
-import { memo, useMemo } from 'react';
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { FORM_STYLE } from '@/const/layoutTokens';
-import { useUserStore } from '@/store/user';
-import { settingsSelectors } from '@/store/user/selectors';
 
 import { useStore } from '../store';
 import { SessionLoadingState } from '../store/initialState';
+import AutoGenerateAvatar from './AutoGenerateAvatar';
 import AutoGenerateInput from './AutoGenerateInput';
 import AutoGenerateSelect from './AutoGenerateSelect';
 import BackgroundSwatches from './BackgroundSwatches';
-
-const EmojiPicker = dynamic(() => import('@lobehub/ui/es/EmojiPicker'), { ssr: false });
 
 const AgentMeta = memo(() => {
   const { t } = useTranslation('setting');
@@ -30,7 +26,6 @@ const AgentMeta = memo(() => {
     s.autocompleteMeta,
     s.autocompleteAllMeta,
   ]);
-  const locale = useUserStore(settingsSelectors.currentLanguage);
   const loading = useStore((s) => s.autocompleteLoading);
   const meta = useStore((s) => s.meta, isEqual);
 
@@ -39,14 +34,14 @@ const AgentMeta = memo(() => {
       Render: AutoGenerateInput,
       key: 'title',
       label: t('settingAgent.name.title'),
-      onChange: (e: any) => updateMeta({ title: e.target.value }),
+      onChange: (value: string) => updateMeta({ title: value }),
       placeholder: t('settingAgent.name.placeholder'),
     },
     {
       Render: AutoGenerateInput,
       key: 'description',
       label: t('settingAgent.description.title'),
-      onChange: (e: any) => updateMeta({ description: e.target.value }),
+      onChange: (value: string) => updateMeta({ description: value }),
       placeholder: t('settingAgent.description.placeholder'),
     },
     {
@@ -77,60 +72,59 @@ const AgentMeta = memo(() => {
     };
   });
 
-  const metaData: ItemGroup = useMemo(
-    () => ({
-      children: [
-        {
-          children: (
-            <EmojiPicker
-              backgroundColor={meta.backgroundColor}
-              locale={locale}
-              onChange={(avatar) => updateMeta({ avatar })}
-              value={meta.avatar}
-            />
-          ),
-          label: t('settingAgent.avatar.title'),
-          minWidth: undefined,
-        },
-        {
-          children: (
-            <BackgroundSwatches
-              backgroundColor={meta.backgroundColor}
-              onChange={(backgroundColor) => updateMeta({ backgroundColor })}
-            />
-          ),
-          label: t('settingAgent.backgroundColor.title'),
-          minWidth: undefined,
-        },
-        ...autocompleteItems,
-      ],
-      extra: (
-        <Tooltip
-          title={
-            !hasSystemRole
-              ? t('autoGenerateTooltipDisabled', { ns: 'common' })
-              : t('autoGenerateTooltip', { ns: 'common' })
-          }
-        >
-          <Button
-            disabled={!hasSystemRole}
-            icon={<Icon icon={Wand2} />}
-            loading={Object.values(loading).some((i) => !!i)}
-            onClick={(e: any) => {
-              e.stopPropagation();
+  const metaData: ItemGroup = {
+    children: [
+      {
+        children: (
+          <AutoGenerateAvatar
+            background={meta.backgroundColor}
+            canAutoGenerate={hasSystemRole}
+            loading={loading['avatar']}
+            onChange={(avatar) => updateMeta({ avatar })}
+            onGenerate={() => autocompleteMeta('avatar')}
+            value={meta.avatar}
+          />
+        ),
+        label: t('settingAgent.avatar.title'),
+        minWidth: undefined,
+      },
+      {
+        children: (
+          <BackgroundSwatches
+            backgroundColor={meta.backgroundColor}
+            onChange={(backgroundColor) => updateMeta({ backgroundColor })}
+          />
+        ),
+        label: t('settingAgent.backgroundColor.title'),
+        minWidth: undefined,
+      },
+      ...autocompleteItems,
+    ],
+    extra: (
+      <Tooltip
+        title={
+          !hasSystemRole
+            ? t('autoGenerateTooltipDisabled', { ns: 'common' })
+            : t('autoGenerateTooltip', { ns: 'common' })
+        }
+      >
+        <Button
+          disabled={!hasSystemRole}
+          icon={<Icon icon={Wand2} />}
+          loading={Object.values(loading).some((i) => !!i)}
+          onClick={(e: any) => {
+            e.stopPropagation();
 
-              autocompleteAllMeta(true);
-            }}
-            size={'small'}
-          >
-            {t('autoGenerate', { ns: 'common' })}
-          </Button>
-        </Tooltip>
-      ),
-      title: t('settingAgent.title'),
-    }),
-    [autocompleteItems, meta],
-  );
+            autocompleteAllMeta(true);
+          }}
+          size={'small'}
+        >
+          {t('autoGenerate', { ns: 'common' })}
+        </Button>
+      </Tooltip>
+    ),
+    title: t('settingAgent.title'),
+  };
 
   return <Form items={[metaData]} itemsType={'group'} variant={'pure'} {...FORM_STYLE} />;
 });

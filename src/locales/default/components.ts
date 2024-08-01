@@ -1,4 +1,10 @@
 export default {
+  DragUpload: {
+    dragDesc: '拖拽文件到这里，支持上传多个图片。',
+    dragFileDesc: '拖拽图片和文件到这里，支持上传多个图片和文件。',
+    dragFileTitle: '上传文件',
+    dragTitle: '上传图片',
+  },
   ModelSelect: {
     featureTag: {
       custom: '自定义模型，默认设定同时支持函数调用与视觉识别，请根据实际情况验证上述能力的可用性',
@@ -7,6 +13,7 @@ export default {
       tokens: '该模型单个会话最多支持 {{tokens}} Tokens',
       vision: '该模型支持视觉识别',
     },
+    removed: '该模型不在列表中，若取消选中将会自动移除',
   },
   ModelSwitchPanel: {
     emptyModel: '没有启用的模型，请前往设置开启',

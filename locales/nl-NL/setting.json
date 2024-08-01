@@ -2,6 +2,14 @@
   "about": {
     "title": "Over"
   },
+  "agentTab": {
+    "chat": "Chatvoorkeur",
+    "meta": "Assistentinformatie",
+    "modal": "Modelinstellingen",
+    "plugin": "Plugin-instellingen",
+    "prompt": "Rolinstelling",
+    "tts": "Tekst-naar-spraakdienst"
+  },
   "analytics": {
     "telemetry": {
       "desc": "Door te kiezen om telemetrische gegevens te verzenden, kun je ons helpen om de algehele gebruikerservaring van LobeChat te verbeteren",
@@ -35,10 +43,15 @@
     "title": "Instellingen"
   },
   "llm": {
+    "aesGcm": "Uw sleutel en proxy-adres zullen worden versleuteld met het <1>AES-GCM</1> encryptie-algoritme",
+    "apiKey": {
+      "desc": "Vul je {{name}} API-sleutel in",
+      "placeholder": "{{name}} API-sleutel",
+      "title": "API-sleutel"
+    },
     "checker": {
       "button": "Controleren",
       "desc": "Test of de API-sleutel en proxyadres correct zijn ingevuld",
-      "ollamaDesc": "Controleer of het proxy-adres correct is ingevuld",
       "pass": "Succesvol gecontroleerd",
       "title": "Connectiviteitscontrole"
     },
@@ -58,30 +71,31 @@
         },
         "files": {
           "extra": "Currently, the file upload implementation in LobeChat is just a temporary solution and is for self-exploration only. Please wait for the full file upload capability in the future.",
-          "title": "Support File Upload"
+          "title": "Ondersteuning voor het uploaden van bestanden"
         },
         "functionCall": {
-          "extra": "This configuration will only enable the function call capability in LobeChat. Whether function calls are supported depends entirely on the model itself. Please test the availability of function calls of this model on your own.",
-          "title": "Support Function Call"
+          "extra": "Deze configuratie schakelt alleen de functieaanroepmogelijkheid in LobeChat in. Of functieaanroepen worden ondersteund, hangt volledig af van het model zelf. Test zelf de beschikbaarheid van functieaanroepen van dit model.",
+          "title": "Ondersteuningsfunctie Oproep"
         },
         "id": {
-          "extra": "Will be displayed as the model tag",
-          "placeholder": "Please enter the model ID, for example gpt-4-turbo-preview or claude-2.1",
+          "extra": "Wordt weergegeven als de modeltag",
+          "placeholder": "Voer de model ID in, bijvoorbeeld gpt-4-turbo-preview of claude-2.1",
           "title": "Model ID"
         },
-        "modalTitle": "Custom Model Configuration",
+        "modalTitle": "Aangepaste modelconfiguratie",
         "tokens": {
-          "title": "Maximum Token Count"
+          "title": "Maximaal tokenaantal",
+          "unlimited": "onbeperkt"
         },
         "vision": {
-          "extra": "This configuration will only enable the image upload feature in LobeChat. Whether image recognition is supported depends entirely on the model itself. Please test the availability of visual recognition capability of this model on your own.",
-          "title": "Support Visual Recognition"
+          "extra": "Deze configuratie schakelt alleen de configuratie voor het uploaden van afbeeldingen in LobeChat in. Of herkenning wordt ondersteund, hangt volledig af van het model zelf. Test zelf de beschikbaarheid van visuele herkenning in dit model.",
+          "title": "Ondersteuning van visuele herkenning"
         }
       }
     },
     "fetchOnClient": {
-      "desc": "使用客户端请求模式将直接从浏览器发起会话请求，可提升响应速度",
-      "title": "使用客户端请求模式"
+      "desc": "De ophaalmodus aan de clientzijde initieert sessieverzoeken rechtstreeks vanuit de browser, waardoor de reactiesnelheid wordt verbeterd.",
+      "title": "Gebruik de ophaalmodus aan de clientzijde"
     },
     "fetcher": {
       "fetch": "Haal model lijst op",
@@ -89,21 +103,18 @@
       "latestTime": "Laatst bijgewerkt: {{time}}",
       "noLatestTime": "Geen lijst beschikbaar op dit moment"
     },
+    "helpDoc": "configuratiehandleiding",
     "modelList": {
       "desc": "Selecteer het model dat in de sessie moet worden weergegeven. Het geselecteerde model wordt weergegeven in de modellijst.",
       "placeholder": "Selecteer een model uit de lijst",
       "title": "Modellijst",
       "total": "In totaal {{count}} modellen beschikbaar"
     },
-    "waitingForMore": "Meer modellen worden <1>gepland om te worden toegevoegd</1>, dus blijf op de hoogte ✨"
-  },
-  "ollama": {
-    "download": {
-      "desc": "Ollama is bezig met het downloaden van dit model. Gelieve deze pagina niet te sluiten. Het downloaden zal worden hervat vanaf het onderbroken punt als u opnieuw begint te downloaden.",
-      "remainingTime": "Resterende tijd",
-      "speed": "Downloadsnelheid",
-      "title": "Model {{model}} wordt gedownload"
-    }
+    "proxyUrl": {
+      "desc": "Moet http(s):// bevatten, naast het standaardadres",
+      "title": "API Proxy Adres"
+    },
+    "waitingForMore": "Meer modellen worden <1>gepland om te worden toegevoegd</1>, dus blijf op de hoogte"
   },
   "plugin": {
     "addTooltip": "Voeg aangepaste plug-in toe",
@@ -170,6 +181,7 @@
     "enableHistoryCount": {
       "alias": "Onbeperkt",
       "limited": "Bevat alleen {{number}} berichten",
+      "setlimited": "Stel berichtengeschiedenis in",
       "title": "Berichtgeschiedenis beperken",
       "unlimited": "Onbeperkt aantal berichten in de geschiedenis"
     },
@@ -197,13 +209,7 @@
       "title": "Limiet voor enkele reacties"
     },
     "model": {
-      "desc": "ChatGPT-model",
-      "list": {
-        "gpt-3.5-turbo": "GPT 3.5",
-        "gpt-3.5-turbo-16k": "GPT 3.5 (16K)",
-        "gpt-4": "GPT 4",
-        "gpt-4-32k": "GPT 4 (32K)"
-      },
+      "desc": "{{provider}} model",
       "title": "Model"
     },
     "presencePenalty": {
@@ -333,7 +339,7 @@
       "unknownOS": "Onbekend besturingssysteem"
     },
     "warning": {
-      "message": "Deze functie is momenteel experimenteel en kan onverwachte of onstabiele situaties veroorzaken. Als u problemen ondervindt, geef dan tijdig feedback."
+      "tip": "Na een lange periode van openbare tests in de community, kan WebRTC-synchronisatie mogelijk niet stabiel voldoen aan algemene synchronisatiebehoeften. Gelieve zelf een <1>signaleringsserver implementeren</1> voordat u het gebruikt."
     },
     "webrtc": {
       "channelName": {
@@ -349,10 +355,33 @@
       },
       "desc": "Realtime, point-to-point datacommunicatie, apparaten moeten tegelijkertijd online zijn om te synchroniseren",
       "enabled": {
-        "invalid": "Schakel de synchronisatie in nadat u de synchronisatiekanaalnaam heeft ingevuld",
+        "invalid": "Vul eerst de signaleringsserver en synchronisatiekanaalnaam in voordat u deze inschakelt",
         "title": "Synchronisatie inschakelen"
       },
+      "signaling": {
+        "desc": "WebRTC zal dit adres gebruiken voor synchronisatie",
+        "placeholder": "Voer het adres van de signaleringsserver in",
+        "title": "Signaleringsserver"
+      },
       "title": "WebRTC Synchronisatie"
+    }
+  },
+  "systemAgent": {
+    "agentMeta": {
+      "label": "Assistentmetadata-generatiemodel",
+      "modelDesc": "Model voor het genereren van assistentnaam, beschrijving, profielfoto en labels",
+      "title": "Automatisch assistentinformatie genereren"
+    },
+    "title": "Systeemassistent",
+    "topic": {
+      "label": "Onderwerp Naamgevingsmodel",
+      "modelDesc": "Specificeer het model dat wordt gebruikt voor automatische hernoeming van onderwerpen",
+      "title": "Automatische Onderwerpnaamgeving"
+    },
+    "translation": {
+      "label": "Vertaalmodel",
+      "modelDesc": "Specificeer het model voor vertaling",
+      "title": "Instellingen voor vertaalassistent"
     }
   },
   "tab": {
@@ -362,6 +391,7 @@
     "experiment": "Experiment",
     "llm": "Taalmodel",
     "sync": "Cloudsynchronisatie",
+    "system-agent": "Systeemassistent",
     "tts": "Spraakdienst"
   },
   "tools": {

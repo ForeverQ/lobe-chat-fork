@@ -49,7 +49,7 @@ describe('LobeOpenAI', () => {
     });
 
     describe('Error', () => {
-      it('should return OpenAIBizError with an openai error response when OpenAI.APIError is thrown', async () => {
+      it('should return ProviderBizError with an openai error response when OpenAI.APIError is thrown', async () => {
         // Arrange
         const apiError = new OpenAI.APIError(
           400,
@@ -79,7 +79,7 @@ describe('LobeOpenAI', () => {
               error: { message: 'Bad Request' },
               status: 400,
             },
-            errorType: 'OpenAIBizError',
+            errorType: 'ProviderBizError',
             provider: 'openai',
           });
         }
@@ -89,11 +89,11 @@ describe('LobeOpenAI', () => {
         try {
           new LobeOpenAI({});
         } catch (e) {
-          expect(e).toEqual({ errorType: 'NoOpenAIAPIKey' });
+          expect(e).toEqual({ errorType: 'InvalidProviderAPIKey' });
         }
       });
 
-      it('should return OpenAIBizError with the cause when OpenAI.APIError is thrown with cause', async () => {
+      it('should return ProviderBizError with the cause when OpenAI.APIError is thrown with cause', async () => {
         // Arrange
         const errorInfo = {
           stack: 'abc',
@@ -119,13 +119,13 @@ describe('LobeOpenAI', () => {
               cause: { message: 'api is undefined' },
               stack: 'abc',
             },
-            errorType: 'OpenAIBizError',
+            errorType: 'ProviderBizError',
             provider: 'openai',
           });
         }
       });
 
-      it('should return OpenAIBizError with an cause response with desensitize Url', async () => {
+      it('should return ProviderBizError with an cause response with desensitize Url', async () => {
         // Arrange
         const errorInfo = {
           stack: 'abc',
@@ -155,7 +155,7 @@ describe('LobeOpenAI', () => {
               cause: { message: 'api is undefined' },
               stack: 'abc',
             },
-            errorType: 'OpenAIBizError',
+            errorType: 'ProviderBizError',
             provider: 'openai',
           });
         }
@@ -187,59 +187,6 @@ describe('LobeOpenAI', () => {
             },
           });
         }
-      });
-    });
-
-    describe('LobeOpenAI chat with callback and headers', () => {
-      it('should handle callback and headers correctly', async () => {
-        // 模拟 chat.completions.create 方法返回一个可读流
-        const mockCreateMethod = vi
-          .spyOn(instance['client'].chat.completions, 'create')
-          .mockResolvedValue(
-            new ReadableStream({
-              start(controller) {
-                controller.enqueue({
-                  id: 'chatcmpl-8xDx5AETP8mESQN7UB30GxTN2H1SO',
-                  object: 'chat.completion.chunk',
-                  created: 1709125675,
-                  model: 'gpt-3.5-turbo-0125',
-                  system_fingerprint: 'fp_86156a94a0',
-                  choices: [
-                    { index: 0, delta: { content: 'hello' }, logprobs: null, finish_reason: null },
-                  ],
-                });
-                controller.close();
-              },
-            }) as any,
-          );
-
-        // 准备 callback 和 headers
-        const mockCallback: ChatStreamCallbacks = {
-          onStart: vi.fn(),
-          onToken: vi.fn(),
-        };
-        const mockHeaders = { 'Custom-Header': 'TestValue' };
-
-        // 执行测试
-        const result = await instance.chat(
-          {
-            messages: [{ content: 'Hello', role: 'user' }],
-            model: 'text-davinci-003',
-            temperature: 0,
-          },
-          { callback: mockCallback, headers: mockHeaders },
-        );
-
-        // 验证 callback 被调用
-        await result.text(); // 确保流被消费
-        expect(mockCallback.onStart).toHaveBeenCalled();
-        expect(mockCallback.onToken).toHaveBeenCalledWith('hello');
-
-        // 验证 headers 被正确传递
-        expect(result.headers.get('Custom-Header')).toEqual('TestValue');
-
-        // 清理
-        mockCreateMethod.mockRestore();
       });
     });
 

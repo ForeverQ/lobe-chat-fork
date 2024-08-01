@@ -1,5 +1,6 @@
 import { ModelProviderCard } from '@/types/llm';
 
+// ref https://ollama.com/library
 const Ollama: ModelProviderCard = {
   chatModels: [
     {
@@ -14,6 +15,39 @@ const Ollama: ModelProviderCard = {
       tokens: 8000,
     },
     {
+      displayName: 'Phi-3 3.8B',
+      enabled: true,
+      id: 'phi3',
+      tokens: 128_000,
+    },
+    {
+      displayName: 'Phi-3 14B',
+      id: 'phi3:14b',
+      tokens: 128_000,
+    },
+    {
+      displayName: 'Aya 23 8B',
+      enabled: true,
+      id: 'aya',
+      tokens: 8192, // https://cohere.com/research/papers/aya-command-23-8b-and-35b-technical-report-2024-05-23
+    },
+    {
+      displayName: 'Aya 23 35B',
+      id: 'aya:35b',
+      tokens: 8192,
+    },
+    {
+      displayName: 'Qwen2 7B',
+      enabled: true,
+      id: 'qwen2',
+      tokens: 128_000,
+    },
+    {
+      displayName: 'Qwen2 72B',
+      id: 'qwen2:72b',
+      tokens: 128_000,
+    },
+    {
       displayName: 'Command R 35B',
       enabled: true,
       id: 'command-r',
@@ -25,8 +59,18 @@ const Ollama: ModelProviderCard = {
       tokens: 131_072, // https://huggingface.co/CohereForAI/c4ai-command-r-plus/blob/main/config.json
     },
     {
-      displayName: 'Gemma 7B',
+      displayName: 'Gemma2 9B',
       enabled: true,
+      id: 'gemma2',
+      tokens: 8192, // https://huggingface.co/blog/zh/gemma2
+    },
+    {
+      displayName: 'Gemma2 27B',
+      id: 'gemma2:27b',
+      tokens: 8192,
+    },
+    {
+      displayName: 'Gemma 7B',
       id: 'gemma',
       tokens: 8192, // https://huggingface.co/google/gemma-7b-it/discussions/73#65e9678c0cda621164a95bad
     },
@@ -34,6 +78,28 @@ const Ollama: ModelProviderCard = {
       displayName: 'Gemma 2B',
       id: 'gemma:2b',
       tokens: 8192,
+    },
+    {
+      displayName: 'Deepseek V2 16B',
+      enabled: true,
+      id: 'deepseek-v2',
+      tokens: 32_000,
+    },
+    {
+      displayName: 'Deepseek V2 236B',
+      id: 'deepseek-v2:236b',
+      tokens: 128_000,
+    },
+    {
+      displayName: 'Deepseek Coder V2 16B', // https://huggingface.co/deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct
+      enabled: true,
+      id: 'deepseek-coder-v2',
+      tokens: 128_000,
+    },
+    {
+      displayName: 'Deepseek Coder V2 236B', // https://huggingface.co/deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct
+      id: 'deepseek-coder-v2:236b',
+      tokens: 128_000,
     },
     {
       displayName: 'Llama2 Chat 13B',
@@ -92,16 +158,10 @@ const Ollama: ModelProviderCard = {
       tokens: 16_384,
     },
     {
-      displayName: 'Phi3-Instruct 3.8B',
+      displayName: 'MathΣtral',
       enabled: true,
-      id: 'phi3:instruct',
-      tokens: 131_072, // https://huggingface.co/microsoft/Phi-3-mini-128k-instruct/blob/main/config.json
-    },
-    {
-      displayName: 'Mistral',
-      enabled: true,
-      id: 'mistral',
-      tokens: 32_768, // https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.2/blob/main/config.json
+      id: 'mathstral',
+      tokens: 32_000, // https://huggingface.co/mistralai/mathstral-7B-v0.1
     },
     {
       displayName: 'Mixtral 8x7B',
@@ -121,7 +181,6 @@ const Ollama: ModelProviderCard = {
     },
     {
       displayName: 'Qwen Chat 7B',
-      enabled: true,
       id: 'qwen:7b',
       tokens: 32_768,
     },
@@ -154,7 +213,11 @@ const Ollama: ModelProviderCard = {
       vision: true,
     },
   ],
+  defaultShowBrowserRequest: true,
   id: 'ollama',
+  modelList: { showModelFetcher: true },
+  name: 'Ollama',
+  showApiKey: false,
 };
 
 export default Ollama;

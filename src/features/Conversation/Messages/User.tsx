@@ -1,11 +1,10 @@
 import { ReactNode, memo } from 'react';
 import { Flexbox } from 'react-layout-kit';
 
-import FileList from '@/components/FileList';
+import BubblesLoading from '@/components/BubblesLoading';
 import { LOADING_FLAT } from '@/const/message';
+import { FileListPreviewer } from '@/features/FileList';
 import { ChatMessage } from '@/types/message';
-
-import BubblesLoading from '../components/BubblesLoading';
 
 export const UserMessage = memo<
   ChatMessage & {
@@ -17,7 +16,7 @@ export const UserMessage = memo<
   return (
     <Flexbox gap={8} id={id}>
       {editableContent}
-      {res.files && res.files?.length > 0 && <FileList items={res.files} />}
+      {res.files && res.files?.length > 0 && <FileListPreviewer items={res.files} />}
     </Flexbox>
   );
 });

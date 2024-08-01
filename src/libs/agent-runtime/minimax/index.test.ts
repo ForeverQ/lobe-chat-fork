@@ -1,5 +1,4 @@
 // @vitest-environment edge-runtime
-import { StreamingTextResponse } from 'ai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatStreamPayload, ModelProvider } from '@/libs/agent-runtime';
@@ -8,8 +7,9 @@ import * as debugStreamModule from '@/libs/agent-runtime/utils/debugStream';
 import { LobeMinimaxAI } from './index';
 
 const provider = ModelProvider.Minimax;
-const bizErrorType = 'MinimaxBizError';
-const invalidErrorType = 'InvalidMinimaxAPIKey';
+const bizErrorType = 'ProviderBizError';
+const invalidErrorType = 'InvalidProviderAPIKey';
+
 const encoder = new TextEncoder();
 
 // Mock the console.error to avoid polluting test output
@@ -62,7 +62,7 @@ describe('LobeMinimaxAI', () => {
         temperature: 0,
       });
 
-      expect(result).toBeInstanceOf(StreamingTextResponse);
+      expect(result).toBeInstanceOf(Response);
     });
 
     it('should handle text messages correctly', async () => {
@@ -85,7 +85,7 @@ describe('LobeMinimaxAI', () => {
         temperature: 0,
       });
 
-      expect(result).toBeInstanceOf(StreamingTextResponse);
+      expect(result).toBeInstanceOf(Response);
     });
 
     it('should call debugStream in DEBUG mode', async () => {

@@ -18,6 +18,7 @@ const Mistral: ModelProviderCard = {
     {
       displayName: 'Mixtral 8x22B',
       enabled: true,
+      functionCall: true,
       id: 'open-mixtral-8x22b',
       tokens: 65_536,
     },
@@ -40,7 +41,9 @@ const Mistral: ModelProviderCard = {
       tokens: 32_768,
     },
   ],
+  checkModel: 'open-mistral-7b',
   id: 'mistral',
+  name: 'Mistral',
 };
 
 export default Mistral;

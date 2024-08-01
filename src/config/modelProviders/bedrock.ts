@@ -4,11 +4,33 @@ import { ModelProviderCard } from '@/types/llm';
 const Bedrock: ModelProviderCard = {
   chatModels: [
     {
+      displayName: 'Titan Text G1 - Lite',
+      id: 'amazon.titan-text-lite-v1:0:4k',
+      tokens: 4000,
+    },
+    {
       description:
         'Amazon Titan Text G1 - Express v1，上下文长度可达 8000 个 token，适合广泛的用途。',
       displayName: 'Titan Text G1 - Express',
       id: 'amazon.titan-text-express-v1:0:8k',
       tokens: 8000,
+    },
+    {
+      displayName: 'Titan Text Premier',
+      id: 'amazon.titan-text-premier-v1:0:32K',
+      tokens: 32_000,
+    },
+    {
+      displayName: 'Jurassic-2 Mid',
+      enabled: true,
+      id: 'ai21.j2-mid-v1',
+      tokens: 8192,
+    },
+    {
+      displayName: 'Jurassic-2 Ultra',
+      enabled: true,
+      id: 'ai21.j2-ultra-v1',
+      tokens: 8192,
     },
     {
       description:
@@ -25,6 +47,15 @@ const Bedrock: ModelProviderCard = {
       displayName: 'Claude 3 Sonnet',
       enabled: true,
       id: 'anthropic.claude-3-sonnet-20240229-v1:0',
+      tokens: 200_000,
+      vision: true,
+    },
+    {
+      description:
+        'Claude 3.5 Sonnet 提高了行业的智能标准, 在广泛的基准测试中超越了竞争对手模型以及 Claude 3 Opus, 以中端模型的速度和成本，展现出卓越性能。 Claude 3.5 Sonnet 可以处理图像和返回文本输出，并且提供 200K 上下文窗口。',
+      displayName: 'Claude 3.5 Sonnet',
+      enabled: true,
+      id: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
       tokens: 200_000,
       vision: true,
     },
@@ -66,7 +97,9 @@ const Bedrock: ModelProviderCard = {
       tokens: 4096,
     },
   ],
+  checkModel: 'anthropic.claude-instant-v1',
   id: 'bedrock',
+  name: 'Bedrock',
 };
 
 export default Bedrock;

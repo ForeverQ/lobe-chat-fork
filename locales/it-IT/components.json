@@ -1,4 +1,10 @@
 {
+  "DragUpload": {
+    "dragDesc": "Trascina i file qui, supporta il caricamento di più immagini.",
+    "dragFileDesc": "Trascina immagini e file qui, supporta il caricamento di più immagini e file.",
+    "dragFileTitle": "Carica file",
+    "dragTitle": "Carica immagini"
+  },
   "ModelSelect": {
     "featureTag": {
       "custom": "Modello personalizzato: di default supporta sia la chiamata di funzioni che il riconoscimento visivo. Verifica l'effettiva disponibilità di tali funzionalità.",
@@ -6,7 +12,8 @@
       "functionCall": "Questo modello supporta la chiamata di funzioni.",
       "tokens": "Questo modello supporta un massimo di {{tokens}} token per sessione.",
       "vision": "Questo modello supporta il riconoscimento visivo."
-    }
+    },
+    "removed": "Il modello non è più nella lista, verrà rimosso automaticamente se deselezionato"
   },
   "ModelSwitchPanel": {
     "emptyModel": "Nessun modello attivo. Vai alle impostazioni per attivarne uno.",

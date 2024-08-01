@@ -1,4 +1,10 @@
 {
+  "DragUpload": {
+    "dragDesc": "Drag and drop files here to upload multiple images.",
+    "dragFileDesc": "Drag and drop images and files here to upload multiple images and files.",
+    "dragFileTitle": "Upload Files",
+    "dragTitle": "Upload Images"
+  },
   "ModelSelect": {
     "featureTag": {
       "custom": "Custom model, by default, supports both function call and visual recognition. Please verify the availability of the above capabilities based on actual situations.",
@@ -6,7 +12,8 @@
       "functionCall": "This model supports function call.",
       "tokens": "This model supports up to {{tokens}} tokens in a single session.",
       "vision": "This model supports visual recognition."
-    }
+    },
+    "removed": "The model is not in the list. It will be automatically removed if deselected."
   },
   "ModelSwitchPanel": {
     "emptyModel": "No enabled model. Please go to settings to enable.",

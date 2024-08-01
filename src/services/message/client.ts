@@ -2,7 +2,7 @@ import dayjs from 'dayjs';
 
 import { MessageModel } from '@/database/client/models/message';
 import { DB_Message } from '@/database/client/schemas/message';
-import { ChatMessage, ChatMessageError, ChatPluginPayload } from '@/types/message';
+import { ChatMessage, ChatMessageError, ChatTTS, ChatTranslate } from '@/types/message';
 
 import { CreateMessageParams, IMessageService } from './type';
 
@@ -48,12 +48,22 @@ export class ClientService implements IMessageService {
     return MessageModel.update(id, message);
   }
 
-  async updateMessagePlugin(id: string, plugin: ChatPluginPayload) {
-    return MessageModel.update(id, { plugin });
+  async updateMessageTTS(id: string, tts: Partial<ChatTTS> | false) {
+    return MessageModel.update(id, { tts });
   }
 
-  async updateMessagePluginState(id: string, key: string, value: any) {
-    return MessageModel.updatePluginState(id, key, value);
+  async updateMessageTranslate(id: string, translate: Partial<ChatTranslate> | false) {
+    return MessageModel.update(id, { translate });
+  }
+
+  async updateMessagePluginState(id: string, value: Record<string, any>) {
+    return MessageModel.updatePluginState(id, value);
+  }
+
+  async updateMessagePluginArguments(id: string, value: string | Record<string, any>) {
+    const args = typeof value === 'string' ? value : JSON.stringify(value);
+
+    return MessageModel.updatePlugin(id, { arguments: args });
   }
 
   async bindMessagesToTopic(topicId: string, messageIds: string[]) {
@@ -64,7 +74,11 @@ export class ClientService implements IMessageService {
     return MessageModel.delete(id);
   }
 
-  async removeMessages(assistantId: string, topicId?: string) {
+  async removeMessages(ids: string[]) {
+    return MessageModel.bulkDelete(ids);
+  }
+
+  async removeMessagesByAssistant(assistantId: string, topicId?: string) {
     return MessageModel.batchDelete(assistantId, topicId);
   }
 
@@ -75,10 +89,5 @@ export class ClientService implements IMessageService {
   async hasMessages() {
     const number = await this.countMessages();
     return number > 0;
-  }
-
-  async messageCountToCheckTrace() {
-    const number = await this.countMessages();
-    return number >= 4;
   }
 }

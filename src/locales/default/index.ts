@@ -6,9 +6,11 @@ import common from './common';
 import components from './components';
 import error from './error';
 import market from './market';
+import metadata from './metadata';
 import migration from './migration';
 import modelProvider from './modelProvider';
 import plugin from './plugin';
+import portal from './portal';
 import setting from './setting';
 import welcome from './welcome';
 
@@ -20,9 +22,11 @@ const resources = {
   components,
   error,
   market,
+  metadata,
   migration,
   modelProvider,
   plugin,
+  portal,
   setting,
   tool,
   welcome,
