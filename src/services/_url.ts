@@ -1,4 +1,4 @@
-// TODO: 未来所有路由需要全部迁移到 trpc
+// TODO: 未来所有核心路由需要迁移到 trpc，部分不需要迁移的则走 webapi
 
 /* eslint-disable sort-keys-fix/sort-keys-fix */
 import { transform } from 'lodash-es';
@@ -17,30 +17,32 @@ const mapWithBasePath = <T extends object>(apis: T): T => {
 };
 
 export const API_ENDPOINTS = mapWithBasePath({
-  proxy: '/api/proxy',
-  oauth: '/api/auth',
-
-  // agent markets
-  market: '/api/market',
-  marketItem: (identifier: string) => withBasePath(`/api/market/${identifier}`),
-
-  // plugins
-  gateway: '/api/plugin/gateway',
-  pluginStore: '/api/plugin/store',
-
   // chat
   chat: (provider: string) => withBasePath(`/api/chat/${provider}`),
   chatModels: (provider: string) => withBasePath(`/api/chat/models/${provider}`),
+  oauth: '/api/auth',
+
+  proxy: '/webapi/proxy',
+
+  // assistant
+  assistantStore: '/webapi/assistant/store',
+  assistant: (identifier: string) => withBasePath(`/webapi/assistant/${identifier}`),
+
+  // plugins
+  gateway: '/webapi/plugin/gateway',
+  pluginStore: '/webapi/plugin/store',
 
   // trace
-  trace: '/api/trace',
+  trace: '/webapi/trace',
 
   // image
-  images: '/api/text-to-image/openai',
+  images: '/webapi/api/text-to-image/openai',
 
-  // TTS & STT
-  stt: '/api/openai/stt',
-  tts: '/api/openai/tts',
-  edge: '/api/tts/edge-speech',
-  microsoft: '/api/tts/microsoft-speech',
+  // STT
+  stt: '/webapi/stt/openai',
+
+  // TTS
+  tts: '/webapi/tts/openai',
+  edge: '/webapi/tts/edge',
+  microsoft: '/webapi/tts/microsoft',
 });

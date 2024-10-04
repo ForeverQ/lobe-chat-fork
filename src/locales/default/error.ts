@@ -16,7 +16,8 @@ export default {
   fetchErrorDetail: '错误详情',
   notFound: {
     backHome: '返回首页',
-    desc: '我们找不到你正在寻找的页面，请检查链接是否正确',
+    check: '请检查你的 URL 是否正确',
+    desc: '我们找不到你寻找的页面',
     title: '进入了未知领域？',
   },
   pluginSettings: {
@@ -78,6 +79,8 @@ export default {
     InvalidClerkUser: '很抱歉，你当前尚未登录，请先登录或注册账号后继续操作',
     LocationNotSupportError:
       '很抱歉，你的所在地区不支持此模型服务，可能是由于区域限制或服务未开通。请确认当前地区是否支持使用此服务，或尝试使用切换到其他地区后重试。',
+    QuotaLimitReached:
+      '很抱歉，当前 Token 用量或请求次数已达该秘钥的配额(quota)上限，请增加该秘钥的配额或稍后再试',
 
     InvalidProviderAPIKey: '{{provider}} API Key 不正确或为空，请检查 {{provider}} API Key 后重试',
     ProviderBizError: '请求 {{provider}} 服务出错，请根据以下信息排查或重试',
@@ -85,10 +88,15 @@ export default {
      * @deprecated
      */
     NoOpenAIAPIKey: 'OpenAI API Key 不正确或为空，请添加自定义 OpenAI API Key',
+    /**
+     * @deprecated
+     */
     OpenAIBizError: '请求 OpenAI 服务出错，请根据以下信息排查或重试',
 
     InvalidBedrockCredentials: 'Bedrock 鉴权未通过，请检查 AccessKeyId/SecretAccessKey 后重试',
-
+    StreamChunkError:
+      '流式请求的消息块解析错误，请检查当前 API 接口是否符合标准规范，或联系你的 API 供应商咨询',
+    UnknownChatFetchError: '很抱歉，遇到未知请求错误，请根据以下信息排查或重试',
     InvalidOllamaArgs: 'Ollama 配置不正确，请检查 Ollama 配置后重试',
     OllamaBizError: '请求 Ollama 服务出错，请根据以下信息排查或重试',
     OllamaServiceUnavailable:
@@ -100,6 +108,9 @@ export default {
     FreePlanLimit: '当前为免费用户，无法使用该功能，请升级到付费计划后继续使用',
     SubscriptionPlanLimit:
       '您的订阅额度已用尽，无法使用该功能，请升级到更高计划，或购买资源包后继续使用',
+
+    // Github Token
+    InvalidGithubToken: 'Github PAT 不正确或为空，请检查 Github PAT 后重试',
 
     /* eslint-enable */
   },
@@ -133,5 +144,13 @@ export default {
       password: '密码',
     },
   },
-  upload: { desc: '详情: {{detail}}', title: '文件上传失败，请检查网络连接或稍后再试' },
+  upload: {
+    desc: '详情: {{detail}}',
+    fileOnlySupportInServerMode:
+      '当前部署模式不支持上传非图片文件，如需上传 {{ext}} 格式，请切换到服务端数据库部署或使用 {{cloud}} 服务',
+    networkError: '请确认你的网络是否正常，并检查文件存储服务跨域配置是否正确',
+    title: '文件上传失败，请检查网络连接或稍后再试',
+    unknownError: '错误原因: {{reason}}',
+    uploadFailed: '文件上传失败',
+  },
 };
