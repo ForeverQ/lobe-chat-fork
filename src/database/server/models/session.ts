@@ -95,6 +95,16 @@ export class SessionModel {
     return result[0].count;
   };
 
+  hasMoreThanN = async (n: number): Promise<boolean> => {
+    const result = await this.db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(eq(sessions.userId, this.userId))
+      .limit(n + 1);
+
+    return result.length > n;
+  };
+
   // **************** Create *************** //
 
   create = async ({
@@ -291,7 +301,9 @@ export class SessionModel {
     try {
       // @ts-expect-error
       return results.map((item) => item.agentsToSessions[0].session);
-    } catch {}
+    } catch (e) {
+      console.error('findSessionsByKeywords error:', e);
+    }
     return [];
   };
 }
