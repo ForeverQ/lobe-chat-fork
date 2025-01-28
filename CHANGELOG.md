@@ -2,6 +2,207 @@
 
 # Changelog
 
+### [Version 1.49.3](https://github.com/lobehub/lobe-chat/compare/v1.49.2...v1.49.3)
+
+<sup>Released on **2025-01-27**</sup>
+
+#### 🐛 Bug Fixes
+
+- **misc**: Fix discover ssr hydration error.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's fixed
+
+- **misc**: Fix discover ssr hydration error, closes [#5605](https://github.com/lobehub/lobe-chat/issues/5605) ([e3702a6](https://github.com/lobehub/lobe-chat/commit/e3702a6))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.49.2](https://github.com/lobehub/lobe-chat/compare/v1.49.1...v1.49.2)
+
+<sup>Released on **2025-01-27**</sup>
+
+#### ♻ Code Refactoring
+
+- **misc**: Remove use query.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### Code refactoring
+
+- **misc**: Remove use query, closes [#5604](https://github.com/lobehub/lobe-chat/issues/5604) ([58c60de](https://github.com/lobehub/lobe-chat/commit/58c60de))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.49.1](https://github.com/lobehub/lobe-chat/compare/v1.49.0...v1.49.1)
+
+<sup>Released on **2025-01-27**</sup>
+
+#### ♻ Code Refactoring
+
+- **misc**: UseMobileWorkspace use nqus to replace useQuery.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### Code refactoring
+
+- **misc**: UseMobileWorkspace use nqus to replace useQuery, closes [#5603](https://github.com/lobehub/lobe-chat/issues/5603) ([70e5272](https://github.com/lobehub/lobe-chat/commit/70e5272))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+## [Version 1.49.0](https://github.com/lobehub/lobe-chat/compare/v1.48.4...v1.49.0)
+
+<sup>Released on **2025-01-27**</sup>
+
+#### ✨ Features
+
+- **misc**: Support Doubao Models.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's improved
+
+- **misc**: Support Doubao Models, closes [#5481](https://github.com/lobehub/lobe-chat/issues/5481) ([d8afe47](https://github.com/lobehub/lobe-chat/commit/d8afe47))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.48.4](https://github.com/lobehub/lobe-chat/compare/v1.48.3...v1.48.4)
+
+<sup>Released on **2025-01-27**</sup>
+
+#### 💄 Styles
+
+- **misc**: Improve thinking style.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### Styles
+
+- **misc**: Improve thinking style, closes [#5602](https://github.com/lobehub/lobe-chat/issues/5602) ([d4dc3f2](https://github.com/lobehub/lobe-chat/commit/d4dc3f2))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.48.3](https://github.com/lobehub/lobe-chat/compare/v1.48.2...v1.48.3)
+
+<sup>Released on **2025-01-26**</sup>
+
+#### 💄 Styles
+
+- **misc**: Improve model pricing with CNY.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### Styles
+
+- **misc**: Improve model pricing with CNY, closes [#5599](https://github.com/lobehub/lobe-chat/issues/5599) ([6d91457](https://github.com/lobehub/lobe-chat/commit/6d91457))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.48.2](https://github.com/lobehub/lobe-chat/compare/v1.48.1...v1.48.2)
+
+<sup>Released on **2025-01-25**</sup>
+
+#### 💄 Styles
+
+- **misc**: Add `parallel_tool_calls` support for Qwen, fix tag version and add provider changelog.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### Styles
+
+- **misc**: Add `parallel_tool_calls` support for Qwen, closes [#5584](https://github.com/lobehub/lobe-chat/issues/5584) ([b89aeeb](https://github.com/lobehub/lobe-chat/commit/b89aeeb))
+- **misc**: Fix tag version and add provider changelog, closes [#5582](https://github.com/lobehub/lobe-chat/issues/5582) ([63c571b](https://github.com/lobehub/lobe-chat/commit/63c571b))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.48.1](https://github.com/lobehub/lobe-chat/compare/v1.48.0...v1.48.1)
+
+<sup>Released on **2025-01-25**</sup>
+
+#### 🐛 Bug Fixes
+
+- **misc**: Fix ollama Browser Request failed in PG mode.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's fixed
+
+- **misc**: Fix ollama Browser Request failed in PG mode, closes [#5585](https://github.com/lobehub/lobe-chat/issues/5585) ([b2f3c33](https://github.com/lobehub/lobe-chat/commit/b2f3c33))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
 ## [Version 1.48.0](https://github.com/lobehub/lobe-chat/compare/v1.47.23...v1.48.0)
 
 <sup>Released on **2025-01-24**</sup>
