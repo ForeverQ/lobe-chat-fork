@@ -229,6 +229,10 @@
           "title": "ID du modèle"
         },
         "modalTitle": "Configuration du modèle personnalisé",
+        "reasoning": {
+          "extra": "Cette configuration activera uniquement la capacité de réflexion approfondie du modèle. Les résultats dépendent entièrement du modèle lui-même, veuillez tester si ce modèle possède une capacité de réflexion approfondie utilisable.",
+          "title": "Support de la réflexion approfondie"
+        },
         "tokens": {
           "extra": "Définir le nombre maximal de tokens pris en charge par le modèle",
           "title": "Fenêtre de contexte maximale",
@@ -289,26 +293,6 @@
     "deleteSuccess": "Suppression réussie",
     "tooltip": "Mettre à jour la configuration de base du fournisseur",
     "updateSuccess": "Mise à jour réussie"
-  },
-  "wenxin": {
-    "accessKey": {
-      "desc": "Entrez la clé d'accès de la plateforme Qianfan de Baidu",
-      "placeholder": "Clé d'accès Qianfan",
-      "title": "Clé d'accès"
-    },
-    "checker": {
-      "desc": "Vérifiez si la clé d'accès / SecretAccess est correctement remplie"
-    },
-    "secretKey": {
-      "desc": "Entrez la clé secrète de la plateforme Qianfan de Baidu",
-      "placeholder": "Clé secrète Qianfan",
-      "title": "Clé secrète"
-    },
-    "unlock": {
-      "customRegion": "Région de service personnalisée",
-      "description": "Entrez votre AccessKey / SecretKey pour commencer la session. L'application ne conservera pas votre configuration d'authentification",
-      "title": "Utiliser les informations d'authentification personnalisées de Wenxin Yiyan"
-    }
   },
   "zeroone": {
     "title": "01.AI Zéro Un Tout"

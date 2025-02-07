@@ -229,6 +229,10 @@
           "title": "モデル ID"
         },
         "modalTitle": "カスタムモデル設定",
+        "reasoning": {
+          "extra": "この設定は、モデルの深い思考能力を有効にするだけです。具体的な効果はモデル自体に依存しますので、このモデルが利用可能な深い思考能力を持っているかどうかはご自身でテストしてください。",
+          "title": "深い思考をサポート"
+        },
         "tokens": {
           "extra": "モデルがサポートする最大トークン数を設定する",
           "title": "最大コンテキストウィンドウ",
@@ -289,26 +293,6 @@
     "deleteSuccess": "削除に成功しました",
     "tooltip": "サービスプロバイダーの基本設定を更新",
     "updateSuccess": "更新に成功しました"
-  },
-  "wenxin": {
-    "accessKey": {
-      "desc": "百度千帆プラットフォームのAccess Keyを入力してください",
-      "placeholder": "Qianfan Access Key",
-      "title": "Access Key"
-    },
-    "checker": {
-      "desc": "AccessKey / SecretAccessが正しく入力されているかテストします"
-    },
-    "secretKey": {
-      "desc": "百度千帆プラットフォームのSecret Keyを入力してください",
-      "placeholder": "Qianfan Secret Key",
-      "title": "Secret Key"
-    },
-    "unlock": {
-      "customRegion": "カスタムサービス地域",
-      "description": "AccessKey / SecretKeyを入力することでセッションを開始できます。アプリはあなたの認証設定を記録しません",
-      "title": "カスタム文心一言認証情報を使用"
-    }
   },
   "zeroone": {
     "title": "01.AI 零一万物"

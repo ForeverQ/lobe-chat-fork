@@ -229,6 +229,10 @@
           "title": "모델 ID"
         },
         "modalTitle": "사용자 정의 모델 구성",
+        "reasoning": {
+          "extra": "이 설정은 모델의 심층 사고 능력만을 활성화합니다. 구체적인 효과는 모델 자체에 따라 다르므로, 해당 모델이 사용 가능한 심층 사고 능력을 갖추고 있는지 직접 테스트해 보시기 바랍니다.",
+          "title": "심층 사고 지원"
+        },
         "tokens": {
           "extra": "모델이 지원하는 최대 토큰 수 설정",
           "title": "최대 컨텍스트 창",
@@ -289,26 +293,6 @@
     "deleteSuccess": "삭제 성공",
     "tooltip": "서비스 제공자 기본 설정 업데이트",
     "updateSuccess": "업데이트 성공"
-  },
-  "wenxin": {
-    "accessKey": {
-      "desc": "바이두 천범 플랫폼의 Access Key를 입력하세요",
-      "placeholder": "Qianfan Access Key",
-      "title": "Access Key"
-    },
-    "checker": {
-      "desc": "AccessKey / SecretAccess가 올바르게 입력되었는지 테스트합니다"
-    },
-    "secretKey": {
-      "desc": "바이두 천범 플랫폼의 Secret Key를 입력하세요",
-      "placeholder": "Qianfan Secret Key",
-      "title": "Secret Key"
-    },
-    "unlock": {
-      "customRegion": "사용자 정의 서비스 지역",
-      "description": "당신의 AccessKey / SecretKey를 입력하면 대화를 시작할 수 있습니다. 애플리케이션은 당신의 인증 구성을 기록하지 않습니다",
-      "title": "사용자 정의 문신 일언 인증 정보 사용"
-    }
   },
   "zeroone": {
     "title": "01.AI Zero One All Things"

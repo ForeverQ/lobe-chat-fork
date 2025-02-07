@@ -231,6 +231,11 @@ export default {
           title: '模型 ID',
         },
         modalTitle: '自定义模型配置',
+        reasoning: {
+          extra:
+            '此配置将仅开启模型深度思考的能力，具体效果完全取决于模型本身，请自行测试该模型是否具备可用的深度思考能力',
+          title: '支持深度思考',
+        },
         tokens: {
           extra: '设置模型支持的最大 Token 数',
           title: '最大上下文窗口',
@@ -290,26 +295,6 @@ export default {
     deleteSuccess: '删除成功',
     tooltip: '更新服务商基础配置',
     updateSuccess: '更新成功',
-  },
-  wenxin: {
-    accessKey: {
-      desc: '填入百度千帆平台的 Access Key',
-      placeholder: 'Qianfan Access Key',
-      title: 'Access Key',
-    },
-    checker: {
-      desc: '测试 AccessKey / SecretAccess 是否填写正确',
-    },
-    secretKey: {
-      desc: '填入百度千帆平台 Secret Key',
-      placeholder: 'Qianfan Secret Key',
-      title: 'Secret Key',
-    },
-    unlock: {
-      customRegion: '自定义服务区域',
-      description: '输入你的 AccessKey / SecretKey 即可开始会话。应用不会记录你的鉴权配置',
-      title: '使用自定义文心一言鉴权信息',
-    },
   },
   zeroone: {
     title: '01.AI 零一万物',

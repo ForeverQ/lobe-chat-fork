@@ -229,6 +229,10 @@
           "title": "模型 ID"
         },
         "modalTitle": "自定義模型配置",
+        "reasoning": {
+          "extra": "此配置將僅開啟模型深度思考的能力，具體效果完全取決於模型本身，請自行測試該模型是否具備可用的深度思考能力",
+          "title": "支持深度思考"
+        },
         "tokens": {
           "extra": "設定模型支持的最大 Token 數",
           "title": "最大上下文窗口",
@@ -289,26 +293,6 @@
     "deleteSuccess": "刪除成功",
     "tooltip": "更新服務商基礎配置",
     "updateSuccess": "更新成功"
-  },
-  "wenxin": {
-    "accessKey": {
-      "desc": "填入百度千帆平台的 Access Key",
-      "placeholder": "千帆 Access Key",
-      "title": "Access Key"
-    },
-    "checker": {
-      "desc": "測試 AccessKey / SecretAccess 是否填寫正確"
-    },
-    "secretKey": {
-      "desc": "填入百度千帆平台 Secret Key",
-      "placeholder": "千帆 Secret Key",
-      "title": "Secret Key"
-    },
-    "unlock": {
-      "customRegion": "自訂服務區域",
-      "description": "輸入你的 AccessKey / SecretKey 即可開始會話。應用不會記錄你的鑑權配置",
-      "title": "使用自訂文心一言鑑權資訊"
-    }
   },
   "zeroone": {
     "title": "01.AI 零一萬物"
