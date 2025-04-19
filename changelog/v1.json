@@ -1,6 +1,76 @@
 [
   {
     "children": {
+      "improvements": ["Allow folding SystemRole box."]
+    },
+    "date": "2025-04-18",
+    "version": "1.81.2"
+  },
+  {
+    "children": {
+      "improvements": ["Add SenseNova-V6 series & SenseChat-Vision support."]
+    },
+    "date": "2025-04-18",
+    "version": "1.81.1"
+  },
+  {
+    "children": {
+      "features": ["Support search1api as search provider."]
+    },
+    "date": "2025-04-17",
+    "version": "1.81.0"
+  },
+  {
+    "children": {
+      "improvements": ["Update 360 AI & Taichu & AI21 model list."]
+    },
+    "date": "2025-04-17",
+    "version": "1.80.5"
+  },
+  {
+    "children": {
+      "improvements": ["Add o3/o4-mini models."]
+    },
+    "date": "2025-04-17",
+    "version": "1.80.4"
+  },
+  {
+    "children": {
+      "improvements": ["Refactor to get user info from api."]
+    },
+    "date": "2025-04-16",
+    "version": "1.80.3"
+  },
+  {
+    "children": {
+      "fixes": ["Update default file embedding model info."]
+    },
+    "date": "2025-04-16",
+    "version": "1.80.2"
+  },
+  {
+    "children": {
+      "fixes": ["Fix model support file and image logic."],
+      "improvements": ["Add step-r1 & glm-z1 model fetch support."]
+    },
+    "date": "2025-04-16",
+    "version": "1.80.1"
+  },
+  {
+    "children": {
+      "improvements": ["Opening message container add border."],
+      "features": [
+        "Opening settings copyright i18n, regenerate migrate sql for new agent opening settings."
+      ],
+      "fixes": [
+        "Opening questions should should be hidden when no setted, opening settings migration type error."
+      ]
+    },
+    "date": "2025-04-16",
+    "version": "1.80.0"
+  },
+  {
+    "children": {
       "improvements": ["Make gpt-4.1-mini default model."]
     },
     "date": "2025-04-15",
