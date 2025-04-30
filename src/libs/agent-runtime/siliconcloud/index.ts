@@ -1,8 +1,8 @@
+import type { ChatModelCard } from '@/types/llm';
+
 import { AgentRuntimeErrorType } from '../error';
 import { ChatCompletionErrorPayload, ModelProvider } from '../types';
 import { LobeOpenAICompatibleFactory } from '../utils/openaiCompatibleFactory';
-
-import type { ChatModelCard } from '@/types/llm';
 
 export interface SiliconCloudModelCard {
   id: string;
@@ -30,7 +30,8 @@ export const LobeSiliconCloudAI = LobeOpenAICompatibleFactory({
           return {
             error: errorResponse.status,
             errorType: AgentRuntimeErrorType.ProviderBizError,
-            message: '请检查 API Key 余额是否充足，或者是否在用未实名的 API Key 访问需要实名的模型。',
+            message:
+              '请检查 API Key 余额是否充足，或者是否在用未实名的 API Key 访问需要实名的模型。',
           };
         }
       }
@@ -39,8 +40,24 @@ export const LobeSiliconCloudAI = LobeOpenAICompatibleFactory({
       };
     },
     handlePayload: (payload) => {
+      const { max_tokens, model, thinking, ...rest } = payload;
+      const thinkingBudget =
+        thinking?.budget_tokens === 0 ? 1 : thinking?.budget_tokens || undefined;
+
       return {
-        ...payload,
+        ...rest,
+        ...(['qwen3'].some((keyword) => model.toLowerCase().includes(keyword))
+          ? {
+              enable_thinking: thinking !== undefined ? thinking.type === 'enabled' : false,
+              thinking_budget:
+                thinkingBudget === undefined
+                  ? undefined
+                  : Math.min(Math.max(thinkingBudget, 1), 32_768),
+            }
+          : {}),
+        max_tokens:
+          max_tokens === undefined ? undefined : Math.min(Math.max(max_tokens, 1), 16_384),
+        model,
         stream: !payload.tools,
       } as any;
     },
@@ -72,36 +89,35 @@ export const LobeSiliconCloudAI = LobeOpenAICompatibleFactory({
       'deepseek-ai/deepseek-vl',
     ];
 
-    const reasoningKeywords = [
-      'deepseek-ai/deepseek-r1',
-      'qwen/qvq',
-      'qwen/qwq',
-    ];
+    const reasoningKeywords = ['deepseek-ai/deepseek-r1', 'qwen/qvq', 'qwen/qwq'];
 
-    const modelsPage = await client.models.list() as any;
+    const modelsPage = (await client.models.list()) as any;
     const modelList: SiliconCloudModelCard[] = modelsPage.data;
 
     return modelList
       .map((model) => {
-        const knownModel = LOBE_DEFAULT_MODEL_LIST.find((m) => model.id.toLowerCase() === m.id.toLowerCase());
+        const knownModel = LOBE_DEFAULT_MODEL_LIST.find(
+          (m) => model.id.toLowerCase() === m.id.toLowerCase(),
+        );
 
         return {
           contextWindowTokens: knownModel?.contextWindowTokens ?? undefined,
           displayName: knownModel?.displayName ?? undefined,
           enabled: knownModel?.enabled || false,
           functionCall:
-            functionCallKeywords.some(keyword => model.id.toLowerCase().includes(keyword)) && !model.id.toLowerCase().includes('deepseek-r1')
-            || knownModel?.abilities?.functionCall
-            || false,
+            (functionCallKeywords.some((keyword) => model.id.toLowerCase().includes(keyword)) &&
+              !model.id.toLowerCase().includes('deepseek-r1')) ||
+            knownModel?.abilities?.functionCall ||
+            false,
           id: model.id,
           reasoning:
-            reasoningKeywords.some(keyword => model.id.toLowerCase().includes(keyword))
-            || knownModel?.abilities?.reasoning
-            || false,
+            reasoningKeywords.some((keyword) => model.id.toLowerCase().includes(keyword)) ||
+            knownModel?.abilities?.reasoning ||
+            false,
           vision:
-            visionKeywords.some(keyword => model.id.toLowerCase().includes(keyword))
-            || knownModel?.abilities?.vision
-            || false,
+            visionKeywords.some((keyword) => model.id.toLowerCase().includes(keyword)) ||
+            knownModel?.abilities?.vision ||
+            false,
         };
       })
       .filter(Boolean) as ChatModelCard[];
