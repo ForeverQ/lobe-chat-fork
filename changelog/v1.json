@@ -1,6 +1,55 @@
 [
   {
     "children": {
+      "improvements": ["Fix init state of loading."]
+    },
+    "date": "2025-05-04",
+    "version": "1.84.19"
+  },
+  {
+    "children": {
+      "improvements": ["Add perf stat support for openai factory."]
+    },
+    "date": "2025-05-03",
+    "version": "1.84.18"
+  },
+  {
+    "children": {
+      "improvements": ["Add write file tool to local-file plugin."]
+    },
+    "date": "2025-05-03",
+    "version": "1.84.17"
+  },
+  {
+    "children": {
+      "fixes": ["Fix desktop quiting with reopen window."]
+    },
+    "date": "2025-05-02",
+    "version": "1.84.16"
+  },
+  {
+    "children": {
+      "fixes": ["Siliconflow requests with tools no longer force non-streaming."]
+    },
+    "date": "2025-05-01",
+    "version": "1.84.15"
+  },
+  {
+    "children": {
+      "improvements": ["Add windows control and tray."]
+    },
+    "date": "2025-05-01",
+    "version": "1.84.14"
+  },
+  {
+    "children": {
+      "improvements": ["Fix style issues."]
+    },
+    "date": "2025-05-01",
+    "version": "1.84.13"
+  },
+  {
+    "children": {
       "improvements": ["Support Qwen3 thinking_budget param."]
     },
     "date": "2025-04-30",

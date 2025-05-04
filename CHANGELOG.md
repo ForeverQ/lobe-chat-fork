@@ -2,6 +2,181 @@
 
 # Changelog
 
+### [Version 1.84.19](https://github.com/lobehub/lobe-chat/compare/v1.84.18...v1.84.19)
+
+<sup>Released on **2025-05-04**</sup>
+
+#### 💄 Styles
+
+- **misc**: Fix init state of loading.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### Styles
+
+- **misc**: Fix init state of loading, closes [#7694](https://github.com/lobehub/lobe-chat/issues/7694) ([1d97a68](https://github.com/lobehub/lobe-chat/commit/1d97a68))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.84.18](https://github.com/lobehub/lobe-chat/compare/v1.84.17...v1.84.18)
+
+<sup>Released on **2025-05-03**</sup>
+
+#### ♻ Code Refactoring
+
+- **misc**: Add perf stat support for openai factory.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### Code refactoring
+
+- **misc**: Add perf stat support for openai factory, closes [#7677](https://github.com/lobehub/lobe-chat/issues/7677) ([40464d1](https://github.com/lobehub/lobe-chat/commit/40464d1))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.84.17](https://github.com/lobehub/lobe-chat/compare/v1.84.16...v1.84.17)
+
+<sup>Released on **2025-05-03**</sup>
+
+#### 💄 Styles
+
+- **misc**: Add write file tool to local-file plugin.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### Styles
+
+- **misc**: Add write file tool to local-file plugin, closes [#7684](https://github.com/lobehub/lobe-chat/issues/7684) ([e22e932](https://github.com/lobehub/lobe-chat/commit/e22e932))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.84.16](https://github.com/lobehub/lobe-chat/compare/v1.84.15...v1.84.16)
+
+<sup>Released on **2025-05-02**</sup>
+
+#### 🐛 Bug Fixes
+
+- **misc**: Fix desktop quiting with reopen window.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's fixed
+
+- **misc**: Fix desktop quiting with reopen window, closes [#7675](https://github.com/lobehub/lobe-chat/issues/7675) ([edeabcf](https://github.com/lobehub/lobe-chat/commit/edeabcf))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.84.15](https://github.com/lobehub/lobe-chat/compare/v1.84.14...v1.84.15)
+
+<sup>Released on **2025-05-01**</sup>
+
+#### 🐛 Bug Fixes
+
+- **misc**: Siliconflow requests with tools no longer force non-streaming.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's fixed
+
+- **misc**: Siliconflow requests with tools no longer force non-streaming, closes [#7663](https://github.com/lobehub/lobe-chat/issues/7663) ([77777b2](https://github.com/lobehub/lobe-chat/commit/77777b2))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.84.14](https://github.com/lobehub/lobe-chat/compare/v1.84.13...v1.84.14)
+
+<sup>Released on **2025-05-01**</sup>
+
+#### 💄 Styles
+
+- **misc**: Add windows control and tray.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### Styles
+
+- **misc**: Add windows control and tray, closes [#7665](https://github.com/lobehub/lobe-chat/issues/7665) ([c5f3d13](https://github.com/lobehub/lobe-chat/commit/c5f3d13))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.84.13](https://github.com/lobehub/lobe-chat/compare/v1.84.12...v1.84.13)
+
+<sup>Released on **2025-05-01**</sup>
+
+#### 💄 Styles
+
+- **misc**: Fix style issues.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### Styles
+
+- **misc**: Fix style issues, closes [#7659](https://github.com/lobehub/lobe-chat/issues/7659) ([3da871b](https://github.com/lobehub/lobe-chat/commit/3da871b))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
 ### [Version 1.84.12](https://github.com/lobehub/lobe-chat/compare/v1.84.11...v1.84.12)
 
 <sup>Released on **2025-04-30**</sup>
