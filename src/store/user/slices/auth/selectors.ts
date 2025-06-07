@@ -2,9 +2,9 @@ import { t } from 'i18next';
 
 import { enableAuth, enableClerk, enableNextAuth } from '@/const/auth';
 import { BRANDING_NAME } from '@/const/branding';
+import { isDesktop } from '@/const/version';
 import { UserStore } from '@/store/user';
 import { LobeUser } from '@/types/user';
-import { isDesktop } from '@/const/version';
 
 const DEFAULT_USERNAME = BRANDING_NAME;
 
@@ -36,6 +36,7 @@ const username = (s: UserStore) => {
 };
 
 export const userProfileSelectors = {
+  fullName: (s: UserStore): string => s.user?.fullName || '',
   nickName,
   userAvatar: (s: UserStore): string => s.user?.avatar || '',
   userId: (s: UserStore) => s.user?.id,
