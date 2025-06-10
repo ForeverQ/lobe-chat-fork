@@ -2,6 +2,167 @@
 
 # Changelog
 
+### [Version 1.93.2](https://github.com/lobehub/lobe-chat/compare/v1.93.1...v1.93.2)
+
+<sup>Released on **2025-06-09**</sup>
+
+#### ♻ Code Refactoring
+
+- **misc**: Refactor `<think>` & `</think>` handling.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### Code refactoring
+
+- **misc**: Refactor `<think>` & `</think>` handling, closes [#8121](https://github.com/lobehub/lobe-chat/issues/8121) ([04ac353](https://github.com/lobehub/lobe-chat/commit/04ac353))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.93.1](https://github.com/lobehub/lobe-chat/compare/v1.93.0...v1.93.1)
+
+<sup>Released on **2025-06-08**</sup>
+
+#### 🐛 Bug Fixes
+
+- **misc**: Fix openai default Responses API issue.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's fixed
+
+- **misc**: Fix openai default Responses API issue, closes [#8124](https://github.com/lobehub/lobe-chat/issues/8124) ([7f6ccf2](https://github.com/lobehub/lobe-chat/commit/7f6ccf2))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+## [Version 1.93.0](https://github.com/lobehub/lobe-chat/compare/v1.92.3...v1.93.0)
+
+<sup>Released on **2025-06-08**</sup>
+
+#### ✨ Features
+
+- **misc**: Support OpenAI Responses API mode.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's improved
+
+- **misc**: Support OpenAI Responses API mode, closes [#8048](https://github.com/lobehub/lobe-chat/issues/8048) ([5bf0921](https://github.com/lobehub/lobe-chat/commit/5bf0921))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.92.3](https://github.com/lobehub/lobe-chat/compare/v1.92.2...v1.92.3)
+
+<sup>Released on **2025-06-08**</sup>
+
+#### 🐛 Bug Fixes
+
+- **misc**: Fix client s3 getObject throw error.
+
+#### 💄 Styles
+
+- **misc**: Support OpenRouter Claude 4 reasoning.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### What's fixed
+
+- **misc**: Fix client s3 getObject throw error, closes [#8009](https://github.com/lobehub/lobe-chat/issues/8009) ([b91ca8c](https://github.com/lobehub/lobe-chat/commit/b91ca8c))
+
+#### Styles
+
+- **misc**: Support OpenRouter Claude 4 reasoning, closes [#8087](https://github.com/lobehub/lobe-chat/issues/8087) ([039be1d](https://github.com/lobehub/lobe-chat/commit/039be1d))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.92.2](https://github.com/lobehub/lobe-chat/compare/v1.92.1...v1.92.2)
+
+<sup>Released on **2025-06-07**</sup>
+
+#### 💄 Styles
+
+- **misc**: Add support to azureopenai embedding.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### Styles
+
+- **misc**: Add support to azureopenai embedding, closes [#8075](https://github.com/lobehub/lobe-chat/issues/8075) ([0725f94](https://github.com/lobehub/lobe-chat/commit/0725f94))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
+### [Version 1.92.1](https://github.com/lobehub/lobe-chat/compare/v1.92.0...v1.92.1)
+
+<sup>Released on **2025-06-07**</sup>
+
+#### 💄 Styles
+
+- **ModelSelect**: Add responsive layout for mobile devices.
+- **misc**: Improve `{{username}}` placeholder variable, Update Gemini & Qwen models.
+
+<br/>
+
+<details>
+<summary><kbd>Improvements and Fixes</kbd></summary>
+
+#### Styles
+
+- **ModelSelect**: Add responsive layout for mobile devices, closes [#7960](https://github.com/lobehub/lobe-chat/issues/7960) ([cb84c3e](https://github.com/lobehub/lobe-chat/commit/cb84c3e))
+- **misc**: Improve `{{username}}` placeholder variable, closes [#8100](https://github.com/lobehub/lobe-chat/issues/8100) ([95fd588](https://github.com/lobehub/lobe-chat/commit/95fd588))
+- **misc**: Update Gemini & Qwen models, closes [#8083](https://github.com/lobehub/lobe-chat/issues/8083) ([6308237](https://github.com/lobehub/lobe-chat/commit/6308237))
+
+</details>
+
+<div align="right">
+
+[![](https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square)](#readme-top)
+
+</div>
+
 ## [Version 1.92.0](https://github.com/lobehub/lobe-chat/compare/v1.91.3...v1.92.0)
 
 <sup>Released on **2025-06-06**</sup>

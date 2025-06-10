@@ -1,6 +1,49 @@
 [
   {
     "children": {
+      "improvements": ["Refactor <think> & </think> handling."]
+    },
+    "date": "2025-06-09",
+    "version": "1.93.2"
+  },
+  {
+    "children": {
+      "fixes": ["Fix openai default Responses API issue."]
+    },
+    "date": "2025-06-08",
+    "version": "1.93.1"
+  },
+  {
+    "children": {
+      "features": ["Support OpenAI Responses API mode."]
+    },
+    "date": "2025-06-08",
+    "version": "1.93.0"
+  },
+  {
+    "children": {
+      "fixes": ["Fix client s3 getObject throw error."],
+      "improvements": ["Support OpenRouter Claude 4 reasoning."]
+    },
+    "date": "2025-06-08",
+    "version": "1.92.3"
+  },
+  {
+    "children": {
+      "improvements": ["Add support to azureopenai embedding."]
+    },
+    "date": "2025-06-07",
+    "version": "1.92.2"
+  },
+  {
+    "children": {
+      "improvements": ["Improve {{username}} placeholder variable, Update Gemini & Qwen models."]
+    },
+    "date": "2025-06-07",
+    "version": "1.92.1"
+  },
+  {
+    "children": {
       "features": ["Support placeholder variables in prompts and input."],
       "fixes": ["Some web search bugs."],
       "improvements": ["Support Vertex AI thought summaries."]
