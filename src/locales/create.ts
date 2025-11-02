@@ -4,8 +4,8 @@ import resourcesToBackend from 'i18next-resources-to-backend';
 import { initReactI18next } from 'react-i18next';
 import { isRtlLang } from 'rtl-detect';
 
-import { getDebugConfig } from '@/config/debug';
 import { DEFAULT_LANG } from '@/const/locale';
+import { getDebugConfig } from '@/envs/debug';
 import { normalizeLocale } from '@/locales/resources';
 import { isDev, isOnServerSide } from '@/utils/env';
 
@@ -31,8 +31,10 @@ export const createI18nNext = (lang?: string) => {
     }
   });
   return {
-    init: () =>
-      instance.init({
+    init: (params: { initAsync?: boolean } = {}) => {
+      const { initAsync = true } = params;
+
+      return instance.init({
         debug: debugMode,
         defaultNS: ['error', 'common', 'chat'],
         // detection: {
@@ -50,11 +52,14 @@ export const createI18nNext = (lang?: string) => {
         //   lookupCookie: LOBE_LOCALE_COOKIE,
         // },
         fallbackLng: DEFAULT_LANG,
+
+        initAsync,
         interpolation: {
           escapeValue: false,
         },
         lng: lang,
-      }),
+      });
+    },
     instance,
   };
 };

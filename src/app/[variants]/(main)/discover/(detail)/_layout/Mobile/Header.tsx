@@ -1,21 +1,21 @@
 'use client';
 
 import { ChatHeader } from '@lobehub/ui/mobile';
-import { usePathname, useRouter } from 'next/navigation';
 import { memo } from 'react';
-import urlJoin from 'url-join';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { mobileHeaderSticky } from '@/styles/mobileHeader';
 
 const Header = memo(() => {
-  const pathname = usePathname();
-  const router = useRouter();
+  const location = useLocation();
+  const navigate = useNavigate();
 
-  const path = pathname.split('/').filter(Boolean)[1];
+  // Extract the path segment (assistant, model, provider, mcp)
+  const path = location.pathname.split('/').find(Boolean);
 
   return (
     <ChatHeader
-      onBackClick={() => router.push(urlJoin('/discover', `${path}s`))}
+      onBackClick={() => navigate(`/${path}`)}
       showBackButton
       style={mobileHeaderSticky}
     />

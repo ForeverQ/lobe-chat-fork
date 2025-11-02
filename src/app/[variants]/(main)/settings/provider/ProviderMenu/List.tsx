@@ -1,14 +1,12 @@
 'use client';
 
-import { ActionIcon, ScrollShadow } from '@lobehub/ui';
-import { Typography } from 'antd';
+import { ActionIcon, ScrollShadow, Text } from '@lobehub/ui';
 import isEqual from 'fast-deep-equal';
 import { ArrowDownUpIcon } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Flexbox } from 'react-layout-kit';
 
-import { useIsMobile } from '@/hooks/useIsMobile';
 import { aiProviderSelectors } from '@/store/aiInfra';
 import { useAiInfraStore } from '@/store/aiInfra/store';
 
@@ -16,7 +14,11 @@ import All from './All';
 import ProviderItem from './Item';
 import SortProviderModal from './SortProviderModal';
 
-const ProviderList = () => {
+const ProviderList = (props: {
+  mobile?: boolean;
+  onProviderSelect: (providerKey: string) => void;
+}) => {
+  const { onProviderSelect, mobile } = props;
   const { t } = useTranslation('modelProvider');
   const [open, setOpen] = useState(false);
   const enabledModelProviderList = useAiInfraStore(
@@ -28,20 +30,18 @@ const ProviderList = () => {
     aiProviderSelectors.disabledAiProviderList,
     isEqual,
   );
-
-  const isMobile = useIsMobile();
   return (
     <ScrollShadow gap={4} height={'100%'} paddingInline={12} size={4} style={{ paddingBottom: 32 }}>
-      {!isMobile && <All />}
+      {!mobile && <All onClick={onProviderSelect} />}
       <Flexbox
         align={'center'}
         horizontal
         justify={'space-between'}
         style={{ fontSize: 12, marginTop: 8 }}
       >
-        <Typography.Text style={{ fontSize: 12 }} type={'secondary'}>
+        <Text style={{ fontSize: 12 }} type={'secondary'}>
           {t('menu.list.enabled')}
-        </Typography.Text>
+        </Text>
         <ActionIcon
           icon={ArrowDownUpIcon}
           onClick={() => {
@@ -61,13 +61,13 @@ const ProviderList = () => {
         )}
       </Flexbox>
       {enabledModelProviderList.map((item) => (
-        <ProviderItem {...item} key={item.id} />
+        <ProviderItem {...item} key={item.id} onClick={onProviderSelect} />
       ))}
-      <Typography.Text style={{ fontSize: 12, marginTop: 8 }} type={'secondary'}>
+      <Text style={{ fontSize: 12, marginTop: 8 }} type={'secondary'}>
         {t('menu.list.disabled')}
-      </Typography.Text>
+      </Text>
       {disabledModelProviderList.map((item) => (
-        <ProviderItem {...item} key={item.id} />
+        <ProviderItem {...item} key={item.id} onClick={onProviderSelect} />
       ))}
     </ScrollShadow>
   );

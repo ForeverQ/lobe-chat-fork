@@ -1,5 +1,5 @@
-import { Icon, Tag } from '@lobehub/ui';
-import { Typography } from 'antd';
+import { ChatPluginPayload } from '@lobechat/types';
+import { Icon, Tag, Text } from '@lobehub/ui';
 import isEqual from 'fast-deep-equal';
 import { CircuitBoard } from 'lucide-react';
 import { memo } from 'react';
@@ -11,7 +11,6 @@ import { useYamlArguments } from '@/hooks/useYamlArguments';
 import { useChatStore } from '@/store/chat';
 import { pluginHelpers, useToolStore } from '@/store/tool';
 import { toolSelectors } from '@/store/tool/selectors';
-import { ChatPluginPayload } from '@/types/message';
 
 import { useStyles } from './style';
 
@@ -53,9 +52,9 @@ const ArtifactItem = memo<ArtifactItemProps>(({ payload, messageId, identifier =
               <Tag>{payload?.apiName}</Tag>
             </Flexbox>
             <div>
-              <Typography.Text ellipsis style={{ fontSize: 12 }} type={'secondary'}>
+              <Text ellipsis style={{ fontSize: 12 }} type={'secondary'}>
                 {args}
-              </Typography.Text>
+              </Text>
             </div>
           </Flexbox>
         </Flexbox>

@@ -5,17 +5,17 @@ import { theme } from 'antd';
 // refs: https://github.com/dumbmatter/fakeIndexedDB#dexie-and-other-indexeddb-api-wrappers
 import 'fake-indexeddb/auto';
 import React from 'react';
+import { vi } from 'vitest';
 
-// only inject in the dom environment
-if (
-  // not node runtime
-  typeof window !== 'undefined' &&
-  // not edge runtime
-  typeof (globalThis as any).EdgeRuntime !== 'string'
-) {
-  // test with canvas
-  await import('vitest-canvas-mock');
-}
+// Global mock for @lobehub/analytics/react to avoid AnalyticsProvider dependency
+// This prevents tests from failing when components use useAnalytics hook
+vi.mock('@lobehub/analytics/react', () => ({
+  useAnalytics: () => ({
+    analytics: {
+      track: vi.fn(),
+    },
+  }),
+}));
 
 // node runtime
 if (typeof window === 'undefined') {

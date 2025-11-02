@@ -1,5 +1,4 @@
-import { ActionIcon } from '@lobehub/ui';
-import { Typography } from 'antd';
+import { ActionIcon, Text } from '@lobehub/ui';
 import { createStyles } from 'antd-style';
 import isEqual from 'fast-deep-equal';
 import { RotateCwIcon, Trash2 } from 'lucide-react';
@@ -8,7 +7,6 @@ import { useTranslation } from 'react-i18next';
 import { Flexbox } from 'react-layout-kit';
 
 import { useChatStore } from '@/store/chat';
-import { ChatMessage } from '@/types/message';
 
 const useStyles = createStyles(({ css, cx }) => ({
   action: cx(
@@ -35,7 +33,13 @@ const useStyles = createStyles(({ css, cx }) => ({
   `,
 }));
 
-export const UserBelowMessage = memo<ChatMessage>(({ ragQuery, content, id }) => {
+interface UserBelowMessageProps {
+  content: string;
+  id: string;
+  ragQuery?: string | null;
+}
+
+export const UserBelowMessage = memo<UserBelowMessageProps>(({ ragQuery, content, id }) => {
   const { styles } = useStyles();
 
   const { t } = useTranslation('chat');
@@ -50,9 +54,9 @@ export const UserBelowMessage = memo<ChatMessage>(({ ragQuery, content, id }) =>
     !isEqual(ragQuery, content) && (
       <Flexbox className={styles.container}>
         <Flexbox align={'center'} className={styles.content} gap={4} horizontal>
-          <Typography.Text style={{ fontSize: 12 }} type={'secondary'}>
+          <Text style={{ fontSize: 12 }} type={'secondary'}>
             {ragQuery}
-          </Typography.Text>
+          </Text>
         </Flexbox>
         <Flexbox className={styles.action} horizontal>
           <ActionIcon

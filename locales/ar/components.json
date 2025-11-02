@@ -1,4 +1,9 @@
 {
+  "ArgsInput": {
+    "addArgument": "إضافة وسيط",
+    "argumentPlaceholder": "الوسيط {{index}}",
+    "enterFirstArgument": "أدخل الوسيط الأول..."
+  },
   "DragUpload": {
     "dragDesc": "اسحب الملفات هنا، يدعم تحميل عدة صور.",
     "dragFileDesc": "اسحب الصور والملفات هنا، يدعم تحميل عدة صور وملفات.",
@@ -45,6 +50,10 @@
     "total": {
       "fileCount": "إجمالي {{count}} عنصر",
       "selectedCount": "تم تحديد {{count}} عنصر"
+    },
+    "view": {
+      "list": "عرض القائمة",
+      "masonry": "عرض الشبكة"
     }
   },
   "FileParsingStatus": {
@@ -68,6 +77,35 @@
   "GoBack": {
     "back": "عودة"
   },
+  "HtmlPreview": {
+    "actions": {
+      "download": "تنزيل",
+      "preview": "معاينة"
+    },
+    "iframeTitle": "معاينة HTML",
+    "mode": {
+      "code": "رمز",
+      "preview": "معاينة"
+    },
+    "title": "معاينة HTML"
+  },
+  "ImageUpload": {
+    "actions": {
+      "changeImage": "انقر لتغيير الصورة",
+      "dropMultipleFiles": "لا يدعم تحميل ملفات متعددة في آن واحد، سيتم استخدام الملف الأول فقط"
+    },
+    "placeholder": {
+      "primary": "إضافة صورة",
+      "secondary": "انقر أو اسحب للإرفاق"
+    }
+  },
+  "KeyValueEditor": {
+    "addButton": "إضافة صف جديد",
+    "deleteTooltip": "حذف",
+    "duplicateKeyError": "يجب أن يكون اسم المفتاح فريدًا",
+    "keyPlaceholder": "المفتاح",
+    "valuePlaceholder": "القيمة"
+  },
   "MaxTokenSlider": {
     "unlimited": "غير محدود"
   },
@@ -80,6 +118,7 @@
       "reasoning": "يدعم هذا النموذج التفكير العميق",
       "search": "يدعم هذا النموذج البحث عبر الإنترنت",
       "tokens": "يدعم هذا النموذج حتى {{tokens}} رمزًا في جلسة واحدة",
+      "video": "هذا النموذج يدعم التعرف على الفيديو",
       "vision": "يدعم هذا النموذج التعرف البصري"
     },
     "removed": "هذا النموذج لم يعد متوفر في القائمة، سيتم إزالته تلقائيًا إذا تم إلغاء تحديده"
@@ -90,6 +129,31 @@
     "goToSettings": "اذهب إلى الإعدادات",
     "provider": "مزود",
     "title": "نموذج"
+  },
+  "MultiImagesUpload": {
+    "actions": {
+      "uploadMore": "انقر أو اسحب لإضافة المزيد"
+    },
+    "modal": {
+      "complete": "اكتمل",
+      "newFileIndicator": "جديد",
+      "selectImageToPreview": "يرجى اختيار صورة للمعاينة",
+      "title": "إدارة الصور ({{count}})",
+      "upload": "تحميل الصور"
+    },
+    "placeholder": {
+      "primary": "انقر أو اسحب لتحميل الصور",
+      "secondary": "يدعم اختيار عدة صور"
+    },
+    "progress": {
+      "uploadingWithCount": "تم تحميل {{completed}} من أصل {{total}}"
+    },
+    "validation": {
+      "fileSizeExceeded": "تجاوز حجم الملف الحد المسموح",
+      "fileSizeExceededDetail": "{{fileName}} ({{actualSize}}) يتجاوز الحد الأقصى للحجم {{maxSize}}",
+      "fileSizeExceededMultiple": "{{count}} ملفات تتجاوز الحد الأقصى للحجم {{maxSize}}: {{fileList}}",
+      "imageCountExceeded": "تجاوز عدد الصور الحد المسموح"
+    }
   },
   "OllamaSetupGuide": {
     "action": {

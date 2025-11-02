@@ -1,58 +1,77 @@
+import { MCP } from '@lobehub/icons';
 import { Icon } from '@lobehub/ui';
-import { Bot, Brain, BrainCircuit, House, Puzzle } from 'lucide-react';
-import { usePathname } from 'next/navigation';
+import { Bot, Brain, BrainCircuit, House } from 'lucide-react';
 import { ReactNode, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import urlJoin from 'url-join';
+import { Link, useLocation } from 'react-router-dom';
 
 import type { MenuProps } from '@/components/Menu';
-import { useDiscoverTab } from '@/hooks/useDiscoverTab';
 import { DiscoverTab } from '@/types/discover';
 
 const ICON_SIZE = 16;
 
 export const useNav = () => {
-  const pathname = usePathname();
-  const type = useDiscoverTab();
+  const location = useLocation();
   const { t } = useTranslation('discover');
 
   const activeKey = useMemo(() => {
+    const pathname = location.pathname;
     for (const value of Object.values(DiscoverTab)) {
-      if (pathname === '/discover/search') {
-        return type;
-      } else if (pathname.includes(urlJoin('/discover', value))) {
+      if (pathname.includes(`/${DiscoverTab.Plugins}`)) {
+        return DiscoverTab.Mcp;
+      } else if (pathname.includes(`/${value}`)) {
         return value;
       }
     }
     return DiscoverTab.Home;
-  }, [pathname]);
+  }, [location.pathname]);
 
   const items: MenuProps['items'] = useMemo(
     () => [
       {
         icon: <Icon icon={House} size={ICON_SIZE} />,
         key: DiscoverTab.Home,
-        label: t('tab.home'),
+        label: (
+          <Link style={{ color: 'inherit' }} to={'/'}>
+            {t('tab.home')}
+          </Link>
+        ),
       },
       {
         icon: <Icon icon={Bot} size={ICON_SIZE} />,
         key: DiscoverTab.Assistants,
-        label: t('tab.assistants'),
+        label: (
+          <Link style={{ color: 'inherit' }} to={`/${DiscoverTab.Assistants}`}>
+            {t('tab.assistant')}
+          </Link>
+        ),
       },
       {
-        icon: <Icon icon={Puzzle} size={ICON_SIZE} />,
-        key: DiscoverTab.Plugins,
-        label: t('tab.plugins'),
+        icon: <MCP className={'anticon'} size={ICON_SIZE} />,
+        key: DiscoverTab.Mcp,
+        label: (
+          <Link style={{ color: 'inherit' }} to={`/${DiscoverTab.Mcp}`}>
+            {`MCP ${t('tab.plugin')}`}
+          </Link>
+        ),
       },
       {
         icon: <Icon icon={Brain} size={ICON_SIZE} />,
         key: DiscoverTab.Models,
-        label: t('tab.models'),
+        label: (
+          <Link style={{ color: 'inherit' }} to={`/${DiscoverTab.Models}`}>
+            {t('tab.model')}
+          </Link>
+        ),
       },
       {
         icon: <Icon icon={BrainCircuit} size={ICON_SIZE} />,
         key: DiscoverTab.Providers,
-        label: t('tab.providers'),
+        label: (
+          <Link style={{ color: 'inherit' }} to={`/${DiscoverTab.Providers}`}>
+            {t('tab.provider')}
+          </Link>
+        ),
       },
     ],
     [t],

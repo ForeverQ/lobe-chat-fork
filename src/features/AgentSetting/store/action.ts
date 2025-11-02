@@ -1,12 +1,16 @@
-import { DeepPartial } from 'utility-types';
+import {
+  chainPickEmoji,
+  chainSummaryAgentName,
+  chainSummaryDescription,
+  chainSummaryTags,
+} from '@lobechat/prompts';
+import { TraceNameMap, TracePayload, TraceTopicType } from '@lobechat/types';
+import { getSingletonAnalyticsOptional } from '@lobehub/analytics';
+import type { PartialDeep } from 'type-fest';
 import { StateCreator } from 'zustand/vanilla';
 
-import { chainPickEmoji } from '@/chains/pickEmoji';
-import { chainSummaryAgentName } from '@/chains/summaryAgentName';
-import { chainSummaryDescription } from '@/chains/summaryDescription';
-import { chainSummaryTags } from '@/chains/summaryTags';
-import { TraceNameMap, TracePayload, TraceTopicType } from '@/const/trace';
 import { chatService } from '@/services/chat';
+import { globalHelpers } from '@/store/global/helpers';
 import { useUserStore } from '@/store/user';
 import { systemAgentSelectors } from '@/store/user/slices/settings/selectors';
 import { LobeAgentChatConfig, LobeAgentConfig } from '@/types/agent';
@@ -56,7 +60,7 @@ export interface Action extends PublicAction {
   resetAgentConfig: () => Promise<void>;
 
   resetAgentMeta: () => Promise<void>;
-  setAgentConfig: (config: DeepPartial<LobeAgentConfig>) => Promise<void>;
+  setAgentConfig: (config: PartialDeep<LobeAgentConfig>) => Promise<void>;
   setAgentMeta: (meta: Partial<MetaData>) => Promise<void>;
 
   setChatConfig: (config: Partial<LobeAgentChatConfig>) => Promise<void>;
@@ -117,7 +121,10 @@ export const store: StateCreator<Store, [['zustand/devtools', never]]> = (set, g
         updateLoadingState('description', loading);
       },
       onMessageHandle: streamUpdateMetaString('description'),
-      params: merge(get().internal_getSystemAgentForMeta(), chainSummaryDescription(systemRole)),
+      params: merge(
+        get().internal_getSystemAgentForMeta(),
+        chainSummaryDescription(systemRole, globalHelpers.getCurrentLanguage()),
+      ),
       trace: get().getCurrentTracePayload({ traceName: TraceNameMap.SummaryAgentDescription }),
     });
   },
@@ -144,7 +151,10 @@ export const store: StateCreator<Store, [['zustand/devtools', never]]> = (set, g
       onMessageHandle: streamUpdateMetaArray('tags'),
       params: merge(
         get().internal_getSystemAgentForMeta(),
-        chainSummaryTags([meta.title, meta.description, systemRole].filter(Boolean).join(',')),
+        chainSummaryTags(
+          [meta.title, meta.description, systemRole].filter(Boolean).join(','),
+          globalHelpers.getCurrentLanguage(),
+        ),
       ),
       trace: get().getCurrentTracePayload({ traceName: TraceNameMap.SummaryAgentTags }),
     });
@@ -171,7 +181,10 @@ export const store: StateCreator<Store, [['zustand/devtools', never]]> = (set, g
       onMessageHandle: streamUpdateMetaString('title'),
       params: merge(
         get().internal_getSystemAgentForMeta(),
-        chainSummaryAgentName([meta.description, systemRole].filter(Boolean).join(',')),
+        chainSummaryAgentName(
+          [meta.description, systemRole].filter(Boolean).join(','),
+          globalHelpers.getCurrentLanguage(),
+        ),
       ),
       trace: get().getCurrentTracePayload({ traceName: TraceNameMap.SummaryAgentTitle }),
     });
@@ -260,7 +273,31 @@ export const store: StateCreator<Store, [['zustand/devtools', never]]> = (set, g
     await get().dispatchConfig({ config, type: 'update' });
   },
   setAgentMeta: async (meta) => {
-    await get().dispatchMeta({ type: 'update', value: meta });
+    const { dispatchMeta, id, meta: currentMeta } = get();
+    const mergedMeta = merge(currentMeta, meta);
+
+    try {
+      const analytics = getSingletonAnalyticsOptional();
+      if (analytics) {
+        analytics.track({
+          name: 'agent_meta_updated',
+          properties: {
+            assistant_avatar: mergedMeta.avatar,
+            assistant_background_color: mergedMeta.backgroundColor,
+            assistant_description: mergedMeta.description,
+            assistant_name: mergedMeta.title,
+            assistant_tags: mergedMeta.tags,
+            is_inbox: id === 'inbox',
+            session_id: id || 'unknown',
+            timestamp: Date.now(),
+            user_id: useUserStore.getState().user?.id || 'anonymous',
+          },
+        });
+      }
+    } catch (error) {
+      console.warn('Failed to track agent meta update:', error);
+    }
+    await dispatchMeta({ type: 'update', value: meta });
   },
 
   setChatConfig: async (config) => {

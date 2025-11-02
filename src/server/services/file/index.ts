@@ -1,9 +1,9 @@
+import { LobeChatDatabase } from '@lobechat/database';
 import { TRPCError } from '@trpc/server';
 
 import { serverDBEnv } from '@/config/db';
 import { FileModel } from '@/database/models/file';
 import { FileItem } from '@/database/schemas';
-import { LobeChatDatabase } from '@/database/type';
 import { TempFileManager } from '@/server/utils/tempFileManager';
 import { nanoid } from '@/utils/uuid';
 
@@ -78,6 +78,20 @@ export class FileService {
    */
   public async getFullFileUrl(url?: string | null, expiresIn?: number): Promise<string> {
     return this.impl.getFullFileUrl(url, expiresIn);
+  }
+
+  /**
+   * 从完整 URL中 提取 key
+   */
+  public getKeyFromFullUrl(url: string): string {
+    return this.impl.getKeyFromFullUrl(url);
+  }
+
+  /**
+   * 上传媒体文件
+   */
+  public async uploadMedia(key: string, buffer: Buffer): Promise<{ key: string }> {
+    return this.impl.uploadMedia(key, buffer);
   }
 
   async downloadFileToLocal(

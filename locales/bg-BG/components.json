@@ -1,4 +1,9 @@
 {
+  "ArgsInput": {
+    "addArgument": "Добави параметър",
+    "argumentPlaceholder": "Параметър {{index}}",
+    "enterFirstArgument": "Въведете първия параметър..."
+  },
   "DragUpload": {
     "dragDesc": "Плъзнете файлове тук, поддържа качване на множество изображения.",
     "dragFileDesc": "Плъзнете изображения и файлове тук, поддържа качване на множество изображения и файлове.",
@@ -45,6 +50,10 @@
     "total": {
       "fileCount": "Общо {{count}} елемента",
       "selectedCount": "Избрани {{count}} елемента"
+    },
+    "view": {
+      "list": "Изглед като списък",
+      "masonry": "Изглед като мрежа"
     }
   },
   "FileParsingStatus": {
@@ -68,6 +77,35 @@
   "GoBack": {
     "back": "Назад"
   },
+  "HtmlPreview": {
+    "actions": {
+      "download": "Изтегляне",
+      "preview": "Преглед"
+    },
+    "iframeTitle": "HTML Преглед",
+    "mode": {
+      "code": "Код",
+      "preview": "Преглед"
+    },
+    "title": "HTML Преглед"
+  },
+  "ImageUpload": {
+    "actions": {
+      "changeImage": "Кликнете, за да смените изображението",
+      "dropMultipleFiles": "Не се поддържа качване на няколко файла едновременно, ще бъде използван само първият файл"
+    },
+    "placeholder": {
+      "primary": "Добавяне на изображение",
+      "secondary": "Кликнете или плъзнете, за да качите"
+    }
+  },
+  "KeyValueEditor": {
+    "addButton": "Добавяне на ред",
+    "deleteTooltip": "Изтриване",
+    "duplicateKeyError": "Името на ключа трябва да е уникално",
+    "keyPlaceholder": "Ключ",
+    "valuePlaceholder": "Стойност"
+  },
   "MaxTokenSlider": {
     "unlimited": "Неограничено"
   },
@@ -80,6 +118,7 @@
       "reasoning": "Този модел поддържа дълбочинно мислене",
       "search": "Този модел поддържа търсене в мрежата",
       "tokens": "Този модел поддържа до {{tokens}} токена за една сесия",
+      "video": "Този модел поддържа разпознаване на видео",
       "vision": "Този модел поддържа визуално разпознаване"
     },
     "removed": "Този модел не се намира в списъка. Ако бъде отменен изборът, той ще бъде автоматично премахнат."
@@ -90,6 +129,31 @@
     "goToSettings": "Отидете в настройките",
     "provider": "Доставчик",
     "title": "Модел"
+  },
+  "MultiImagesUpload": {
+    "actions": {
+      "uploadMore": "Кликнете или плъзнете, за да качите още"
+    },
+    "modal": {
+      "complete": "Готово",
+      "newFileIndicator": "Нов",
+      "selectImageToPreview": "Моля, изберете изображение за преглед",
+      "title": "Управление на изображенията ({{count}})",
+      "upload": "Качване на изображение"
+    },
+    "placeholder": {
+      "primary": "Кликнете или плъзнете, за да качите изображение",
+      "secondary": "Поддържа избор на няколко изображения"
+    },
+    "progress": {
+      "uploadingWithCount": "{{completed}}/{{total}} качени"
+    },
+    "validation": {
+      "fileSizeExceeded": "Превишен допустим размер на файла",
+      "fileSizeExceededDetail": "{{fileName}} ({{actualSize}}) надвишава максимално допустимия размер {{maxSize}}",
+      "fileSizeExceededMultiple": "{{count}} файла надвишават максимално допустимия размер {{maxSize}}: {{fileList}}",
+      "imageCountExceeded": "Надвишен е допустимият брой изображения"
+    }
   },
   "OllamaSetupGuide": {
     "action": {

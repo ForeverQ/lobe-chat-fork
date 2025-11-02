@@ -16,6 +16,12 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn((href) => href),
   })),
 }));
+vi.mock('nextjs-toploader/app', () => ({
+  useRouter: vi.fn(() => ({
+    push: vi.fn((href) => href),
+    replace: vi.fn((href) => href),
+  })),
+}));
 vi.mock('@/hooks/useQuery', () => ({
   useQuery: vi.fn(() => ({})),
 }));
@@ -36,7 +42,7 @@ describe('useOpenChatSettings', () => {
     vi.mocked(useSessionStore).mockReturnValue(INBOX_SESSION_ID);
     const { result } = renderHook(() => useOpenChatSettings());
 
-    expect(result.current()).toBe('/settings/agent'); // Assuming openSettings returns a function
+    expect(result.current()).toBe('/settings?active=agent'); // Assuming openSettings returns a function
   });
 
   it('should handle mobile route for chat settings', () => {

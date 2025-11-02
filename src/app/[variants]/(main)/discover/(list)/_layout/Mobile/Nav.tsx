@@ -6,10 +6,10 @@ import { createStyles } from 'antd-style';
 import { MenuIcon } from 'lucide-react';
 import { memo, useState } from 'react';
 import { Flexbox } from 'react-layout-kit';
-import urlJoin from 'url-join';
+import { useNavigate } from 'react-router-dom';
 
 import Menu from '@/components/Menu';
-import { useQueryRoute } from '@/hooks/useQueryRoute';
+import { withSuspense } from '@/components/withSuspense';
 import { DiscoverTab } from '@/types/discover';
 
 import { useNav } from '../../../features/useNav';
@@ -37,7 +37,7 @@ const Nav = memo(() => {
   const [open, setOpen] = useState(false);
   const { styles, theme } = useStyles();
   const { items, activeKey, activeItem } = useNav();
-  const router = useQueryRoute();
+  const navigate = useNavigate();
 
   return (
     <>
@@ -78,9 +78,9 @@ const Nav = memo(() => {
           items={items}
           onClick={({ key }) => {
             if (key === DiscoverTab.Home) {
-              router.push('/discover');
+              navigate('/');
             } else {
-              router.push(urlJoin('/discover', key));
+              navigate(`/${key}`);
             }
           }}
           selectable
@@ -91,4 +91,4 @@ const Nav = memo(() => {
   );
 });
 
-export default Nav;
+export default withSuspense(Nav);

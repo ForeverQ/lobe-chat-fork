@@ -1,5 +1,7 @@
-import { Alert, CopyButton, Highlighter, Icon, Markdown, Segmented } from '@lobehub/ui';
-import { Descriptions, Typography } from 'antd';
+import { CrawlResult } from '@lobechat/types';
+import { CrawlSuccessResult } from '@lobechat/web-crawler';
+import { Alert, CopyButton, Highlighter, Icon, Markdown, Segmented, Text } from '@lobehub/ui';
+import { Descriptions } from 'antd';
 import { createStyles } from 'antd-style';
 import { ExternalLink } from 'lucide-react';
 import Link from 'next/link';
@@ -7,8 +9,7 @@ import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Flexbox } from 'react-layout-kit';
 
-import { CRAWL_CONTENT_LIMITED_COUNT } from '@/tools/web-browsing/const';
-import { CrawlResult } from '@/types/tool/crawler';
+import { CRAWL_CONTENT_LIMITED_COUNT } from '../../const';
 
 const useStyles = createStyles(({ token, css }) => {
   return {
@@ -132,7 +133,7 @@ const PageContent = memo<PageContentProps>(({ result }) => {
     );
   }
 
-  const { url, title, description, content } = result.data;
+  const { url, title, description, content, siteName } = result.data as CrawlSuccessResult;
   return (
     <Flexbox gap={24}>
       <Flexbox gap={8}>
@@ -148,15 +149,12 @@ const PageContent = memo<PageContentProps>(({ result }) => {
           </Flexbox>
         </Flexbox>
         {description && (
-          <Typography.Paragraph
-            className={styles.description}
-            ellipsis={{ expandable: false, rows: 4 }}
-          >
+          <Text className={styles.description} ellipsis={{ rows: 4 }}>
             {description}
-          </Typography.Paragraph>
+          </Text>
         )}
         <Flexbox align={'center'} className={styles.url} gap={4} horizontal>
-          {result.data.siteName && <div>{result.data.siteName} · </div>}
+          {siteName && <div>{siteName} · </div>}
           <Link
             className={styles.url}
             href={url}

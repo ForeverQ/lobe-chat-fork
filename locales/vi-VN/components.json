@@ -1,4 +1,9 @@
 {
+  "ArgsInput": {
+    "addArgument": "Thêm tham số",
+    "argumentPlaceholder": "Tham số {{index}}",
+    "enterFirstArgument": "Nhập tham số đầu tiên..."
+  },
   "DragUpload": {
     "dragDesc": "Kéo và thả tệp vào đây, hỗ trợ tải lên nhiều hình ảnh.",
     "dragFileDesc": "Kéo và thả hình ảnh và tệp vào đây, hỗ trợ tải lên nhiều hình ảnh và tệp.",
@@ -45,6 +50,10 @@
     "total": {
       "fileCount": "Tổng cộng {{count}} mục",
       "selectedCount": "Đã chọn {{count}} mục"
+    },
+    "view": {
+      "list": "Chế độ danh sách",
+      "masonry": "Chế độ lưới"
     }
   },
   "FileParsingStatus": {
@@ -68,6 +77,35 @@
   "GoBack": {
     "back": "Quay lại"
   },
+  "HtmlPreview": {
+    "actions": {
+      "download": "Tải xuống",
+      "preview": "Xem trước"
+    },
+    "iframeTitle": "Xem trước HTML",
+    "mode": {
+      "code": "Mã",
+      "preview": "Xem trước"
+    },
+    "title": "Xem trước HTML"
+  },
+  "ImageUpload": {
+    "actions": {
+      "changeImage": "Nhấn để thay đổi hình ảnh",
+      "dropMultipleFiles": "Không hỗ trợ tải lên nhiều tệp cùng lúc, chỉ sử dụng tệp đầu tiên"
+    },
+    "placeholder": {
+      "primary": "Thêm hình ảnh",
+      "secondary": "Nhấn hoặc kéo thả để tải lên"
+    }
+  },
+  "KeyValueEditor": {
+    "addButton": "Thêm một dòng",
+    "deleteTooltip": "Xóa",
+    "duplicateKeyError": "Tên khóa phải duy nhất",
+    "keyPlaceholder": "Khóa",
+    "valuePlaceholder": "Giá trị"
+  },
   "MaxTokenSlider": {
     "unlimited": "Không giới hạn"
   },
@@ -80,6 +118,7 @@
       "reasoning": "Mô hình này hỗ trợ tư duy sâu sắc",
       "search": "Mô hình này hỗ trợ tìm kiếm trực tuyến",
       "tokens": "Mỗi phiên của mô hình này hỗ trợ tối đa {{tokens}} Tokens",
+      "video": "Mô hình này hỗ trợ nhận dạng video",
       "vision": "Mô hình này hỗ trợ nhận diện hình ảnh"
     },
     "removed": "Mô hình này không còn trong danh sách, nếu bỏ chọn sẽ tự động xóa"
@@ -90,6 +129,31 @@
     "goToSettings": "Đi đến cài đặt",
     "provider": "Nhà cung cấp",
     "title": "Mô hình"
+  },
+  "MultiImagesUpload": {
+    "actions": {
+      "uploadMore": "Nhấn hoặc kéo thả để tải lên thêm"
+    },
+    "modal": {
+      "complete": "Hoàn thành",
+      "newFileIndicator": "Mới thêm",
+      "selectImageToPreview": "Vui lòng chọn hình ảnh để xem trước",
+      "title": "Quản lý hình ảnh ({{count}})",
+      "upload": "Tải lên hình ảnh"
+    },
+    "placeholder": {
+      "primary": "Nhấn hoặc kéo thả để tải lên hình ảnh",
+      "secondary": "Hỗ trợ chọn nhiều hình ảnh"
+    },
+    "progress": {
+      "uploadingWithCount": "Đã tải lên {{completed}}/{{total}}"
+    },
+    "validation": {
+      "fileSizeExceeded": "Kích thước tệp vượt quá giới hạn",
+      "fileSizeExceededDetail": "{{fileName}} ({{actualSize}}) vượt quá kích thước tối đa cho phép là {{maxSize}}",
+      "fileSizeExceededMultiple": "{{count}} tệp vượt quá kích thước tối đa cho phép là {{maxSize}}: {{fileList}}",
+      "imageCountExceeded": "Số lượng hình ảnh vượt quá giới hạn"
+    }
   },
   "OllamaSetupGuide": {
     "action": {

@@ -1,14 +1,13 @@
 import dynamic from 'next/dynamic';
 
-import { analyticsEnv } from '@/config/analytics';
 import { isDesktop } from '@/const/version';
+import { analyticsEnv } from '@/envs/analytics';
 
 import Desktop from './Desktop';
 import Google from './Google';
 import Vercel from './Vercel';
 
 const Plausible = dynamic(() => import('./Plausible'));
-const Posthog = dynamic(() => import('./Posthog'));
 const Umami = dynamic(() => import('./Umami'));
 const Clarity = dynamic(() => import('./Clarity'));
 const ReactScan = dynamic(() => import('./ReactScan'));
@@ -22,13 +21,6 @@ const Analytics = () => {
         <Plausible
           domain={analyticsEnv.PLAUSIBLE_DOMAIN}
           scriptBaseUrl={analyticsEnv.PLAUSIBLE_SCRIPT_BASE_URL}
-        />
-      )}
-      {analyticsEnv.ENABLED_POSTHOG_ANALYTICS && (
-        <Posthog
-          debug={analyticsEnv.DEBUG_POSTHOG_ANALYTICS}
-          host={analyticsEnv.POSTHOG_HOST!}
-          token={analyticsEnv.POSTHOG_KEY}
         />
       )}
       {analyticsEnv.ENABLED_UMAMI_ANALYTICS && (

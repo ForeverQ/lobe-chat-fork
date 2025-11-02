@@ -1,4 +1,9 @@
 {
+  "ArgsInput": {
+    "addArgument": "Parameter hinzufügen",
+    "argumentPlaceholder": "Parameter {{index}}",
+    "enterFirstArgument": "Geben Sie den ersten Parameter ein..."
+  },
   "DragUpload": {
     "dragDesc": "Ziehen Sie Dateien hierher, um mehrere Bilder hochzuladen.",
     "dragFileDesc": "Ziehen Sie Bilder und Dateien hierher, um mehrere Bilder und Dateien hochzuladen.",
@@ -45,6 +50,10 @@
     "total": {
       "fileCount": "Insgesamt {{count}} Elemente",
       "selectedCount": "Ausgewählt {{count}} Elemente"
+    },
+    "view": {
+      "list": "Listenansicht",
+      "masonry": "Kachelansicht"
     }
   },
   "FileParsingStatus": {
@@ -68,6 +77,35 @@
   "GoBack": {
     "back": "Zurück"
   },
+  "HtmlPreview": {
+    "actions": {
+      "download": "Herunterladen",
+      "preview": "Vorschau"
+    },
+    "iframeTitle": "HTML-Vorschau",
+    "mode": {
+      "code": "Code",
+      "preview": "Vorschau"
+    },
+    "title": "HTML-Vorschau"
+  },
+  "ImageUpload": {
+    "actions": {
+      "changeImage": "Klicken, um das Bild zu ändern",
+      "dropMultipleFiles": "Das Hochladen mehrerer Dateien wird nicht unterstützt, es wird nur die erste Datei verwendet"
+    },
+    "placeholder": {
+      "primary": "Bild hinzufügen",
+      "secondary": "Klicken oder ziehen, um hochzuladen"
+    }
+  },
+  "KeyValueEditor": {
+    "addButton": "Neue Zeile hinzufügen",
+    "deleteTooltip": "Löschen",
+    "duplicateKeyError": "Der Schlüsselname muss eindeutig sein",
+    "keyPlaceholder": "Schlüssel",
+    "valuePlaceholder": "Wert"
+  },
   "MaxTokenSlider": {
     "unlimited": "Unbegrenzt"
   },
@@ -80,6 +118,7 @@
       "reasoning": "Dieses Modell unterstützt tiefes Denken",
       "search": "Dieses Modell unterstützt die Online-Suche",
       "tokens": "Dieses Modell unterstützt maximal {{tokens}} Tokens pro Sitzung.",
+      "video": "Dieses Modell unterstützt die Videoerkennung",
       "vision": "Dieses Modell unterstützt die visuelle Erkennung."
     },
     "removed": "Das Modell wurde aus der Liste entfernt. Wenn Sie die Auswahl aufheben, wird es automatisch entfernt."
@@ -90,6 +129,31 @@
     "goToSettings": "Zu den Einstellungen gehen",
     "provider": "Anbieter",
     "title": "Modell"
+  },
+  "MultiImagesUpload": {
+    "actions": {
+      "uploadMore": "Klicken oder ziehen, um mehr hochzuladen"
+    },
+    "modal": {
+      "complete": "Fertig",
+      "newFileIndicator": "Neu",
+      "selectImageToPreview": "Bitte wählen Sie ein Bild zur Vorschau aus",
+      "title": "Bilder verwalten ({{count}})",
+      "upload": "Bild hochladen"
+    },
+    "placeholder": {
+      "primary": "Klicken oder ziehen, um Bilder hochzuladen",
+      "secondary": "Mehrere Bilder können ausgewählt werden"
+    },
+    "progress": {
+      "uploadingWithCount": "{{completed}}/{{total}} hochgeladen"
+    },
+    "validation": {
+      "fileSizeExceeded": "Maximale Dateigröße überschritten",
+      "fileSizeExceededDetail": "{{fileName}} ({{actualSize}}) überschreitet die maximal zulässige Größe von {{maxSize}}",
+      "fileSizeExceededMultiple": "{{count}} Dateien überschreiten die maximal zulässige Größe von {{maxSize}}: {{fileList}}",
+      "imageCountExceeded": "Maximale Anzahl an Bildern überschritten"
+    }
   },
   "OllamaSetupGuide": {
     "action": {

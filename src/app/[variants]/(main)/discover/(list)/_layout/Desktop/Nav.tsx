@@ -2,17 +2,18 @@
 
 import { Tabs } from '@lobehub/ui';
 import { createStyles } from 'antd-style';
-import { usePathname } from 'next/navigation';
 import { rgba } from 'polished';
 import { memo, useState } from 'react';
 import { Center, Flexbox } from 'react-layout-kit';
-import urlJoin from 'url-join';
+import { useLocation, useNavigate } from 'react-router-dom';
 
-import { useQueryRoute } from '@/hooks/useQueryRoute';
+import { withSuspense } from '@/components/withSuspense';
+import { useQuery } from '@/hooks/useQuery';
 import { DiscoverTab } from '@/types/discover';
 
-import { MAX_WIDTH } from '../../../features/const';
+import { MAX_WIDTH, SCROLL_PARENT_ID } from '../../../features/const';
 import { useNav } from '../../../features/useNav';
+import SortButton from '../../features/SortButton';
 import { useScroll } from './useScroll';
 
 export const useStyles = createStyles(({ cx, stylish, css, token }) => ({
@@ -39,10 +40,11 @@ export const useStyles = createStyles(({ cx, stylish, css, token }) => ({
 
 const Nav = memo(() => {
   const [hide, setHide] = useState(false);
-  const pathname = usePathname();
+  const location = useLocation();
+  const navigate = useNavigate();
   const { cx, styles } = useStyles();
   const { items, activeKey } = useNav();
-  const router = useQueryRoute();
+  const { q } = useQuery() as { q?: string };
 
   useScroll((scroll, delta) => {
     if (delta < 0) {
@@ -54,12 +56,14 @@ const Nav = memo(() => {
     }
   });
 
-  const isHome = pathname === '/discover';
-  const isProviders = pathname === '/discover/providers';
+  const isHome = location.pathname === '/';
 
   return (
     <Center className={cx(styles.container, hide && styles.hide)} height={46}>
       <Flexbox
+        align={'center'}
+        horizontal
+        justify={'space-between'}
         style={{
           maxWidth: MAX_WIDTH,
           width: '100%',
@@ -71,19 +75,21 @@ const Nav = memo(() => {
             compact
             items={items as any}
             onChange={(key) => {
-              const href = key === DiscoverTab.Home ? '/discover' : urlJoin('/discover', key);
-              router.push(href);
+              const path = key === DiscoverTab.Home ? '/' : `/${key}`;
+              const search = q ? `?q=${encodeURIComponent(q)}` : '';
+              navigate(path + search, { replace: true });
+              const scrollableElement = document?.querySelector(`#${SCROLL_PARENT_ID}`);
+              if (!scrollableElement) return;
+              scrollableElement.scrollTo({ behavior: 'smooth', top: 0 });
             }}
             style={{
               fontWeight: 500,
             }}
           />
         </Flexbox>
-        {!isHome && !isProviders && (
+        {!isHome && (
           <Flexbox align={'center'} gap={4} horizontal>
-            {/* ↓ cloud slot ↓ */}
-
-            {/* ↑ cloud slot ↑ */}
+            <SortButton />
           </Flexbox>
         )}
       </Flexbox>
@@ -91,4 +97,4 @@ const Nav = memo(() => {
   );
 });
 
-export default Nav;
+export default withSuspense(Nav);

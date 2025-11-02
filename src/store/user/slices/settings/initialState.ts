@@ -1,11 +1,10 @@
-import { DeepPartial } from 'utility-types';
-
-import { DEFAULT_SETTINGS } from '@/const/settings';
-import { UserSettings } from '@/types/user/settings';
+import { DEFAULT_SETTINGS } from '@lobechat/const';
+import { UserSettings } from '@lobechat/types';
+import type { PartialDeep } from 'type-fest';
 
 export interface UserSettingsState {
   defaultSettings: UserSettings;
-  settings: DeepPartial<UserSettings>;
+  settings: PartialDeep<UserSettings>;
   updateSettingsSignal?: AbortController;
 }
 

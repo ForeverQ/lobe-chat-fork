@@ -1,12 +1,11 @@
-import { Tooltip } from '@lobehub/ui';
-import { Typography } from 'antd';
+import { ChatFileChunk } from '@lobechat/types';
+import { Text, Tooltip } from '@lobehub/ui';
 import { memo } from 'react';
 import { Center, Flexbox } from 'react-layout-kit';
 
 import FileIcon from '@/components/FileIcon';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useChatStore } from '@/store/chat';
-import { ChatFileChunk } from '@/types/message';
 
 import { useStyles } from './style';
 
@@ -33,7 +32,7 @@ const ChunkItem = memo<ChunkItemProps>(({ id, fileId, similarity, text, filename
     >
       <FileIcon fileName={filename} fileType={fileType} size={20} variant={'raw'} />
       <Flexbox gap={12} horizontal justify={'space-between'} style={{ maxWidth: 200 }}>
-        <Typography.Text ellipsis={{ tooltip: false }}>{filename}</Typography.Text>
+        <Text ellipsis>{filename}</Text>
         {/*<Typography.Text*/}
         {/*  ellipsis={{ suffix: '...' }}*/}
         {/*  style={{ fontSize: 12, lineHeight: 1 }}*/}

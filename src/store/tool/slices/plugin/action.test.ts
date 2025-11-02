@@ -1,9 +1,10 @@
+import { LobeTool } from '@lobechat/types';
 import { LobeChatPluginMeta } from '@lobehub/chat-plugin-sdk';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { pluginService } from '@/services/plugin';
-import { LobeTool } from '@/types/tool';
+import { DiscoverPluginItem } from '@/types/discover';
 import { merge } from '@/utils/merge';
 
 import { useToolStore } from '../../store';
@@ -65,7 +66,7 @@ describe('useToolStore:plugin', () => {
         loadPluginStore: loadPluginStoreMock,
         installPlugins: installPluginsMock,
         installedPlugins: [{ identifier: 'abc' }] as LobeTool[],
-        pluginStoreList: [{ identifier: 'abc' }] as LobeChatPluginMeta[],
+        oldPluginItems: [{ identifier: 'abc' }] as DiscoverPluginItem[],
       });
 
       const { result } = renderHook(() => useToolStore());

@@ -1,9 +1,8 @@
+import { chainLangDetect, chainTranslate } from '@lobechat/prompts';
+import { ChatTranslate, TraceNameMap, TracePayload } from '@lobechat/types';
 import { produce } from 'immer';
 import { StateCreator } from 'zustand/vanilla';
 
-import { chainLangDetect } from '@/chains/langDetect';
-import { chainTranslate } from '@/chains/translate';
-import { TraceNameMap, TracePayload } from '@/const/trace';
 import { supportLocales } from '@/locales/resources';
 import { chatService } from '@/services/chat';
 import { messageService } from '@/services/message';
@@ -11,7 +10,6 @@ import { chatSelectors } from '@/store/chat/selectors';
 import { ChatStore } from '@/store/chat/store';
 import { useUserStore } from '@/store/user';
 import { systemAgentSelectors } from '@/store/user/selectors';
-import { ChatTranslate } from '@/types/message';
 import { merge } from '@/utils/merge';
 import { setNamespace } from '@/utils/storeDebug';
 
@@ -54,7 +52,7 @@ export const chatTranslate: StateCreator<
     // create translate extra
     await updateMessageTranslate(id, { content: '', from: '', to: targetLang });
 
-    internal_toggleChatLoading(true, id, n('translateMessage(start)', { id }) as string);
+    internal_toggleChatLoading(true, id, n('translateMessage(start)', { id }));
 
     let content = '';
     let from = '';

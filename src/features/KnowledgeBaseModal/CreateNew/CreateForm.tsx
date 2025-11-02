@@ -7,9 +7,10 @@ import { CreateKnowledgeBaseParams } from '@/types/knowledgeBase';
 
 interface CreateFormProps {
   onClose?: () => void;
+  onSuccess?: (id: string) => void;
 }
 
-const CreateForm = memo<CreateFormProps>(({ onClose }) => {
+const CreateForm = memo<CreateFormProps>(({ onClose, onSuccess }) => {
   const { t } = useTranslation('knowledgeBase');
   const [loading, setLoading] = useState(false);
   const createNewKnowledgeBase = useKnowledgeBaseStore((s) => s.createNewKnowledgeBase);
@@ -18,9 +19,16 @@ const CreateForm = memo<CreateFormProps>(({ onClose }) => {
     setLoading(true);
 
     try {
-      await createNewKnowledgeBase(values);
+      const id = await createNewKnowledgeBase(values);
       setLoading(false);
       onClose?.();
+
+      // Call onSuccess callback if provided, otherwise navigate directly
+      if (onSuccess) {
+        onSuccess(id);
+      } else {
+        window.location.href = `/knowledge/bases/${id}`;
+      }
     } catch (e) {
       console.error(e);
       setLoading(false);

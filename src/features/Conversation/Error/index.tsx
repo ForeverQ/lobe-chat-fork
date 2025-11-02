@@ -1,3 +1,5 @@
+import { AgentRuntimeErrorType, ILobeAgentRuntimeErrorType } from '@lobechat/model-runtime';
+import { ChatErrorType, ChatMessageError, ErrorType, UIChatMessage } from '@lobechat/types';
 import { IPluginErrorType } from '@lobehub/chat-plugin-sdk';
 import type { AlertProps } from '@lobehub/ui';
 import { Skeleton } from 'antd';
@@ -6,13 +8,10 @@ import { Suspense, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useProviderName } from '@/hooks/useProviderName';
-import { AgentRuntimeErrorType, ILobeAgentRuntimeErrorType } from '@/libs/model-runtime';
-import { ChatErrorType, ErrorType } from '@/types/fetch';
-import { ChatMessage, ChatMessageError } from '@/types/message';
 
+import ChatInvalidAPIKey from './ChatInvalidApiKey';
 import ClerkLogin from './ClerkLogin';
 import ErrorJsonViewer from './ErrorJsonViewer';
-import InvalidAPIKey from './InvalidAPIKey';
 import InvalidAccessCode from './InvalidAccessCode';
 import { ErrorActionContainer } from './style';
 
@@ -55,7 +54,9 @@ const getErrorAlertConfig = (
     }
 
     case AgentRuntimeErrorType.OllamaServiceUnavailable:
-    case AgentRuntimeErrorType.NoOpenAIAPIKey: {
+    case AgentRuntimeErrorType.NoOpenAIAPIKey:
+    case AgentRuntimeErrorType.ComfyUIServiceUnavailable:
+    case AgentRuntimeErrorType.InvalidComfyUIArgs: {
       return {
         extraDefaultExpand: true,
         extraIsolate: true,
@@ -86,7 +87,7 @@ export const useErrorContent = (error: any) => {
   }, [error]);
 };
 
-const ErrorMessageExtra = memo<{ data: ChatMessage }>(({ data }) => {
+const ErrorMessageExtra = memo<{ data: UIChatMessage }>(({ data }) => {
   const error = data.error as ChatMessageError;
   if (!error?.type) return;
 
@@ -113,19 +114,19 @@ const ErrorMessageExtra = memo<{ data: ChatMessage }>(({ data }) => {
 
     case AgentRuntimeErrorType.NoOpenAIAPIKey: {
       {
-        return <InvalidAPIKey id={data.id} provider={data.error?.body?.provider} />;
+        return <ChatInvalidAPIKey id={data.id} provider={data.error?.body?.provider} />;
       }
     }
   }
 
   if (error.type.toString().includes('Invalid')) {
-    return <InvalidAPIKey id={data.id} provider={data.error?.body?.provider} />;
+    return <ChatInvalidAPIKey id={data.id} provider={data.error?.body?.provider} />;
   }
 
   return <ErrorJsonViewer error={data.error} id={data.id} />;
 });
 
-export default memo<{ data: ChatMessage }>(({ data }) => (
+export default memo<{ data: UIChatMessage }>(({ data }) => (
   <Suspense
     fallback={
       <ErrorActionContainer>

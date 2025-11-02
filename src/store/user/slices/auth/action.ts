@@ -2,7 +2,7 @@ import { StateCreator } from 'zustand/vanilla';
 
 import { enableAuth, enableClerk, enableNextAuth } from '@/const/auth';
 
-import { UserStore } from '../../store';
+import type { UserStore } from '../../store';
 
 export interface UserAuthAction {
   enableAuth: () => boolean;
@@ -39,10 +39,10 @@ export const createAuthSlice: StateCreator<
   },
   openLogin: async () => {
     if (enableClerk) {
-      const reditectUrl = location.toString();
+      const redirectUrl = location.toString();
       get().clerkSignIn?.({
-        fallbackRedirectUrl: reditectUrl,
-        signUpForceRedirectUrl: reditectUrl,
+        fallbackRedirectUrl: redirectUrl,
+        signUpForceRedirectUrl: redirectUrl,
         signUpUrl: '/signup',
       });
 

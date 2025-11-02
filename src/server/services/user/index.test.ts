@@ -1,4 +1,5 @@
 import { UserJSON } from '@clerk/backend';
+import { LobeChatDatabase } from '@lobechat/database';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { UserModel } from '@/database/models/user';
@@ -7,6 +8,14 @@ import { pino } from '@/libs/logger';
 import { AgentService } from '@/server/services/agent';
 
 import { UserService } from './index';
+
+// Mock @/libs/analytics to avoid server-side environment variable access in client test environment
+vi.mock('@/libs/analytics', () => ({
+  initializeServerAnalytics: vi.fn().mockResolvedValue({
+    identify: vi.fn(),
+    track: vi.fn(),
+  }),
+}));
 
 // Mock dependencies
 vi.mock('@/database/models/user', () => {
@@ -38,6 +47,7 @@ vi.mock('@/server/services/agent', () => ({
 
 let service: UserService;
 const mockUserId = 'test-user-id';
+const mockDB = {} as LobeChatDatabase;
 
 // Mock user data
 const mockUserJSON: UserJSON = {
@@ -54,7 +64,7 @@ const mockUserJSON: UserJSON = {
 } as unknown as UserJSON;
 
 beforeEach(() => {
-  service = new UserService();
+  service = new UserService(mockDB);
   vi.clearAllMocks();
 });
 

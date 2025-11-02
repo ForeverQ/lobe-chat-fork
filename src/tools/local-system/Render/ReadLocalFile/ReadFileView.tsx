@@ -1,6 +1,5 @@
 import { LocalReadFileResult } from '@lobechat/electron-client-ipc';
-import { ActionIcon, Icon, Markdown } from '@lobehub/ui';
-import { Typography } from 'antd';
+import { ActionIcon, Icon, Markdown, Text } from '@lobehub/ui';
 import { createStyles } from 'antd-style';
 import { AlignLeft, Asterisk, ChevronDownIcon, ExternalLink, FolderOpen } from 'lucide-react';
 import React, { memo, useState } from 'react';
@@ -9,6 +8,8 @@ import { Flexbox } from 'react-layout-kit';
 
 import FileIcon from '@/components/FileIcon';
 import { localFileService } from '@/services/electron/localFileService';
+import { useElectronStore } from '@/store/electron';
+import { desktopStateSelectors } from '@/store/electron/selectors';
 
 const useStyles = createStyles(({ css, token, cx }) => ({
   actions: cx(
@@ -21,10 +22,18 @@ const useStyles = createStyles(({ css, token, cx }) => ({
     `,
   ),
   container: css`
+    justify-content: space-between;
+
+    height: 64px;
     padding: 8px;
     border: 1px solid ${token.colorBorderSecondary};
     border-radius: ${token.borderRadiusLG}px;
+
     transition: all 0.2s ${token.motionEaseInOut};
+
+    .local-file-actions {
+      opacity: 0;
+    }
 
     &:hover {
       border-color: ${token.colorBorder};
@@ -49,10 +58,13 @@ const useStyles = createStyles(({ css, token, cx }) => ({
   lineCount: css`
     color: ${token.colorTextQuaternary};
   `,
-  meta: css`
-    font-size: 12px;
-    color: ${token.colorTextTertiary};
-  `,
+  meta: cx(
+    'local-file-actions',
+    css`
+      font-size: 12px;
+      color: ${token.colorTextTertiary};
+    `,
+  ),
   path: css`
     margin-block-start: 4px;
     padding-inline: 4px;
@@ -105,6 +117,8 @@ const ReadFileView = memo<ReadFileViewProps>(
       localFileService.openLocalFolder({ isDirectory: false, path });
     };
 
+    const displayPath = useElectronStore(desktopStateSelectors.displayRelativePath(path));
+
     return (
       <Flexbox className={styles.container}>
         <Flexbox
@@ -116,11 +130,11 @@ const ReadFileView = memo<ReadFileViewProps>(
           onClick={handleToggleExpand}
         >
           <Flexbox align={'center'} flex={1} gap={0} horizontal style={{ overflow: 'hidden' }}>
-            <FileIcon fileName={filename} fileType={fileType} size={24} variant={'raw'} />
+            <FileIcon fileName={filename} fileType={fileType} size={16} variant={'raw'} />
             <Flexbox horizontal>
-              <Typography.Text className={styles.fileName} ellipsis>
+              <Text className={styles.fileName} ellipsis>
                 {filename}
-              </Typography.Text>
+              </Text>
               {/* Actions on Hover */}
               <Flexbox className={styles.actions} gap={2} horizontal style={{ marginLeft: 8 }}>
                 <ActionIcon
@@ -174,9 +188,9 @@ const ReadFileView = memo<ReadFileViewProps>(
         </Flexbox>
 
         {/* Path */}
-        <Typography.Text className={styles.path} ellipsis type={'secondary'}>
-          {path}
-        </Typography.Text>
+        <Text className={styles.path} ellipsis type={'secondary'}>
+          {displayPath}
+        </Text>
 
         {isExpanded && (
           <Flexbox className={styles.previewBox} style={{ maxHeight: 240, overflow: 'auto' }}>

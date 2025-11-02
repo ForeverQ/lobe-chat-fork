@@ -82,7 +82,9 @@ const ModelSwitchPanel = memo<IProps>(({ children, onOpenChange, open }) => {
             ),
             onClick: () => {
               router.push(
-                isDeprecatedEdition ? '/settings/llm' : `/settings/provider/${provider.id}`,
+                isDeprecatedEdition
+                  ? '/settings?active=llm'
+                  : `/settings?active=provider&provider=${provider.id}`,
               );
             },
           },
@@ -102,7 +104,7 @@ const ModelSwitchPanel = memo<IProps>(({ children, onOpenChange, open }) => {
             </Flexbox>
           ),
           onClick: () => {
-            router.push(isDeprecatedEdition ? '/settings/llm' : `/settings/provider`);
+            router.push(isDeprecatedEdition ? '/settings?active=llm' : `/settings?active=provider`);
           },
         },
       ];
@@ -121,7 +123,11 @@ const ModelSwitchPanel = memo<IProps>(({ children, onOpenChange, open }) => {
           />
           {showLLM && (
             <Link
-              href={isDeprecatedEdition ? '/settings/llm' : `/settings/provider/${provider.id}`}
+              href={
+                isDeprecatedEdition
+                  ? '/settings?active=llm'
+                  : `/settings?active=provider&provider=${provider.id}`
+              }
             >
               <ActionIcon
                 icon={LucideBolt}
@@ -141,19 +147,21 @@ const ModelSwitchPanel = memo<IProps>(({ children, onOpenChange, open }) => {
   return (
     <ActionDropdown
       menu={{
+        // @ts-expect-error 等待 antd 修复
         activeKey: menuKey(provider, model),
         className: styles.menu,
         items,
         // 不加限高就会导致面板超长，顶部的内容会被隐藏
         // https://github.com/user-attachments/assets/9c043c47-42c5-46ef-b5c1-bee89376f042
         style: {
-          maxHeight: 500,
+          maxHeight: 550,
           overflowY: 'scroll',
         },
       }}
       onOpenChange={onOpenChange}
       open={open}
       placement={'topLeft'}
+      prefetch
     >
       {icon}
     </ActionDropdown>

@@ -1,4 +1,9 @@
 {
+  "ArgsInput": {
+    "addArgument": "Dodaj parametr",
+    "argumentPlaceholder": "Parametr {{index}}",
+    "enterFirstArgument": "Wprowadź pierwszy parametr..."
+  },
   "DragUpload": {
     "dragDesc": "Przeciągnij pliki tutaj, aby przesłać wiele obrazów.",
     "dragFileDesc": "Przeciągnij obrazy i pliki tutaj, aby przesłać wiele obrazów i plików.",
@@ -45,6 +50,10 @@
     "total": {
       "fileCount": "Łącznie {{count}} pozycji",
       "selectedCount": "Wybrano {{count}} pozycji"
+    },
+    "view": {
+      "list": "Widok listy",
+      "masonry": "Widok siatki"
     }
   },
   "FileParsingStatus": {
@@ -68,6 +77,35 @@
   "GoBack": {
     "back": "Wróć"
   },
+  "HtmlPreview": {
+    "actions": {
+      "download": "Pobierz",
+      "preview": "Podgląd"
+    },
+    "iframeTitle": "Podgląd HTML",
+    "mode": {
+      "code": "Kod",
+      "preview": "Podgląd"
+    },
+    "title": "Podgląd HTML"
+  },
+  "ImageUpload": {
+    "actions": {
+      "changeImage": "Kliknij, aby zmienić obraz",
+      "dropMultipleFiles": "Nie obsługujemy przesyłania wielu plików jednocześnie, używany będzie tylko pierwszy plik"
+    },
+    "placeholder": {
+      "primary": "Dodaj obraz",
+      "secondary": "Kliknij lub przeciągnij, aby przesłać"
+    }
+  },
+  "KeyValueEditor": {
+    "addButton": "Dodaj nowy wiersz",
+    "deleteTooltip": "Usuń",
+    "duplicateKeyError": "Nazwa klucza musi być unikalna",
+    "keyPlaceholder": "Klucz",
+    "valuePlaceholder": "Wartość"
+  },
   "MaxTokenSlider": {
     "unlimited": "Bez ograniczeń"
   },
@@ -80,6 +118,7 @@
       "reasoning": "Ten model wspiera głębokie myślenie",
       "search": "Ten model wspiera wyszukiwanie w sieci",
       "tokens": "Ten model obsługuje maksymalnie {{tokens}} tokenów w pojedynczej sesji.",
+      "video": "Ten model obsługuje rozpoznawanie wideo",
       "vision": "Ten model obsługuje rozpoznawanie wizualne."
     },
     "removed": "Ten model nie znajduje się na liście, jeśli zostanie odznaczony, zostanie automatycznie usunięty"
@@ -90,6 +129,31 @@
     "goToSettings": "Przejdź do ustawień",
     "provider": "Dostawca",
     "title": "Model"
+  },
+  "MultiImagesUpload": {
+    "actions": {
+      "uploadMore": "Kliknij lub przeciągnij, aby przesłać więcej"
+    },
+    "modal": {
+      "complete": "Zakończ",
+      "newFileIndicator": "Nowy",
+      "selectImageToPreview": "Wybierz obraz do podglądu",
+      "title": "Zarządzaj obrazami ({{count}})",
+      "upload": "Prześlij obraz"
+    },
+    "placeholder": {
+      "primary": "Kliknij lub przeciągnij, aby przesłać obraz",
+      "secondary": "Obsługuje wybór wielu obrazów"
+    },
+    "progress": {
+      "uploadingWithCount": "{{completed}}/{{total}} przesłano"
+    },
+    "validation": {
+      "fileSizeExceeded": "Przekroczono limit rozmiaru pliku",
+      "fileSizeExceededDetail": "{{fileName}} ({{actualSize}}) przekracza maksymalny dozwolony rozmiar {{maxSize}}",
+      "fileSizeExceededMultiple": "{{count}} plików przekracza maksymalny dozwolony rozmiar {{maxSize}}: {{fileList}}",
+      "imageCountExceeded": "Przekroczono dopuszczalną liczbę obrazów"
+    }
   },
   "OllamaSetupGuide": {
     "action": {

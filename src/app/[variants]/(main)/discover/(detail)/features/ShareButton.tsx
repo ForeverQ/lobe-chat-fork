@@ -7,8 +7,9 @@ import {
   Input,
   Modal,
   Tag,
+  Text,
 } from '@lobehub/ui';
-import { Skeleton, Typography } from 'antd';
+import { Skeleton } from 'antd';
 import { createStyles } from 'antd-style';
 import { startCase } from 'lodash-es';
 import { LinkIcon, Share2Icon } from 'lucide-react';
@@ -69,7 +70,7 @@ interface ShareButtonProps extends ButtonProps {
 }
 
 const ShareButton = memo<ShareButtonProps>(({ meta, ...rest }) => {
-  const { x, reddit, telegram, whatsapp, mastodon, linkedin, weibo } = useShare({
+  const { x, reddit, telegram, whatsapp, mastodon, weibo } = useShare({
     avatar: '',
     desc: '',
     hashtags: [],
@@ -103,9 +104,9 @@ const ShareButton = memo<ShareButtonProps>(({ meta, ...rest }) => {
           </Center>
           <Center padding={12} width={'100%'}>
             <h3 style={{ fontWeight: 'bold', textAlign: 'center' }}>{meta.title}</h3>
-            <Typography.Paragraph style={{ color: theme.colorTextSecondary, textAlign: 'center' }}>
+            <Text as={'p'} style={{ color: theme.colorTextSecondary, textAlign: 'center' }}>
               {meta.desc}
-            </Typography.Paragraph>
+            </Text>
             {meta.hashtags && (
               <Flexbox align={'center'} gap={4} horizontal justify={'center'} wrap={'wrap'}>
                 {meta.hashtags.map((tag, index) => (
@@ -117,16 +118,19 @@ const ShareButton = memo<ShareButtonProps>(({ meta, ...rest }) => {
           </Center>
         </Flexbox>
         <Flexbox align={'center'} gap={8} horizontal justify={'center'} wrap={'wrap'}>
-          {[x, reddit, telegram, whatsapp, mastodon, linkedin, weibo].map((item) => (
-            <Link href={item.link} key={item.title} target={'_blank'}>
-              <ActionIcon
-                className={styles.icon}
-                icon={item.icon as any}
-                size={{ blockSize: 36, borderRadius: 18, size: 16 }}
-                title={item.title}
-              />
-            </Link>
-          ))}
+          {[x, reddit, telegram, whatsapp, mastodon, weibo].map(
+            (item) =>
+              item.icon && (
+                <Link href={item.link} key={item.title} target={'_blank'}>
+                  <ActionIcon
+                    className={styles.icon}
+                    icon={item.icon}
+                    size={{ blockSize: 36, borderRadius: 18, size: 16 }}
+                    title={item.title}
+                  />
+                </Link>
+              ),
+          )}
         </Flexbox>
         <Flexbox align={'center'} gap={8} horizontal width={'100%'}>
           <Input value={meta.url} variant={'filled'} />

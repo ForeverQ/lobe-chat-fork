@@ -1,7 +1,7 @@
+import { LobeTool } from '@lobechat/types';
 import { LobeChatPluginManifest } from '@lobehub/chat-plugin-sdk';
 
 import { PluginModel } from '@/database/_deprecated/models/plugin';
-import { LobeTool } from '@/types/tool';
 import { LobeToolCustomPlugin } from '@/types/tool/plugin';
 
 import { IPluginService, InstallPluginParams } from './type';
@@ -23,7 +23,7 @@ export class ClientService implements IPluginService {
     return PluginModel.create({ ...customPlugin, type: 'customPlugin' });
   }
 
-  async updatePlugin(id: string, value: LobeToolCustomPlugin) {
+  async updatePlugin(id: string, value: Partial<LobeToolCustomPlugin>) {
     await PluginModel.update(id, value);
     return;
   }

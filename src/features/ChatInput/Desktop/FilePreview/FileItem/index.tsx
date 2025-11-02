@@ -1,5 +1,4 @@
-import { ActionIcon } from '@lobehub/ui';
-import { Typography } from 'antd';
+import { ActionIcon, Block, Text } from '@lobehub/ui';
 import { createStyles } from 'antd-style';
 import { Trash2Icon } from 'lucide-react';
 import { memo } from 'react';
@@ -27,17 +26,13 @@ const useStyles = createStyles(({ css, token }) => ({
       ${token.boxShadowTertiary};
   `,
   container: css`
+    user-select: none;
+
     position: relative;
 
     width: 180px;
     height: 64px;
     border-radius: 8px;
-
-    background: ${token.colorBgContainer};
-
-    :hover {
-      background: ${token.colorBgElevated};
-    }
   `,
   image: css`
     margin-block: 0 !important;
@@ -59,15 +54,28 @@ const FileItem = memo<FileItemProps>((props) => {
   const [removeChatUploadFile] = useFileStore((s) => [s.removeChatUploadFile]);
 
   return (
-    <Flexbox align={'center'} className={styles.container} horizontal>
+    <Block align={'center'} className={styles.container} horizontal variant={'outlined'}>
       <Center flex={1} height={64} padding={4} style={{ maxWidth: 64 }}>
         <Content {...props} />
       </Center>
       <Flexbox flex={1} gap={4} style={{ paddingBottom: 4, paddingInline: 4 }}>
-        <Typography.Text ellipsis={{ tooltip: true }} style={{ fontSize: 12, maxWidth: 100 }}>
+        <Text
+          ellipsis={{
+            tooltip: {
+              styles: {
+                body: {
+                  fontSize: 12,
+                  whiteSpace: 'balance',
+                  wordBreak: 'break-all',
+                },
+              },
+              title: file.name,
+            },
+          }}
+          style={{ fontSize: 12, maxWidth: 88 }}
+        >
           {file.name}
-        </Typography.Text>
-
+        </Text>
         <UploadDetail size={file.size} status={status} tasks={tasks} uploadState={uploadState} />
       </Flexbox>
       <Flexbox className={styles.actions}>
@@ -81,7 +89,7 @@ const FileItem = memo<FileItemProps>((props) => {
           title={t('delete', { ns: 'common' })}
         />
       </Flexbox>
-    </Flexbox>
+    </Block>
   );
 });
 
