@@ -18,6 +18,11 @@ const vercelConfig = {
       'packages/database/migrations/**',
     ],
   },
+  // Disable webpack build worker on Vercel (2 cores / 8 GB) to avoid OOM:
+  // forked worker doubles memory pressure while bringing little speedup on 2 cores.
+  experimental: {
+    webpackBuildWorker: false,
+  },
 };
 const nextConfig = defineConfig({
   ...(isVercel ? vercelConfig : {}),
