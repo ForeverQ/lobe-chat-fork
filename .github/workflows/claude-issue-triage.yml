@@ -18,6 +18,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Check if author is a team member
+        id: check-team
+        run: |
+          ISSUE_AUTHOR="${{ github.event.issue.user.login }}"
+          if grep -iq "^${ISSUE_AUTHOR}$" .github/maintainers.txt; then
+            echo "is_team=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_team=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Copy triage prompts
         run: |
           mkdir -p /tmp/claude-prompts
@@ -29,7 +39,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           github_token: ${{ secrets.GH_TOKEN }}
-          allowed_non_write_users: "*"
+          allowed_non_write_users: '*'
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Security: Restrict gh commands to specific safe operations only
           claude_args: |
@@ -62,7 +72,7 @@ jobs:
             **IMPORTANT**:
             - Follow ALL steps in the issue-triage.md guide
             - Apply labels according to the guide's rules
-            - Post a mention comment to the appropriate team member(s) based on team-assignment.md
+            - ${{ steps.check-team.outputs.is_team == 'true' && 'The issue author is a team member. Do NOT post any @mention comment.' || 'Post a mention comment to the appropriate team member(s) based on team-assignment.md' }}
             - Replace [ISSUE_NUMBER] with: ${{ github.event.issue.number }}
 
             **Start the triage process now.**

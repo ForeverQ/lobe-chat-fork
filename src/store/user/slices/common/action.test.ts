@@ -1,13 +1,13 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { withSWR } from '~test-utils';
 
 import { DEFAULT_PREFERENCE } from '@/const/user';
 import { userService } from '@/services/user';
 import { useUserStore } from '@/store/user';
 import { userGeneralSettingsSelectors } from '@/store/user/selectors';
-import { GlobalServerConfig } from '@/types/serverConfig';
-import { UserInitializationState, UserPreference } from '@/types/user';
+import { type GlobalServerConfig } from '@/types/serverConfig';
+import { type UserInitializationState, type UserPreference } from '@/types/user';
+import { withSWR } from '~test-utils';
 
 vi.mock('zustand/traditional');
 
@@ -74,11 +74,12 @@ describe('createCommonSlice', () => {
       const mockUserState: UserInitializationState = {
         userId: 'user-id',
         isOnboard: true,
+        onboarding: { finishedAt: '2024-01-01T00:00:00Z', version: 1 },
         preference: {
           telemetry: true,
         },
         settings: {
-          general: { fontSize: 14 },
+          general: { fontSize: 14, timezone: 'America/New_York' },
         },
         email: 'test@example.com',
       };
@@ -101,7 +102,13 @@ describe('createCommonSlice', () => {
 
       // 验证状态是否正确更新
       expect(useUserStore.getState().user?.avatar).toBe(mockUserState.avatar);
-      expect(useUserStore.getState().settings).toEqual(mockUserState.settings);
+      expect(userGeneralSettingsSelectors.config(useUserStore.getState() as any)).toEqual(
+        expect.objectContaining({
+          fontSize: 14,
+          responseLanguage: expect.any(String),
+          timezone: 'America/New_York',
+        }),
+      );
       expect(useUserStore.getState().user?.email).toEqual(mockUserState.email);
       expect(successCallback).toHaveBeenCalledWith(mockUserState);
     });
@@ -167,7 +174,7 @@ describe('createCommonSlice', () => {
       );
 
       await waitFor(() => {
-        expect(preference.current.data.preference).toEqual(savedPreference);
+        expect(preference.current.data?.preference).toEqual(savedPreference);
         expect(result.current.isUserStateInit).toBeTruthy();
         expect(result.current.preference).toEqual(savedPreference);
       });
@@ -178,6 +185,7 @@ describe('createCommonSlice', () => {
       const mockUserState: UserInitializationState = {
         userId: 'user-id',
         isOnboard: true,
+        onboarding: { finishedAt: '2024-01-01T00:00:00Z', version: 1 },
         preference: undefined as any,
         settings: null as any,
         avatar: 'abc',
@@ -194,7 +202,33 @@ describe('createCommonSlice', () => {
         expect(result.current.isUserStateInit).toBeTruthy();
         // 验证状态未被错误更新
         expect(result.current.user?.avatar).toEqual('abc');
-        expect(result.current.settings).toEqual({});
+        // When settings is null, auto-detect general settings will set them
+        expect(result.current.settings).toEqual({
+          general: { responseLanguage: expect.any(String), timezone: expect.any(String) },
+        });
+      });
+    });
+
+    it('should NOT auto-fill responseLanguage while onboarding is unfinished', async () => {
+      const { result } = renderHook(() => useUserStore());
+
+      const mockUserState: UserInitializationState = {
+        userId: 'user-id',
+        isOnboard: false,
+        // No onboarding.finishedAt and no agentOnboarding.finishedAt:
+        // user is still in the shared-prefix flow.
+        preference: {} as any,
+        settings: { general: { fontSize: 14 } },
+      };
+      vi.spyOn(userService, 'getUserState').mockResolvedValueOnce(mockUserState);
+
+      renderHook(() => result.current.useInitUserState(true, mockServerConfig), {
+        wrapper: withSWR,
+      });
+
+      await waitFor(() => {
+        expect(result.current.isUserStateInit).toBeTruthy();
+        expect(result.current.settings.general?.responseLanguage).toBeUndefined();
       });
     });
 

@@ -19,7 +19,8 @@ export type MemoryExtractionAgent =
   | 'layer-context'
   | 'layer-experience'
   | 'layer-identity'
-  | 'layer-preference';
+  | 'layer-preference'
+  | 'user-persona';
 
 export interface ExtractorRunOptions<RO> extends ExtractorOptions {
   contextProvider: MemoryContextProvider<{ topK?: number }>;
@@ -48,6 +49,8 @@ export interface ExtractorOptions extends ExtractorTemplateProps {
 
 export interface ExtractorTemplateProps {
   availableCategories?: string[];
+  availableLabels?: string[];
+  availableTags?: string[];
   language?: string;
   retrievedContexts?: string[];
   retrievedIdentitiesContext?: string;
@@ -60,7 +63,6 @@ export interface GatekeeperTemplateProps extends ExtractorTemplateProps {
   gateKeeperLanguage?: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-empty-interface
 export type GatekeeperOptions = Pick<ExtractorOptions, 'retrievedContexts' | 'topK'> & {
   additionalMessages?: OpenAIChatMessage[];
   callbacks?: ExtractorOptions['callbacks'];
@@ -98,7 +100,6 @@ export interface MemoryExtractionSourceMetadata {
   version?: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-empty-interface
 export type ContextOptions<P extends Record<string, unknown>> = P;
 
 export interface BuiltContext<T = Record<string, unknown>> {
@@ -112,12 +113,12 @@ export interface MemoryContextProvider<
   P extends Record<string, unknown> = Record<string, unknown>,
   R extends Record<string, unknown> = Record<string, unknown>,
 > {
-  buildContext(job: MemoryExtractionJob, options?: P): Promise<BuiltContext<R>>;
+  buildContext: (userId: string, sourceId: string, options?: P) => Promise<BuiltContext<R>>;
 }
 
 export interface MemoryResultRecorder<T = Record<string, unknown>> {
-  recordComplete(job: MemoryExtractionJob, result: PersistedMemoryResult & T): Promise<void>;
-  recordFail?(job: MemoryExtractionJob, error: Error): Promise<void>;
+  recordComplete: (job: MemoryExtractionJob, result: PersistedMemoryResult & T) => Promise<void>;
+  recordFail?: (job: MemoryExtractionJob, error: Error) => Promise<void>;
 }
 
 export interface PersistedMemoryResult {
@@ -176,4 +177,23 @@ export interface MemoryExtractionResult {
 
 export interface TemplateProps {
   [key: string]: unknown;
+}
+
+export interface PersonaTemplateProps extends ExtractorTemplateProps {
+  existingPersona?: string;
+  personaNotes?: string;
+  recentEvents?: string;
+  retrievedMemories?: string;
+  userProfile?: string;
+}
+
+export interface PersonaExtractorOptions extends ExtractorOptions, PersonaTemplateProps {}
+
+export interface UserPersonaExtractionResult {
+  diff?: string | null;
+  memoryIds?: string[];
+  persona: string;
+  reasoning?: string | null;
+  sourceIds?: string[];
+  tagline?: string | null;
 }

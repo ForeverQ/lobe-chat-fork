@@ -1,7 +1,7 @@
-import { UIChatMessage } from '@lobechat/types';
+import { type UIChatMessage } from '@lobechat/types';
 import { describe, expect, it } from 'vitest';
 
-import type { ChatStoreState } from '@/store/chat';
+import { type ChatStoreState } from '@/store/chat';
 
 import { PortalViewType } from './initialState';
 import { chatPortalSelectors } from './selectors';
@@ -192,6 +192,106 @@ describe('chatDockSelectors', () => {
     });
   });
 
+  describe('showLocalFile', () => {
+    it('should return false when no LocalFile view on stack', () => {
+      expect(chatPortalSelectors.showLocalFile(createState())).toBe(false);
+      expect(
+        chatPortalSelectors.showLocalFile(
+          createState({ portalStack: [{ type: PortalViewType.Notebook }] }),
+        ),
+      ).toBe(false);
+    });
+
+    it('should return true when LocalFile view is on top of stack', () => {
+      const state = createState({
+        portalStack: [{ type: PortalViewType.LocalFile }],
+      });
+      expect(chatPortalSelectors.showLocalFile(state)).toBe(true);
+    });
+  });
+
+  describe('currentLocalFile', () => {
+    it('should return undefined when activeLocalFilePath is undefined', () => {
+      expect(chatPortalSelectors.currentLocalFile(createState())).toBeUndefined();
+    });
+
+    it('should return the active file entry from openLocalFiles', () => {
+      const state = createState({
+        activeLocalFilePath: '/path/to/file.ts',
+        openLocalFiles: [{ filePath: '/path/to/file.ts', workingDirectory: '/path/to' }],
+      } as Partial<ChatStoreState>);
+      expect(chatPortalSelectors.currentLocalFile(state)).toEqual({
+        filePath: '/path/to/file.ts',
+        workingDirectory: '/path/to',
+      });
+    });
+
+    it('should return undefined when activeLocalFilePath is not in openLocalFiles', () => {
+      const state = createState({
+        activeLocalFilePath: '/path/to/other.ts',
+        openLocalFiles: [{ filePath: '/path/to/file.ts', workingDirectory: '/path/to' }],
+      } as Partial<ChatStoreState>);
+      expect(chatPortalSelectors.currentLocalFile(state)).toBeUndefined();
+    });
+  });
+
+  describe('localFilePath', () => {
+    it('should return undefined when no active file', () => {
+      expect(chatPortalSelectors.localFilePath(createState())).toBeUndefined();
+    });
+
+    it('should return the filePath of the active tab', () => {
+      const state = createState({
+        activeLocalFilePath: '/path/to/file.ts',
+        openLocalFiles: [{ filePath: '/path/to/file.ts', workingDirectory: '/path/to' }],
+      } as Partial<ChatStoreState>);
+      expect(chatPortalSelectors.localFilePath(state)).toBe('/path/to/file.ts');
+    });
+  });
+
+  describe('localFileWorkingDirectory', () => {
+    it('should return undefined when no active file', () => {
+      expect(chatPortalSelectors.localFileWorkingDirectory(createState())).toBeUndefined();
+    });
+
+    it('should return the workingDirectory of the active tab', () => {
+      const state = createState({
+        activeLocalFilePath: '/path/to/file.ts',
+        openLocalFiles: [{ filePath: '/path/to/file.ts', workingDirectory: '/path/to' }],
+      } as Partial<ChatStoreState>);
+      expect(chatPortalSelectors.localFileWorkingDirectory(state)).toBe('/path/to');
+    });
+  });
+
+  describe('openLocalFiles', () => {
+    it('should return empty array when openLocalFiles is empty', () => {
+      const state = createState({ openLocalFiles: [] } as Partial<ChatStoreState>);
+      expect(chatPortalSelectors.openLocalFiles(state)).toEqual([]);
+    });
+
+    it('should return the openLocalFiles array', () => {
+      const files = [
+        { filePath: '/path/a.ts', workingDirectory: '/path' },
+        { filePath: '/path/b.ts', workingDirectory: '/path' },
+      ];
+      const state = createState({ openLocalFiles: files } as Partial<ChatStoreState>);
+      expect(chatPortalSelectors.openLocalFiles(state)).toEqual(files);
+    });
+  });
+
+  describe('activeLocalFilePath', () => {
+    it('should return undefined when no active file', () => {
+      expect(chatPortalSelectors.activeLocalFilePath(createState())).toBeUndefined();
+    });
+
+    it('should return the activeLocalFilePath', () => {
+      const state = createState({
+        activeLocalFilePath: '/path/a.ts',
+      } as Partial<ChatStoreState>);
+      expect(chatPortalSelectors.activeLocalFilePath(state)).toBe('/path/a.ts');
+    });
+  });
+
   describe('artifactMessageContent', () => {
     it('should return empty string when message not found', () => {
       const state = createState();
@@ -286,6 +386,128 @@ ${htmlContent}
       });
       expect(chatPortalSelectors.artifactCode('test-id')(state)).toBe(htmlContent);
     });
+
+    it('should remove an opening markdown code fence while the artifact streams', () => {
+      const htmlContent = `<!DOCTYPE html>
+<html>
+<body>
+  <div>Streaming content</div>`;
+      const state = createState({
+        dbMessagesMap: {
+          'test-id_null': [
+            {
+              id: 'test-id',
+              content: `<lobeArtifact type="text/html">
+\`\`\`html
+${htmlContent}`,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              role: 'user',
+              sessionId: 'test-id',
+            } as UIChatMessage,
+          ],
+        },
+      });
+      expect(chatPortalSelectors.artifactCode('test-id')(state)).toBe(htmlContent);
+    });
+
+    it('should extract specific artifact content by identifier', () => {
+      const content1 = 'First artifact content';
+      const content2 = 'Second artifact content';
+      const state = createState({
+        dbMessagesMap: {
+          'test-id_null': [
+            {
+              id: 'test-id',
+              content: `<lobeArtifact identifier="first" type="text">${content1}</lobeArtifact>\n\n<lobeArtifact identifier="second" type="text">${content2}</lobeArtifact>`,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              role: 'user',
+              sessionId: 'test-id',
+            } as UIChatMessage,
+          ],
+        },
+      });
+      expect(chatPortalSelectors.artifactCode('test-id', 'first')(state)).toBe(content1);
+      expect(chatPortalSelectors.artifactCode('test-id', 'second')(state)).toBe(content2);
+    });
+
+    it('should return empty string for non-existent identifier', () => {
+      const state = createState({
+        dbMessagesMap: {
+          'test-id_null': [
+            {
+              id: 'test-id',
+              content: `<lobeArtifact identifier="real" type="text">Real content</lobeArtifact>`,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              role: 'user',
+              sessionId: 'test-id',
+            } as UIChatMessage,
+          ],
+        },
+      });
+      expect(chatPortalSelectors.artifactCode('test-id', 'nonexistent')(state)).toBe('');
+    });
+
+    it('should extract content from unclosed artifact by identifier', () => {
+      const state = createState({
+        dbMessagesMap: {
+          'test-id_null': [
+            {
+              id: 'test-id',
+              content: `<lobeArtifact identifier="done" type="text">Done</lobeArtifact>\n\n<lobeArtifact identifier="wip" type="text">Still generating...`,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              role: 'user',
+              sessionId: 'test-id',
+            } as UIChatMessage,
+          ],
+        },
+      });
+      expect(chatPortalSelectors.artifactCode('test-id', 'done')(state)).toBe('Done');
+      expect(chatPortalSelectors.artifactCode('test-id', 'wip')(state)).toBe('Still generating...');
+    });
+
+    it('should handle identifiers with regex special characters', () => {
+      const state = createState({
+        dbMessagesMap: {
+          'test-id_null': [
+            {
+              id: 'test-id',
+              content: `<lobeArtifact identifier="test+id(1)[2]" type="text">Special content</lobeArtifact>`,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              role: 'user',
+              sessionId: 'test-id',
+            } as UIChatMessage,
+          ],
+        },
+      });
+      expect(chatPortalSelectors.artifactCode('test-id', 'test+id(1)[2]')(state)).toBe(
+        'Special content',
+      );
+      expect(chatPortalSelectors.isArtifactTagClosed('test-id', 'test+id(1)[2]')(state)).toBe(true);
+    });
+
+    it('should return first artifact content when no identifier provided (backward compat)', () => {
+      const content1 = 'First';
+      const state = createState({
+        dbMessagesMap: {
+          'test-id_null': [
+            {
+              id: 'test-id',
+              content: `<lobeArtifact identifier="a" type="text">${content1}</lobeArtifact>\n\n<lobeArtifact identifier="b" type="text">Second</lobeArtifact>`,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              role: 'user',
+              sessionId: 'test-id',
+            } as UIChatMessage,
+          ],
+        },
+      });
+      expect(chatPortalSelectors.artifactCode('test-id')(state)).toBe(content1);
+    });
   });
 
   describe('isArtifactTagClosed', () => {
@@ -341,6 +563,67 @@ ${htmlContent}
         },
       });
       expect(chatPortalSelectors.isArtifactTagClosed('test-id')(state)).toBe(false);
+    });
+
+    it('should check specific artifact by identifier when both artifacts are closed', () => {
+      const state = createState({
+        dbMessagesMap: {
+          'test-id_null': [
+            {
+              id: 'test-id',
+              content:
+                '<lobeArtifact identifier="a" type="text">A</lobeArtifact>\n\n<lobeArtifact identifier="b" type="text">B</lobeArtifact>',
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              role: 'user',
+              sessionId: 'test-id',
+            } as UIChatMessage,
+          ],
+        },
+      });
+      expect(chatPortalSelectors.isArtifactTagClosed('test-id', 'a')(state)).toBe(true);
+      expect(chatPortalSelectors.isArtifactTagClosed('test-id', 'b')(state)).toBe(true);
+    });
+
+    it('should return false for non-existent identifier', () => {
+      const state = createState({
+        dbMessagesMap: {
+          'test-id_null': [
+            {
+              id: 'test-id',
+              content: '<lobeArtifact identifier="exists" type="text">Content</lobeArtifact>',
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              role: 'user',
+              sessionId: 'test-id',
+            } as UIChatMessage,
+          ],
+        },
+      });
+      expect(chatPortalSelectors.isArtifactTagClosed('test-id', 'nonexistent')(state)).toBe(false);
+    });
+
+    it('should check specific artifact by identifier when first is closed but second is not', () => {
+      const state = createState({
+        dbMessagesMap: {
+          'test-id_null': [
+            {
+              id: 'test-id',
+              content:
+                '<lobeArtifact identifier="done" type="text">Content 1</lobeArtifact>\n\n<lobeArtifact identifier="generating" type="text">Content 2 still going',
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              role: 'user',
+              sessionId: 'test-id',
+            } as UIChatMessage,
+          ],
+        },
+      });
+      // Without identifier, returns true because first artifact is closed
+      expect(chatPortalSelectors.isArtifactTagClosed('test-id')(state)).toBe(true);
+      // With identifier, correctly distinguishes between closed and unclosed
+      expect(chatPortalSelectors.isArtifactTagClosed('test-id', 'done')(state)).toBe(true);
+      expect(chatPortalSelectors.isArtifactTagClosed('test-id', 'generating')(state)).toBe(false);
     });
   });
 });

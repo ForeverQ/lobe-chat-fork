@@ -4,6 +4,8 @@ import { Flexbox } from '@lobehub/ui';
 import { cx } from 'antd-style';
 import { memo } from 'react';
 
+import FollowUpChips from '../FollowUp/FollowUpChips';
+import { contextSelectors, useConversationStore } from '../store';
 import Actions from './components/Actions';
 import Avatar from './components/Avatar';
 import ErrorContent from './components/ErrorContent';
@@ -39,10 +41,10 @@ const ChatItem = memo<ChatItemProps>(
     disabled = false,
     id,
     style,
-    newScreen,
     ...rest
   }) => {
     const isUser = placement === 'right';
+    const topicId = useConversationStore(contextSelectors.topicId);
     const isEmptyMessage =
       !message || String(message).trim() === '' || message === placeholderMessage;
     const errorContent = error && (
@@ -53,8 +55,8 @@ const ChatItem = memo<ChatItemProps>(
       <Avatar
         alt={avatarProps?.alt || avatar.title || 'avatar'}
         loading={loading}
-        onClick={onAvatarClick}
         shape={'square'}
+        onClick={onAvatarClick}
         {...avatarProps}
         avatar={avatar}
       />
@@ -63,12 +65,8 @@ const ChatItem = memo<ChatItemProps>(
     return (
       <Flexbox
         align={isUser ? 'flex-end' : 'flex-start'}
-        className={cx(
-          'message-wrapper',
-          styles.container,
-          newScreen && styles.newScreen,
-          className,
-        )}
+        className={cx('message-wrapper', styles.container, className)}
+        data-message-id={id}
         gap={8}
         paddingBlock={8}
         style={{
@@ -106,6 +104,7 @@ const ChatItem = memo<ChatItemProps>(
               editing={editing}
               id={id!}
               message={message}
+              variant={isUser ? 'bubble' : undefined}
               messageExtra={
                 <>
                   {errorContent}
@@ -113,13 +112,13 @@ const ChatItem = memo<ChatItemProps>(
                 </>
               }
               onDoubleClick={onDoubleClick}
-              variant={isUser ? 'bubble' : undefined}
             >
               {children}
             </MessageContent>
           )}
           {belowMessage}
         </Flexbox>
+        {id && topicId && <FollowUpChips messageId={id} topicId={topicId} />}
         {actions && <Actions actions={actions} placement={placement} />}
       </Flexbox>
     );

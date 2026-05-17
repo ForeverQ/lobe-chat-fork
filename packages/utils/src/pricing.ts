@@ -1,10 +1,10 @@
-import { Pricing, PricingUnit, PricingUnitName } from 'model-bank';
+import type { Pricing, PricingUnit, PricingUnitName } from 'model-bank';
 
 /**
  * Internal helper to extract the displayed unit rate from a pricing unit by strategy
- * - fixed → rate
- * - tiered → tiers[0].rate
- * - lookup → first price value
+ * - fixed: rate
+ * - tiered: tiers[0].rate
+ * - lookup: first price value
  */
 const getRateFromUnit = (unit: PricingUnit): number | undefined => {
   switch (unit.strategy) {
@@ -24,6 +24,12 @@ const getRateFromUnit = (unit: PricingUnit): number | undefined => {
   }
 };
 
+const getOriginalRateFromUnit = (unit: PricingUnit): number | undefined => {
+  if (unit.strategy !== 'fixed') return undefined;
+
+  return unit.originalRate;
+};
+
 /**
  * Get unit rate by unit name, used to deduplicate logic across helpers
  */
@@ -38,10 +44,28 @@ export const getUnitRateByName = (
 };
 
 /**
+ * Get fixed unit original rate by unit name when it is higher than the current rate.
+ */
+export const getOriginalUnitRateByName = (
+  pricing?: Pricing,
+  unitName?: PricingUnitName,
+): number | undefined => {
+  if (!pricing?.units || !unitName) return undefined;
+  const unit = pricing.units.find((u) => u.name === unitName);
+  if (!unit) return undefined;
+
+  const originalRate = getOriginalRateFromUnit(unit);
+  const currentRate = getRateFromUnit(unit);
+  if (typeof originalRate !== 'number' || typeof currentRate !== 'number') return undefined;
+
+  return originalRate > currentRate ? originalRate : undefined;
+};
+
+/**
  * Get text input unit rate from pricing
- * - fixed → rate
- * - tiered → tiers[0].rate
- * - lookup → Object.values(lookup.prices)[0]
+ * - fixed: rate
+ * - tiered: tiers[0].rate
+ * - lookup: Object.values(lookup.prices)[0]
  */
 export function getTextInputUnitRate(pricing?: Pricing): number | undefined {
   return getUnitRateByName(pricing, 'textInput');

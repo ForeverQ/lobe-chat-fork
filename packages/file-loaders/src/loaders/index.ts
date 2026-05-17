@@ -24,13 +24,13 @@ const lazyFileLoaders: Record<SupportedFileType, LazyLoaderFactory> = {
     // pdfjs-dist 5.x uses DOMMatrix at module initialization which doesn't exist in Node.js
     if (typeof globalThis.DOMMatrix === 'undefined') {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const canvas = require('@napi-rs/canvas');
         globalThis.DOMMatrix = canvas.DOMMatrix;
         globalThis.DOMPoint = canvas.DOMPoint;
         globalThis.DOMRect = canvas.DOMRect;
         globalThis.Path2D = canvas.Path2D;
-      } catch {
+      } catch (e) {
+        console.error('Error importing @napi-rs/canvas:', e);
         // @napi-rs/canvas not available, pdfjs-dist may fail if DOMMatrix is needed
       }
     }

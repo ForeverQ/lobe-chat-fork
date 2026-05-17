@@ -1,8 +1,10 @@
-import { KnowledgeBaseItem } from '@lobechat/types';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import type { KnowledgeBaseItem } from '@lobechat/types';
+import { and, count, desc, eq, inArray } from 'drizzle-orm';
 
-import { NewKnowledgeBase, documents, files, knowledgeBaseFiles, knowledgeBases } from '../schemas';
-import { LobeChatDatabase } from '../type';
+import type { NewKnowledgeBase } from '../schemas';
+import { documents, knowledgeBaseFiles, knowledgeBases } from '../schemas';
+import type { LobeChatDatabase } from '../type';
+import { FileModel } from './file';
 
 export class KnowledgeBaseModel {
   private userId: string;
@@ -25,20 +27,27 @@ export class KnowledgeBaseModel {
   };
 
   addFilesToKnowledgeBase = async (id: string, fileIds: string[]) => {
+    // Verify the target knowledge base belongs to the current user
+    const kb = await this.db.query.knowledgeBases.findFirst({
+      where: and(eq(knowledgeBases.id, id), eq(knowledgeBases.userId, this.userId)),
+    });
+    if (!kb) return [];
+
     // Separate document IDs from file IDs
     const documentIds = fileIds.filter((id) => id.startsWith('docs_'));
     const directFileIds = fileIds.filter((id) => !id.startsWith('docs_'));
 
-    // Resolve document IDs to their mirror file IDs
-    // For Pages, files.parentId points to the document ID
+    // Resolve document IDs to their mirror file IDs via documents.fileId
     let resolvedFileIds = [...directFileIds];
     if (documentIds.length > 0) {
-      const mirrorFiles = await this.db
-        .select({ id: files.id })
-        .from(files)
-        .where(and(inArray(files.parentId, documentIds), eq(files.userId, this.userId)));
+      const docsWithFiles = await this.db
+        .select({ fileId: documents.fileId })
+        .from(documents)
+        .where(and(inArray(documents.id, documentIds), eq(documents.userId, this.userId)));
 
-      const mirrorFileIds = mirrorFiles.map((file) => file.id);
+      const mirrorFileIds = docsWithFiles
+        .map((doc) => doc.fileId)
+        .filter((id): id is string => id !== null);
       resolvedFileIds = [...resolvedFileIds, ...mirrorFileIds];
 
       // Update documents.knowledgeBaseId for pages
@@ -77,16 +86,17 @@ export class KnowledgeBaseModel {
     const documentIds = ids.filter((id) => id.startsWith('docs_'));
     const directFileIds = ids.filter((id) => !id.startsWith('docs_'));
 
-    // Resolve document IDs to their mirror file IDs
-    // For Pages, files.parentId points to the document ID
+    // Resolve document IDs to their mirror file IDs via documents.fileId
     let resolvedFileIds = [...directFileIds];
     if (documentIds.length > 0) {
-      const mirrorFiles = await this.db
-        .select({ id: files.id })
-        .from(files)
-        .where(and(inArray(files.parentId, documentIds), eq(files.userId, this.userId)));
+      const docsWithFiles = await this.db
+        .select({ fileId: documents.fileId })
+        .from(documents)
+        .where(and(inArray(documents.id, documentIds), eq(documents.userId, this.userId)));
 
-      const mirrorFileIds = mirrorFiles.map((file) => file.id);
+      const mirrorFileIds = docsWithFiles
+        .map((doc) => doc.fileId)
+        .filter((id): id is string => id !== null);
       resolvedFileIds = [...resolvedFileIds, ...mirrorFileIds];
 
       // Clear documents.knowledgeBaseId for pages
@@ -150,6 +160,73 @@ export class KnowledgeBaseModel {
       .update(knowledgeBases)
       .set({ ...value, updatedAt: new Date() })
       .where(and(eq(knowledgeBases.id, id), eq(knowledgeBases.userId, this.userId)));
+
+  findExclusiveFileIds = async (knowledgeBaseId: string): Promise<string[]> => {
+    const kbFiles = await this.db
+      .select({ fileId: knowledgeBaseFiles.fileId })
+      .from(knowledgeBaseFiles)
+      .where(
+        and(
+          eq(knowledgeBaseFiles.knowledgeBaseId, knowledgeBaseId),
+          eq(knowledgeBaseFiles.userId, this.userId),
+        ),
+      );
+    const fileIds = kbFiles.map((f) => f.fileId);
+    if (fileIds.length === 0) return [];
+
+    const sharedFiles = await this.db
+      .select({
+        fileId: knowledgeBaseFiles.fileId,
+        kbCount: count(knowledgeBaseFiles.knowledgeBaseId),
+      })
+      .from(knowledgeBaseFiles)
+      .where(
+        and(
+          inArray(knowledgeBaseFiles.fileId, fileIds),
+          eq(knowledgeBaseFiles.userId, this.userId),
+        ),
+      )
+      .groupBy(knowledgeBaseFiles.fileId);
+
+    return sharedFiles.filter((f) => Number(f.kbCount) === 1).map((f) => f.fileId);
+  };
+
+  deleteWithFiles = async (id: string, removeGlobalFile: boolean = true) => {
+    const exclusiveFileIds = await this.findExclusiveFileIds(id);
+
+    let deletedFiles: Array<{ id: string; url: string | null }> = [];
+    if (exclusiveFileIds.length > 0) {
+      const fileModel = new FileModel(this.db, this.userId);
+      const result = await fileModel.deleteMany(exclusiveFileIds, removeGlobalFile);
+      deletedFiles = (result || []).map((f) => ({ id: f.id, url: f.url }));
+    }
+
+    await this.db
+      .delete(knowledgeBases)
+      .where(and(eq(knowledgeBases.id, id), eq(knowledgeBases.userId, this.userId)));
+
+    return { deletedFiles };
+  };
+
+  deleteAllWithFiles = async (removeGlobalFile: boolean = true) => {
+    const allKbFileIds = await this.db
+      .select({ fileId: knowledgeBaseFiles.fileId })
+      .from(knowledgeBaseFiles)
+      .where(eq(knowledgeBaseFiles.userId, this.userId));
+
+    const fileIds = [...new Set(allKbFileIds.map((f) => f.fileId))];
+
+    let deletedFiles: Array<{ id: string; url: string | null }> = [];
+    if (fileIds.length > 0) {
+      const fileModel = new FileModel(this.db, this.userId);
+      const result = await fileModel.deleteMany(fileIds, removeGlobalFile);
+      deletedFiles = (result || []).map((f) => ({ id: f.id, url: f.url }));
+    }
+
+    await this.db.delete(knowledgeBases).where(eq(knowledgeBases.userId, this.userId));
+
+    return { deletedFiles };
+  };
 
   static findById = async (db: LobeChatDatabase, id: string) =>
     db.query.knowledgeBases.findFirst({

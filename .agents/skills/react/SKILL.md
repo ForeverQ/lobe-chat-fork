@@ -1,73 +1,96 @@
 ---
 name: react
-description: React component development guide. Use when working with React components (.tsx files), creating UI, using @lobehub/ui components, implementing routing, or building frontend features. Triggers on React component creation, modification, layout implementation, or navigation tasks.
+description: 'Use when writing or editing any `.tsx` under `src/**`. Triggers: createStaticStyles, createStyles, cssVar, antd-style, Flexbox, Center, Select, Modal, Drawer, Button, Tooltip, DropdownMenu, Popover, Switch, ScrollArea, Link, useNavigate, react-router-dom, next/link, desktopRouter, componentMap.desktop, .desktop.tsx, new component, new page, edit layout, add styles, zustand selector, @lobehub/ui, antd import.'
+user-invocable: false
 ---
 
 # React Component Writing Guide
 
-- Use antd-style for complex styles; for simple cases, use inline `style` attribute
-- Use `Flexbox` and `Center` from `@lobehub/ui` for layouts (see `references/layout-kit.md`)
-- Component priority: `src/components` > installed packages > `@lobehub/ui` > antd
-- Use selectors to access zustand store data
+## Styling
 
-## @lobehub/ui Components
+| Scenario                                                   | Approach                                                       |
+| ---------------------------------------------------------- | -------------------------------------------------------------- |
+| Most cases                                                 | `createStaticStyles` + `cssVar.*` (zero-runtime, module-level) |
+| Simple one-off                                             | Inline `style` attribute                                       |
+| Truly dynamic (JS color fns like `readableColor`/`chroma`) | `createStyles` + `token` — **last resort**                     |
 
-If unsure about component usage, search existing code in this project. Most components extend antd with additional props.
+## Component Priority
 
-Reference: `node_modules/@lobehub/ui/es/index.mjs` for all available components.
+1. **`src/components`** — project-specific reusable components
+2. **`@lobehub/ui/base-ui`** — headless primitives (Select, Modal, DropdownMenu, Popover, Switch, ScrollArea…)
+3. **`@lobehub/ui`** — higher-level components (ActionIcon, Markdown, DragPage…)
+4. **Custom implementation** — last resort; never reach for antd directly
 
-**Common Components:**
-- General: ActionIcon, ActionIconGroup, Block, Button, Icon
-- Data Display: Avatar, Collapse, Empty, Highlighter, Markdown, Tag, Tooltip
-- Data Entry: CodeEditor, CopyButton, EditableText, Form, FormModal, Input, SearchBar, Select
-- Feedback: Alert, Drawer, Modal
-- Layout: Center, DraggablePanel, Flexbox, Grid, Header, MaskShadow
-- Navigation: Burger, Dropdown, Menu, SideNav, Tabs
+If unsure about available components, search existing code or check `node_modules/@lobehub/ui/es/index.mjs`.
 
-## Routing Architecture
+### Common @lobehub/ui Components
 
-Hybrid routing: Next.js App Router (static pages) + React Router DOM (main SPA).
+| Category     | Components                                                                      |
+| ------------ | ------------------------------------------------------------------------------- |
+| General      | ActionIcon, ActionIconGroup, Block, Button, Icon                                |
+| Data Display | Avatar, Collapse, Empty, Highlighter, Markdown, Tag, Tooltip                    |
+| Data Entry   | CodeEditor, CopyButton, EditableText, Form, FormModal, Input, SearchBar, Select |
+| Feedback     | Alert, Drawer, Modal                                                            |
+| Layout       | Center, DraggablePanel, Flexbox, Grid, Header, MaskShadow                       |
+| Navigation   | Burger, Dropdown, Menu, SideNav, Tabs                                           |
 
-| Route Type | Use Case | Implementation |
-|------------|----------|----------------|
-| Next.js App Router | Auth pages (login, signup, oauth) | `src/app/[variants]/(auth)/` |
-| React Router DOM | Main SPA (chat, settings) | `desktopRouter.config.tsx` |
+## Layout
 
-### Key Files
-- Entry: `src/app/[variants]/page.tsx`
-- Desktop router: `src/app/[variants]/router/desktopRouter.config.tsx`
-- Mobile router: `src/app/[variants]/(mobile)/router/mobileRouter.config.tsx`
-- Router utilities: `src/utils/router.tsx`
+Use `Flexbox` and `Center` from `@lobehub/ui`. See `references/layout-kit.md` for full props and examples.
 
-### Router Utilities
+- Use `gap` instead of `margin` for spacing between flex children
+- Use `flex={1}` to fill available space
+- Nest Flexbox for complex layouts; set `overflow: 'auto'` for scrollable regions
 
-```tsx
-import { dynamicElement, redirectElement, ErrorBoundary } from '@/utils/router';
+## Navigation
 
-element: dynamicElement(() => import('./chat'), 'Desktop > Chat');
-element: redirectElement('/settings/profile');
-errorElement: <ErrorBoundary resetPath="/chat" />;
-```
-
-### Navigation
-
-**Important**: For SPA pages, use `Link` from `react-router-dom`, NOT `next/link`.
+**For SPA pages, use `react-router-dom`, NOT `next/link`.**
 
 ```tsx
 // ❌ Wrong
 import Link from 'next/link';
-<Link href="/">Home</Link>
 
 // ✅ Correct
-import { Link } from 'react-router-dom';
-<Link to="/">Home</Link>
-
-// In components
-import { useNavigate } from 'react-router-dom';
-const navigate = useNavigate();
-navigate('/chat');
-
-// From stores
-const navigate = useGlobalStore.getState().navigate;
-navigate?.('/settings');
+import { Link, useNavigate } from 'react-router-dom';
 ```
+
+Access navigate from stores: `useGlobalStore.getState().navigate?.('/settings');`
+
+## Desktop File Sync Rule
+
+Files with a `.desktop.ts(x)` variant must be edited **in sync**. Drift causes blank pages in Electron.
+
+| Base file (web)            | Desktop file (Electron)            |
+| -------------------------- | ---------------------------------- |
+| `desktopRouter.config.tsx` | `desktopRouter.config.desktop.tsx` |
+| `componentMap.ts`          | `componentMap.desktop.ts`          |
+
+**After editing any `.ts`/`.tsx`:** glob for `<filename>.desktop.{ts,tsx}` in the same directory. If found, apply the equivalent sync-import change.
+
+## Routing Architecture
+
+| Route Type         | Use Case   | Implementation                                     |
+| ------------------ | ---------- | -------------------------------------------------- |
+| Next.js App Router | Auth pages | `src/app/[variants]/(auth)/`                       |
+| React Router DOM   | Main SPA   | `desktopRouter.config.tsx` + `.desktop.tsx` (pair) |
+
+Router utilities:
+
+```tsx
+import { dynamicElement, redirectElement, ErrorBoundary } from '@/utils/router';
+element: dynamicElement(() => import('./chat'), 'Desktop > Chat');
+element: redirectElement('/settings/profile');
+errorElement: <ErrorBoundary />;
+```
+
+## Common Mistakes
+
+| Mistake                                                           | Fix                                                               |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Using `next/link` in SPA                                          | Use `react-router-dom` `Link`                                     |
+| Using antd directly                                               | Use `@lobehub/ui/base-ui` first, then `@lobehub/ui`               |
+| `createStyles` for static styles                                  | Use `createStaticStyles` + `cssVar`                               |
+| Editing only `desktopRouter.config.tsx`                           | Must edit both `.tsx` and `.desktop.tsx`                          |
+| Using `margin` for flex spacing                                   | Use `gap` prop on Flexbox                                         |
+| Accessing zustand store without selector                          | Use selectors to access store data (see zustand skill)            |
+| Text or icon-text actions built with `Flexbox`/`Text` + `onClick` | Use `Button type={'text'} size={'small'}` with `icon` when needed |

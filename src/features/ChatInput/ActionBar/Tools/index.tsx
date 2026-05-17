@@ -1,12 +1,11 @@
 import { Blocks } from 'lucide-react';
-import { Suspense, memo, useCallback, useState } from 'react';
+import { memo, Suspense, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { createSkillStoreModal } from '@/features/SkillStore';
 import { useModelSupportToolUse } from '@/hooks/useModelSupportToolUse';
 import { useAgentStore } from '@/store/agent';
 import { agentByIdSelectors } from '@/store/agent/selectors';
-import { serverConfigSelectors, useServerConfigStore } from '@/store/serverConfig';
 
 import { useAgentId } from '../../hooks/useAgentId';
 import Action from '../components/Action';
@@ -15,12 +14,7 @@ import { useControls } from './useControls';
 
 const Tools = memo(() => {
   const { t } = useTranslation('setting');
-  const [updating, setUpdating] = useState(false);
-  const { marketItems } = useControls({
-    setUpdating,
-  });
-
-  const enableKlavis = useServerConfigStore(serverConfigSelectors.enableKlavis);
+  const { marketItems, editPluginDrawer } = useControls();
 
   const agentId = useAgentId();
   const model = useAgentStore((s) => agentByIdSelectors.getAgentModelById(agentId)(s));
@@ -39,15 +33,10 @@ const Tools = memo(() => {
     <Suspense fallback={<Action disabled icon={Blocks} title={t('tools.title')} />}>
       <Action
         icon={Blocks}
-        loading={updating}
+        showTooltip={false}
+        title={t('tools.title')}
         popover={{
-          content: (
-            <PopoverContent
-              enableKlavis={enableKlavis}
-              items={marketItems}
-              onOpenStore={handleOpenStore}
-            />
-          ),
+          content: <PopoverContent items={marketItems} onOpenStore={handleOpenStore} />,
           maxWidth: 320,
           minWidth: 320,
           styles: {
@@ -56,9 +45,8 @@ const Tools = memo(() => {
             },
           },
         }}
-        showTooltip={false}
-        title={t('tools.title')}
       />
+      {editPluginDrawer}
     </Suspense>
   );
 });

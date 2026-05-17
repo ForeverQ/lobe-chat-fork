@@ -2,9 +2,19 @@
  * Scroll methods exposed by VList, stored as callable functions
  */
 export interface VirtuaScrollMethods {
+  getItemOffset: (index: number) => number;
+  getItemSize: (index: number) => number;
   getScrollOffset: () => number;
   getScrollSize: () => number;
+  /**
+   * Total number of items currently rendered by VList, including trailing
+   * synthetic items (spacer, footerSlot) that are not part of displayMessages.
+   * Used by scrollToBottom to land on the true last index instead of the last
+   * message, which would otherwise leave trailing items below the viewport.
+   */
+  getTotalCount: () => number;
   getViewportSize: () => number;
+  scrollTo: (offset: number) => void;
   scrollToIndex: (
     index: number,
     options?: { align?: 'start' | 'center' | 'end'; smooth?: boolean },

@@ -1,41 +1,69 @@
-import { AIBaseModelCard } from 'model-bank';
-import OpenAI from 'openai';
+import type { AIBaseModelCard } from 'model-bank';
+import type OpenAI from 'openai';
 
-import {
+import type {
   ChatMethodOptions,
   ChatStreamPayload,
+  CreateImageMethodOptions,
   CreateImagePayload,
   CreateImageResponse,
+  CreateVideoMethodOptions,
+  CreateVideoPayload,
+  CreateVideoResponse,
   Embeddings,
   EmbeddingsOptions,
   EmbeddingsPayload,
   GenerateObjectOptions,
   GenerateObjectPayload,
+  HandleCreateVideoWebhookPayload,
+  HandleCreateVideoWebhookResult,
   ModelRequestOptions,
   PullModelParams,
   TextToSpeechOptions,
   TextToSpeechPayload,
 } from '../types';
 
-/* eslint-disable sort-keys-fix/sort-keys-fix , typescript-sort-keys/interface */
 export interface LobeRuntimeAI {
   baseURL?: string;
-  chat?(payload: ChatStreamPayload, options?: ChatMethodOptions): Promise<Response>;
-  generateObject?(payload: GenerateObjectPayload, options?: GenerateObjectOptions): Promise<any>;
+  chat?: (payload: ChatStreamPayload, options?: ChatMethodOptions) => Promise<Response>;
+  createImage?: (
+    payload: CreateImagePayload,
+    options?: CreateImageMethodOptions,
+  ) => Promise<CreateImageResponse>;
 
-  embeddings?(payload: EmbeddingsPayload, options?: EmbeddingsOptions): Promise<Embeddings[]>;
+  createVideo?: (
+    payload: CreateVideoPayload,
+    options?: CreateVideoMethodOptions,
+  ) => Promise<CreateVideoResponse>;
 
-  models?(): Promise<any>;
+  embeddings?: (payload: EmbeddingsPayload, options?: EmbeddingsOptions) => Promise<Embeddings[]>;
 
-  createImage?: (payload: CreateImagePayload) => Promise<CreateImageResponse>;
+  generateObject?: (
+    payload: GenerateObjectPayload,
+    options?: GenerateObjectOptions,
+  ) => Promise<any>;
+
+  handleCreateVideoWebhook?: (
+    payload: HandleCreateVideoWebhookPayload,
+  ) => Promise<HandleCreateVideoWebhookResult>;
+
+  handlePollVideoStatus?: (
+    inferenceId: string,
+  ) => Promise<
+    | { status: 'success'; videoUrl: string }
+    | { status: 'failed'; error: string }
+    | { status: 'pending' }
+  >;
+
+  models?: () => Promise<any>;
+
+  // Model management related interface
+  pullModel?: (params: PullModelParams, options?: ModelRequestOptions) => Promise<Response>;
 
   textToSpeech?: (
     payload: TextToSpeechPayload,
     options?: TextToSpeechOptions,
   ) => Promise<ArrayBuffer>;
-
-  // Model management related interface
-  pullModel?(params: PullModelParams, options?: ModelRequestOptions): Promise<Response>;
 }
 /* eslint-enabled */
 

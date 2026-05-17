@@ -1,6 +1,8 @@
 import { Text } from '@lobehub/ui';
-import dayjs from 'dayjs';
 import { memo } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import { useActivityTime } from '@/hooks/useActivityTime';
 
 import { type ChatItemProps } from '../type';
 
@@ -12,23 +14,27 @@ export interface TitleProps {
 }
 
 const Title = memo<TitleProps>(({ showTitle, time, avatar, titleAddon }) => {
+  const { t } = useTranslation('chat');
+  const title = avatar.title || t('untitledAgent');
+  const { text: timeText, title: timeTitle } = useActivityTime(time);
+
   return (
     <>
-      {showTitle && avatar.title && (
+      {showTitle && (
         <Text fontSize={14} weight={500}>
-          {avatar.title}
+          {title}
         </Text>
       )}
       {showTitle ? titleAddon : undefined}
-      {time && (
+      {!timeText ? null : (
         <Text
           aria-label="published-date"
           as={'time'}
           fontSize={12}
-          title={dayjs(time).format('YYYY-MM-DD HH:mm:ss')}
+          title={timeTitle}
           type={'secondary'}
         >
-          {dayjs(time).fromNow()}
+          {timeText}
         </Text>
       )}
     </>

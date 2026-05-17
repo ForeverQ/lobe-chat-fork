@@ -2,7 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { pluginService } from '@/services/plugin';
-import { LobeToolCustomPlugin } from '@/types/tool/plugin';
+import { type LobeToolCustomPlugin } from '@/types/tool/plugin';
 
 import { useToolStore } from '../../store';
 import { defaultCustomPlugin } from './initialState';
@@ -16,12 +16,7 @@ vi.mock('@/services/plugin', () => ({
     createCustomPlugin: vi.fn(),
     uninstallPlugin: vi.fn(),
     updatePluginManifest: vi.fn(),
-  },
-}));
-
-vi.mock('@/services/tool', () => ({
-  toolService: {
-    getToolManifest: vi.fn(),
+    getInstalledPlugins: vi.fn().mockResolvedValue([]),
   },
 }));
 

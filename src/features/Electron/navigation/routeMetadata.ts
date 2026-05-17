@@ -2,15 +2,8 @@
  * Route metadata mapping for navigation history
  * Provides title and icon information based on route path
  */
-import {
-  Circle,
-  Home,
-  type LucideIcon,
-  MessageSquare,
-  Rocket,
-  ShapesIcon,
-  Users,
-} from 'lucide-react';
+import { type LucideIcon } from 'lucide-react';
+import { Circle, Home, MessageSquare, Rocket, ShapesIcon, Users } from 'lucide-react';
 
 import { getRouteById } from '@/config/routes';
 
@@ -38,6 +31,7 @@ const memoryIcon = getRouteById('memory')?.icon;
 const imageIcon = getRouteById('image')?.icon;
 const pageIcon = getRouteById('page')?.icon;
 const settingsIcon = getRouteById('settings')?.icon;
+const tasksIcon = getRouteById('tasks')?.icon;
 
 /**
  * Route patterns ordered by specificity (most specific first)
@@ -56,6 +50,12 @@ const routePatterns: RoutePattern[] = [
   },
 
   // Agent/Chat routes - use dynamic title for specific chat names
+  {
+    icon: pageIcon,
+    test: (p) => /^\/agent\/[^/]+\/tpc_[^/]+\/page$/.test(p),
+    titleKey: 'navigation.page',
+    useDynamicTitle: true,
+  },
   {
     icon: MessageSquare,
     test: (p) => p.startsWith('/agent/'),
@@ -118,6 +118,13 @@ const routePatterns: RoutePattern[] = [
     icon: resourceIcon,
     test: (p) => p.startsWith('/resource'),
     titleKey: 'navigation.resources',
+  },
+
+  // Tasks routes (cross-agent global view + singular task detail)
+  {
+    icon: tasksIcon,
+    test: (p) => p.startsWith('/tasks') || p.startsWith('/task/'),
+    titleKey: 'navigation.tasks',
   },
 
   // Memory routes

@@ -1,4 +1,4 @@
-import { IThreadType } from './topic/thread';
+import type { IThreadType } from './topic/thread';
 
 /**
  * Scope types for message map key generation
@@ -6,6 +6,8 @@ import { IThreadType } from './topic/thread';
  * - thread: Agent thread conversation
  * - group: Group main conversation
  * - group_agent: Agent conversation within a group
+ * - task: Task manager side panel conversation
+ * - sub_agent: Agent-to-agent communication (non-group, uses subAgentId for config/display only)
  */
 export type MessageMapScope =
   | 'main'
@@ -14,7 +16,9 @@ export type MessageMapScope =
   | 'group_agent'
   | 'group_agent_builder'
   | 'page'
-  | 'agent_builder';
+  | 'task'
+  | 'agent_builder'
+  | 'sub_agent';
 
 /**
  * Context for generating message map key with scope-driven architecture
@@ -73,7 +77,6 @@ export interface MessageMapContext {
   topicId?: string | null;
 }
 
-/* eslint-disable typescript-sort-keys/interface */
 /**
  * Context for identifying a conversation or message list
  * This is the standard type for all conversation-related context passing
@@ -118,10 +121,59 @@ export interface MessageMapContext {
 export interface ConversationContext {
   agentId: string;
   /**
+   * Optional default assignee candidate for task manager conversations.
+   * This is a prompt hint only; task tools still require an explicit assigneeAgentId.
+   */
+  defaultTaskAssigneeAgentId?: string;
+  /**
+   * Current document ID for page-scoped conversations.
+   * Used by page editor integrations to distinguish the active document from
+   * other agent resources tied to the same topic.
+   */
+  documentId?: string;
+  /**
    * Group ID for group conversations
    * Used when scope is 'group' or 'group_agent'
    */
   groupId?: string;
+  /**
+   * Whether this is creating a new conversation (new topic or new thread)
+   * Used for optimistic updates
+   */
+  isNew?: boolean;
+  /**
+   * When true, sendMessage will NOT update the global `useChatStore.activeTopicId`
+   * after creating a new topic — the caller is responsible for tracking the new
+   * topic id (e.g. via `ConversationHooks.onTopicCreated`). Used by isolated
+   * panels (Task Manager) that maintain their own topic pointer.
+   */
+  isolatedTopic?: boolean;
+  /**
+   * Whether the current agent is the Supervisor in group orchestration
+   * - Used to mark assistant messages with metadata.isSupervisor
+   * - conversation-flow will transform role to 'supervisor' for UI rendering
+   * - context-engine will restore role back to 'assistant' for model
+   */
+  isSupervisor?: boolean;
+  /**
+   * Scope type for the conversation
+   * - 'main': Agent main conversation (default)
+   * - 'thread': Agent thread conversation
+   * - 'group': Group main conversation
+   * - 'group_agent': Agent conversation within a group
+   * - 'task': Task manager side panel conversation
+   * @default 'main' (auto-detected based on threadId)
+   */
+  scope?: MessageMapScope;
+  /**
+   * @deprecated Use agentId for agent sessions. This field is kept for backward compatibility.
+   */
+  sessionId?: string;
+  /**
+   * Source message ID that the thread is branched from
+   * Only used when creating a new thread (isNew=true, scope='thread')
+   */
+  sourceMessageId?: string;
   /**
    * Sub Agent ID for group orchestration scenarios
    * - Used to get Agent config (model, provider, plugins) instead of agentId
@@ -138,36 +190,6 @@ export interface ConversationContext {
    * ```
    */
   subAgentId?: string;
-  /**
-   * Whether the current agent is the Supervisor in group orchestration
-   * - Used to mark assistant messages with metadata.isSupervisor
-   * - conversation-flow will transform role to 'supervisor' for UI rendering
-   * - context-engine will restore role back to 'assistant' for model
-   */
-  isSupervisor?: boolean;
-  /**
-   * Whether this is creating a new conversation (new topic or new thread)
-   * Used for optimistic updates
-   */
-  isNew?: boolean;
-  /**
-   * Scope type for the conversation
-   * - 'main': Agent main conversation (default)
-   * - 'thread': Agent thread conversation
-   * - 'group': Group main conversation
-   * - 'group_agent': Agent conversation within a group
-   * @default 'main' (auto-detected based on threadId)
-   */
-  scope?: MessageMapScope;
-  /**
-   * @deprecated Use agentId for agent sessions. This field is kept for backward compatibility.
-   */
-  sessionId?: string;
-  /**
-   * Source message ID that the thread is branched from
-   * Only used when creating a new thread (isNew=true, scope='thread')
-   */
-  sourceMessageId?: string;
   /**
    * Thread ID (takes highest priority if present)
    * When present, scope is auto-detected as 'thread'
@@ -187,4 +209,9 @@ export interface ConversationContext {
    * When present, allows unauthenticated access to topic messages
    */
   topicShareId?: string;
+  /**
+   * Task Manager page the user is currently viewing. When set, streamingExecutor
+   * builds `RuntimeInitialContext.taskManager` from the task store.
+   */
+  viewedTask?: { type: 'list' } | { taskId: string; type: 'detail' };
 }

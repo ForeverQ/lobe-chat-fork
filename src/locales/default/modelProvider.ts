@@ -5,8 +5,9 @@ export default {
   'azure.azureApiVersion.title': 'Azure API Version',
   'azure.empty': 'Please enter a model ID to add the first model',
   'azure.endpoint.desc':
-    "When checking resources from the Azure portal, you can find this value in the 'Keys and Endpoints' section",
-  'azure.endpoint.placeholder': 'https://docs-test-001.openai.azure.com',
+    "When checking resources from the Azure portal, you can find this value in the 'Keys and Endpoints' section. Azure OpenAI endpoints from the Responses API path are also supported.",
+  'azure.endpoint.placeholder':
+    'https://your-resource.cognitiveservices.azure.com/openai/responses',
   'azure.endpoint.title': 'Azure API Address',
   'azure.modelListPlaceholder': 'Select or add the OpenAI model you deployed',
   'azure.title': 'Azure OpenAI',
@@ -98,6 +99,7 @@ export default {
   'createNewAiProvider.description.title': 'Provider Description',
   'createNewAiProvider.id.desc':
     'Unique identifier for the service provider, which cannot be modified after creation',
+  'createNewAiProvider.id.duplicate': 'Provider ID already exists',
   'createNewAiProvider.id.format':
     'Can only contain numbers, lowercase letters, hyphens (-), and underscores (_) ',
   'createNewAiProvider.id.placeholder':
@@ -194,6 +196,29 @@ export default {
     'Client request mode will initiate session requests directly from the browser, which can improve response speed',
   'providerModels.config.fetchOnClient.title': 'Use Client Request Mode',
   'providerModels.config.helpDoc': 'Configuration Guide',
+  'providerModels.config.oauth.authError': 'Authorization failed. Please try again.',
+  'providerModels.config.oauth.authorized': 'Authorized',
+  'providerModels.config.oauth.authorizedDesc':
+    'You have connected to {{name}}. Click to disconnect.',
+  'providerModels.config.oauth.cancel': 'Cancel',
+  'providerModels.config.oauth.codeExpired': 'Authorization code has expired. Please try again.',
+  'providerModels.config.oauth.connect': 'Connect with {{name}}',
+  'providerModels.config.oauth.connectDesc': 'Click to authorize via browser. No API key required.',
+  'providerModels.config.oauth.connected': 'Connected',
+  'providerModels.config.oauth.connecting': 'Connecting...',
+  'providerModels.config.oauth.copyCode': 'Copy code',
+  'providerModels.config.oauth.denied': 'Authorization was denied. Please try again.',
+  'providerModels.config.oauth.desc':
+    'Authorize with your {{name}} account to access models through your subscription.',
+  'providerModels.config.oauth.disconnect': 'Disconnect',
+  'providerModels.config.oauth.disconnectConfirm':
+    'Are you sure you want to disconnect? You will need to re-authorize to use this provider.',
+  'providerModels.config.oauth.enterCode': 'Enter the code on the opened page:',
+  'providerModels.config.oauth.openBrowser': 'Open browser to authorize',
+  'providerModels.config.oauth.polling': 'Waiting for authorization...',
+  'providerModels.config.oauth.retry': 'Retry',
+  'providerModels.config.oauth.serviceNote': 'Service provided by {{name}}',
+  'providerModels.config.oauth.title': 'OAuth Authorization',
   'providerModels.config.responsesApi.desc':
     "Uses OpenAI's next-generation request format specification to unlock advanced features like chain-of-thought (supported by OpenAI models only)",
   'providerModels.config.responsesApi.title': 'Use Responses API Specification',
@@ -222,8 +247,14 @@ export default {
   'providerModels.item.modelConfig.displayName.title': 'Model Display Name',
   'providerModels.item.modelConfig.extendParams.extra':
     'Choose extended parameters supported by the model. Hover an option to preview controls. Incorrect configs may cause request failures.',
+  'providerModels.item.modelConfig.extendParams.options.codexMaxReasoningEffort.hint':
+    'For Codex models; controls reasoning intensity.',
   'providerModels.item.modelConfig.extendParams.options.disableContextCaching.hint':
     'For Claude models; can lower cost and speed up responses.',
+  'providerModels.item.modelConfig.extendParams.options.effort.hint':
+    'For Claude Opus 4.6; controls effort level (low/medium/high/max).',
+  'providerModels.item.modelConfig.extendParams.options.enableAdaptiveThinking.hint':
+    'For Claude Opus 4.6; toggles adaptive thinking on or off.',
   'providerModels.item.modelConfig.extendParams.options.enableReasoning.hint':
     'For Claude, DeepSeek and other reasoning models; unlock deeper thinking.',
   'providerModels.item.modelConfig.extendParams.options.gpt5ReasoningEffort.hint':
@@ -234,12 +265,30 @@ export default {
     'For GPT-5.2 Pro series; controls reasoning intensity.',
   'providerModels.item.modelConfig.extendParams.options.gpt5_2ReasoningEffort.hint':
     'For GPT-5.2 series; controls reasoning intensity.',
+  'providerModels.item.modelConfig.extendParams.options.grok4_20ReasoningEffort.hint':
+    'For Grok 4.20 series; controls reasoning intensity. Low/Medium uses 4 agents, High/XHigh uses 16 agents.',
+  'providerModels.item.modelConfig.extendParams.options.grok4_3ReasoningEffort.hint':
+    'For Grok 4.3 series; controls reasoning intensity.',
+  'providerModels.item.modelConfig.extendParams.options.hy3ReasoningEffort.hint':
+    'For Hy3 models; controls reasoning intensity. no_think (ultra-fast response), low (quick reasoning), and high (deep reasoning)—to accommodate varying latency and depth requirements, from high-frequency interactions to complex engineering tasks.',
+  'providerModels.item.modelConfig.extendParams.options.deepseekV4ReasoningEffort.hint':
+    'For DeepSeek V4 thinking mode; controls reasoning intensity. `high` is the default, `max` unlocks the deepest reasoning used by complex agent workflows.',
   'providerModels.item.modelConfig.extendParams.options.imageAspectRatio.hint':
     'For Gemini image generation models; controls aspect ratio of generated images.',
+  'providerModels.item.modelConfig.extendParams.options.imageAspectRatio2.hint':
+    'For Nano Banana 2; controls aspect ratio of generated images (supports extra-wide 1:4, 4:1, 1:8, 8:1).',
   'providerModels.item.modelConfig.extendParams.options.imageResolution.hint':
     'For Gemini 3 image generation models; controls resolution of generated images.',
+  'providerModels.item.modelConfig.extendParams.options.imageResolution2.hint':
+    'For Gemini 3.1 Flash Image models; controls resolution of generated images (supports 512px).',
+  'providerModels.item.modelConfig.extendParams.options.opus47Effort.hint':
+    'For Claude Opus 4.7; controls effort level (low/medium/high/xhigh/max).',
   'providerModels.item.modelConfig.extendParams.options.reasoningBudgetToken.hint':
     'For Claude, Qwen3 and similar; controls token budget for reasoning.',
+  'providerModels.item.modelConfig.extendParams.options.reasoningBudgetToken32k.hint':
+    'For GLM-5 and GLM-4.7; controls token budget for reasoning (max 32k).',
+  'providerModels.item.modelConfig.extendParams.options.reasoningBudgetToken80k.hint':
+    'For Qwen3 series; controls token budget for reasoning (max 80k).',
   'providerModels.item.modelConfig.extendParams.options.reasoningEffort.hint':
     'For OpenAI and other reasoning-capable models; controls reasoning effort.',
   'providerModels.item.modelConfig.extendParams.options.textVerbosity.hint':
@@ -252,6 +301,12 @@ export default {
     'For Gemini 3 Flash Preview models; controls thinking depth.',
   'providerModels.item.modelConfig.extendParams.options.thinkingLevel2.hint':
     'For Gemini 3 Pro Preview models; controls thinking depth.',
+  'providerModels.item.modelConfig.extendParams.options.thinkingLevel3.hint':
+    'For Gemini 3.1 Pro Preview models; controls thinking depth with low/medium/high levels.',
+  'providerModels.item.modelConfig.extendParams.options.thinkingLevel4.hint':
+    'For Gemini 3.1 Flash Image models; toggle thinking on/off.',
+  'providerModels.item.modelConfig.extendParams.options.thinkingLevel5.hint':
+    'For Gemini 3.1 Flash-Lite Preview; controls thinking depth with minimal/low/medium/high levels.',
   'providerModels.item.modelConfig.extendParams.options.urlContext.hint':
     'For Gemini series; supports providing URL context.',
   'providerModels.item.modelConfig.extendParams.placeholder':
@@ -291,8 +346,8 @@ export default {
   'providerModels.item.modelConfig.type.options.realtime': 'Real-time Chat',
   'providerModels.item.modelConfig.type.options.stt': 'Speech-to-Text',
   'providerModels.item.modelConfig.type.options.text2music': 'Text-to-Music',
-  'providerModels.item.modelConfig.type.options.text2video': 'Text-to-Video',
   'providerModels.item.modelConfig.type.options.tts': 'Text-to-Speech',
+  'providerModels.item.modelConfig.type.options.video': 'Video Generation',
   'providerModels.item.modelConfig.type.placeholder': 'Please select a model type',
   'providerModels.item.modelConfig.type.title': 'Model Type',
   'providerModels.item.modelConfig.video.extra':
@@ -345,6 +400,7 @@ export default {
   'providerModels.tabs.image': 'Image',
   'providerModels.tabs.stt': 'ASR',
   'providerModels.tabs.tts': 'TTS',
+  'providerModels.tabs.video': 'Video',
   'sortModal.success': 'Sort update successful',
   'sortModal.title': 'Custom Order',
   'sortModal.update': 'Update',

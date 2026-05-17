@@ -1,10 +1,11 @@
 import type { AgentInstruction, AgentState } from '@lobechat/agent-runtime';
+import type { MessageMapScope, MessageMetadata } from '@lobechat/types';
 
 import { DEFAULT_AGENT_CHAT_CONFIG, DEFAULT_AGENT_CONFIG } from '@/const/settings';
-import type { ResolvedAgentConfig } from '@/services/chat/mecha';
+import { type ResolvedAgentConfig } from '@/services/chat/mecha';
 import { createAgentExecutors } from '@/store/chat/agents/createAgentExecutors';
-import type { OperationType } from '@/store/chat/slices/operation/types';
-import type { ChatStore } from '@/store/chat/store';
+import { type OperationType } from '@/store/chat/slices/operation/types';
+import { type ChatStore } from '@/store/chat/store';
 
 /**
  * Create a mock ResolvedAgentConfig for testing
@@ -34,6 +35,7 @@ export const executeWithMockContext = async ({
   state,
   mockStore,
   context,
+  metadata,
   skipCreateFirstMessage = false,
 }: {
   context: {
@@ -42,10 +44,12 @@ export const executeWithMockContext = async ({
     messageKey: string;
     operationId: string;
     parentId: string;
+    scope?: MessageMapScope;
     subAgentId?: string;
     topicId?: string | null;
   };
   executor: AgentInstruction['type'];
+  metadata?: Pick<MessageMetadata, 'trigger'>;
   instruction: AgentInstruction;
   mockStore: ChatStore;
   skipCreateFirstMessage?: boolean;
@@ -60,6 +64,7 @@ export const executeWithMockContext = async ({
         agentId: context.agentId || 'test-session',
         groupId: context.groupId,
         messageId: context.parentId,
+        scope: context.scope,
         subAgentId: context.subAgentId,
         topicId: context.topicId !== undefined ? context.topicId : 'test-topic',
       },
@@ -74,6 +79,7 @@ export const executeWithMockContext = async ({
   const executors = createAgentExecutors({
     agentConfig: createMockResolvedAgentConfig(),
     get: () => mockStore,
+    metadata,
     messageKey: context.messageKey,
     operationId: context.operationId,
     parentId: context.parentId,
@@ -141,6 +147,7 @@ export const createTestContext = (
     messageKey?: string;
     operationId?: string;
     parentId?: string;
+    scope?: MessageMapScope;
     subAgentId?: string;
     topicId?: string | null;
   } = {},
@@ -153,6 +160,7 @@ export const createTestContext = (
       `${overrides.agentId || 'test-session'}_${overrides.topicId !== undefined ? overrides.topicId : 'test-topic'}`,
     operationId: overrides.operationId || 'op_test',
     parentId: overrides.parentId || 'msg_parent',
+    scope: overrides.scope,
     subAgentId: overrides.subAgentId,
     topicId: overrides.topicId !== undefined ? overrides.topicId : 'test-topic',
   };

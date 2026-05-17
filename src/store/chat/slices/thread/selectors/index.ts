@@ -2,10 +2,10 @@ import { type ThreadItem, type UIChatMessage } from '@lobechat/types';
 
 import { useAgentStore } from '@/store/agent';
 import { agentChatConfigSelectors } from '@/store/agent/selectors';
-import type { ChatStoreState } from '@/store/chat';
+import { type ChatStoreState } from '@/store/chat';
 import { chatHelpers } from '@/store/chat/helpers';
+import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 
-import { displayMessageSelectors } from '../../message/selectors';
 import { genParentMessages } from './util';
 
 // ============= Thread List Selectors ============= //
@@ -22,6 +22,19 @@ const currentPortalThread = (s: ChatStoreState): ThreadItem | undefined => {
   const threads = currentTopicThreads(s);
 
   return threads.find((t) => t.id === s.portalThreadId);
+};
+
+const currentActiveThread = (s: ChatStoreState): ThreadItem | undefined => {
+  if (!s.activeThreadId) return undefined;
+
+  const threads = currentTopicThreads(s);
+
+  return threads.find((t) => t.id === s.activeThreadId);
+};
+
+const isActiveThreadSubagent = (s: ChatStoreState): boolean => {
+  const thread = currentActiveThread(s);
+  return !!thread?.metadata?.subagentType;
 };
 
 const getThreadsByTopic = (topicId?: string) => (s: ChatStoreState) => {
@@ -47,6 +60,21 @@ const hasThreadBySourceMsgId = (id: string) => (s: ChatStoreState) => {
 // Thread Chat component now uses dbMessagesMap directly
 
 /**
+ * Get main scope messages (without activeThreadId influence).
+ * Always uses main scope key so that thread selectors work correctly
+ * even when activeThreadId is set (i.e., viewing inside a subtopic).
+ */
+const getMainScopeMessages = (s: ChatStoreState): UIChatMessage[] => {
+  if (!s.activeAgentId) return [];
+  const mainKey = messageMapKey({
+    agentId: s.activeAgentId,
+    groupId: s.activeGroupId,
+    topicId: s.activeTopicId,
+  });
+  return s.messagesMap[mainKey] || [];
+};
+
+/**
  * Internal helper to get parent messages for a thread
  */
 const getThreadParentMessages = (s: ChatStoreState, data: UIChatMessage[]) => {
@@ -68,7 +96,7 @@ const getThreadParentMessages = (s: ChatStoreState, data: UIChatMessage[]) => {
 const getThreadChildMessages =
   (id?: string) =>
   (s: ChatStoreState): UIChatMessage[] => {
-    const data = displayMessageSelectors.activeDisplayMessages(s);
+    const data = getMainScopeMessages(s);
     return data.filter((m) => !!id && m.threadId === id);
   };
 
@@ -76,7 +104,7 @@ const getThreadChildMessages =
  * Portal AI chats - used for AI title summarization
  */
 const portalAIChats = (s: ChatStoreState) => {
-  const data = displayMessageSelectors.activeDisplayMessages(s);
+  const data = getMainScopeMessages(s);
   const parentMessages = getThreadParentMessages(s, data);
   const childMessages = getThreadChildMessages(s.portalThreadId)(s);
 
@@ -107,11 +135,13 @@ const portalDisplayChatsString = (s: ChatStoreState) => {
 };
 
 export const threadSelectors = {
+  currentActiveThread,
   currentPortalThread,
   currentTopicThreads,
   getThreadsBySourceMsgId,
   getThreadsByTopic,
   hasThreadBySourceMsgId,
+  isActiveThreadSubagent,
   portalAIChats,
   portalAIChatsWithHistoryConfig,
   portalDisplayChatsString,

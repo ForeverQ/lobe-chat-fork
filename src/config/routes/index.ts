@@ -1,11 +1,13 @@
+import { type LucideIcon } from 'lucide-react';
 import {
   BrainCircuit,
   FilePenIcon,
   Image,
   LibraryBigIcon,
-  type LucideIcon,
+  ListTodoIcon,
   Settings,
   ShapesIcon,
+  Video,
 } from 'lucide-react';
 
 export interface NavigationRoute {
@@ -17,8 +19,10 @@ export interface NavigationRoute {
   icon: LucideIcon;
   /** Unique route identifier */
   id: string;
-  /** Keywords for CMDK search */
+  /** Keywords for CMDK search (fallback) */
   keywords?: string[];
+  /** i18n key for CMDK keywords in common namespace */
+  keywordsKey?: string;
   /** Route path */
   path: string;
   /** Path prefix for checking current location */
@@ -38,8 +42,19 @@ export const NAVIGATION_ROUTES: NavigationRoute[] = [
     icon: ShapesIcon,
     id: 'community',
     keywords: ['discover', 'market', 'assistant', 'model', 'provider', 'mcp'],
+    keywordsKey: 'cmdk.keywords.community',
     path: '/community',
     pathPrefix: '/community',
+  },
+  {
+    cmdkKey: 'cmdk.video',
+    electronKey: 'navigation.video',
+    icon: Video,
+    id: 'video',
+    keywords: ['video', 'generate', 'seedance', 'kling'],
+    keywordsKey: 'cmdk.keywords.video',
+    path: '/video',
+    pathPrefix: '/video',
   },
   {
     cmdkKey: 'cmdk.painting',
@@ -47,6 +62,7 @@ export const NAVIGATION_ROUTES: NavigationRoute[] = [
     icon: Image,
     id: 'image',
     keywords: ['painting', 'art', 'generate', 'draw'],
+    keywordsKey: 'cmdk.keywords.painting',
     path: '/image',
     pathPrefix: '/image',
   },
@@ -56,6 +72,7 @@ export const NAVIGATION_ROUTES: NavigationRoute[] = [
     icon: LibraryBigIcon,
     id: 'resource',
     keywords: ['knowledge', 'files', 'library', 'documents'],
+    keywordsKey: 'cmdk.keywords.resources',
     path: '/resource',
     pathPrefix: '/resource',
   },
@@ -65,6 +82,7 @@ export const NAVIGATION_ROUTES: NavigationRoute[] = [
     icon: FilePenIcon,
     id: 'page',
     keywords: ['documents', 'write', 'notes'],
+    keywordsKey: 'cmdk.keywords.pages',
     path: '/page',
     pathPrefix: '/page',
     useDynamicTitle: true,
@@ -75,8 +93,19 @@ export const NAVIGATION_ROUTES: NavigationRoute[] = [
     icon: BrainCircuit,
     id: 'memory',
     keywords: ['identities', 'contexts', 'preferences', 'experiences'],
+    keywordsKey: 'cmdk.keywords.memory',
     path: '/memory',
     pathPrefix: '/memory',
+  },
+  {
+    cmdkKey: 'cmdk.tasks',
+    electronKey: 'navigation.tasks',
+    icon: ListTodoIcon,
+    id: 'tasks',
+    keywords: ['tasks', 'todo', 'agent', 'kanban'],
+    keywordsKey: 'cmdk.keywords.tasks',
+    path: '/tasks',
+    pathPrefix: '/tasks',
   },
   {
     cmdkKey: 'cmdk.settings',
@@ -84,6 +113,7 @@ export const NAVIGATION_ROUTES: NavigationRoute[] = [
     icon: Settings,
     id: 'settings',
     keywords: ['settings', 'preferences', 'configuration', 'options'],
+    keywordsKey: 'cmdk.keywords.settings',
     path: '/settings',
     pathPrefix: '/settings',
   },
@@ -100,5 +130,5 @@ export const getRouteById = (id: string): NavigationRoute | undefined =>
  */
 export const getNavigableRoutes = (): NavigationRoute[] =>
   NAVIGATION_ROUTES.filter((r) =>
-    ['community', 'image', 'resource', 'page', 'memory'].includes(r.id),
+    ['community', 'video', 'image', 'resource', 'page', 'memory'].includes(r.id),
   );

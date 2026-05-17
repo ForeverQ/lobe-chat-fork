@@ -1,34 +1,9 @@
-import { type StateCreator } from 'zustand/vanilla';
-
 import { type ChatStore } from '@/store/chat/store';
+import { type StoreSetter } from '@/store/types';
 import { type PortalArtifact } from '@/types/artifact';
 
-import { type PortalFile, type PortalViewData, PortalViewType } from './initialState';
-
-export interface ChatPortalAction {
-  // ============== Core Stack Operations ==============
-  clearPortalStack: () => void;
-  // ============== Convenience Methods ==============
-  closeArtifact: () => void;
-  closeDocument: () => void;
-  closeFilePreview: () => void;
-  closeMessageDetail: () => void;
-  closeNotebook: () => void;
-
-  closeToolUI: () => void;
-  goBack: () => void;
-  goHome: () => void;
-  openArtifact: (artifact: PortalArtifact) => void;
-  openDocument: (documentId: string) => void;
-  openFilePreview: (file: PortalFile) => void;
-  openMessageDetail: (messageId: string) => void;
-  openNotebook: () => void;
-  openToolUI: (messageId: string, identifier: string) => void;
-  popPortalView: () => void;
-  pushPortalView: (view: PortalViewData) => void;
-  replacePortalView: (view: PortalViewData) => void;
-  toggleNotebook: (open?: boolean) => void;
-}
+import { type PortalFile, type PortalViewData } from './initialState';
+import { PortalViewType } from './initialState';
 
 // Helper to get current view type from stack
 const getCurrentViewType = (portalStack: PortalViewData[]): PortalViewType | null => {
@@ -36,64 +11,151 @@ const getCurrentViewType = (portalStack: PortalViewData[]): PortalViewType | nul
   return top?.type ?? null;
 };
 
-export const chatPortalSlice: StateCreator<
-  ChatStore,
-  [['zustand/devtools', never]],
-  [],
-  ChatPortalAction
-> = (set, get) => ({
-  clearPortalStack: () => {
-    set({ portalStack: [], showPortal: false }, false, 'clearPortalStack');
-  },
+type Setter = StoreSetter<ChatStore>;
+export const chatPortalSlice = (set: Setter, get: () => ChatStore, _api?: unknown) =>
+  new ChatPortalActionImpl(set, get, _api);
 
-  closeArtifact: () => {
-    const { portalStack } = get();
+export class ChatPortalActionImpl {
+  readonly #get: () => ChatStore;
+  readonly #set: Setter;
+
+  constructor(set: Setter, get: () => ChatStore, _api?: unknown) {
+    void _api;
+    this.#set = set;
+    this.#get = get;
+  }
+
+  clearPortalStack = (): void => {
+    this.#set({ portalStack: [], showPortal: false }, false, 'clearPortalStack');
+  };
+
+  closeArtifact = (): void => {
+    const { portalStack } = this.#get();
     if (getCurrentViewType(portalStack) === PortalViewType.Artifact) {
-      get().popPortalView();
+      this.#get().popPortalView();
     }
-  },
+  };
 
-  closeDocument: () => {
-    const { portalStack } = get();
+  closeDocument = (): void => {
+    const { portalStack } = this.#get();
     if (getCurrentViewType(portalStack) === PortalViewType.Document) {
-      get().popPortalView();
+      this.#get().popPortalView();
     }
-  },
+  };
 
-  closeFilePreview: () => {
-    const { portalStack } = get();
+  closeFilePreview = (): void => {
+    const { portalStack } = this.#get();
     if (getCurrentViewType(portalStack) === PortalViewType.FilePreview) {
-      get().popPortalView();
+      this.#get().popPortalView();
     }
-  },
+  };
 
-  closeMessageDetail: () => {
-    const { portalStack } = get();
+  closeLocalFile = (): void => {
+    const { portalStack } = this.#get();
+    if (getCurrentViewType(portalStack) === PortalViewType.LocalFile) {
+      this.#get().popPortalView();
+    }
+  };
+
+  closeLocalFileTab = (filePath: string): void => {
+    const { openLocalFiles, activeLocalFilePath } = this.#get();
+    const idx = openLocalFiles.findIndex((f) => f.filePath === filePath);
+    if (idx === -1) return;
+
+    const nextFiles = openLocalFiles.filter((_, i) => i !== idx);
+
+    let nextActive: string | undefined;
+    if (activeLocalFilePath === filePath) {
+      const neighbor = nextFiles[idx] ?? nextFiles[idx - 1];
+      nextActive = neighbor?.filePath;
+    } else {
+      nextActive = activeLocalFilePath;
+    }
+
+    this.#set(
+      { activeLocalFilePath: nextActive, openLocalFiles: nextFiles },
+      false,
+      'closeLocalFileTab',
+    );
+
+    if (nextFiles.length === 0) {
+      this.#get().closeLocalFile();
+    }
+  };
+
+  closeLeftLocalFileTabs = (filePath: string): void => {
+    const { openLocalFiles, activeLocalFilePath } = this.#get();
+    const idx = openLocalFiles.findIndex((f) => f.filePath === filePath);
+    if (idx <= 0) return;
+
+    const nextFiles = openLocalFiles.slice(idx);
+    const nextActive = nextFiles.some((f) => f.filePath === activeLocalFilePath)
+      ? activeLocalFilePath
+      : filePath;
+
+    this.#set(
+      { activeLocalFilePath: nextActive, openLocalFiles: nextFiles },
+      false,
+      'closeLeftLocalFileTabs',
+    );
+  };
+
+  closeOtherLocalFileTabs = (filePath: string): void => {
+    const { openLocalFiles } = this.#get();
+    const target = openLocalFiles.find((f) => f.filePath === filePath);
+    if (!target) return;
+
+    this.#set(
+      { activeLocalFilePath: filePath, openLocalFiles: [target] },
+      false,
+      'closeOtherLocalFileTabs',
+    );
+  };
+
+  closeRightLocalFileTabs = (filePath: string): void => {
+    const { openLocalFiles, activeLocalFilePath } = this.#get();
+    const idx = openLocalFiles.findIndex((f) => f.filePath === filePath);
+    if (idx < 0 || idx >= openLocalFiles.length - 1) return;
+
+    const nextFiles = openLocalFiles.slice(0, idx + 1);
+    const nextActive = nextFiles.some((f) => f.filePath === activeLocalFilePath)
+      ? activeLocalFilePath
+      : filePath;
+
+    this.#set(
+      { activeLocalFilePath: nextActive, openLocalFiles: nextFiles },
+      false,
+      'closeRightLocalFileTabs',
+    );
+  };
+
+  closeMessageDetail = (): void => {
+    const { portalStack } = this.#get();
     if (getCurrentViewType(portalStack) === PortalViewType.MessageDetail) {
-      get().popPortalView();
+      this.#get().popPortalView();
     }
-  },
+  };
 
-  closeNotebook: () => {
-    const { portalStack } = get();
+  closeNotebook = (): void => {
+    const { portalStack } = this.#get();
     if (getCurrentViewType(portalStack) === PortalViewType.Notebook) {
-      get().popPortalView();
+      this.#get().popPortalView();
     }
-  },
+  };
 
-  closeToolUI: () => {
-    const { portalStack } = get();
+  closeToolUI = (): void => {
+    const { portalStack } = this.#get();
     if (getCurrentViewType(portalStack) === PortalViewType.ToolUI) {
-      get().popPortalView();
+      this.#get().popPortalView();
     }
-  },
+  };
 
-  goBack: () => {
-    get().popPortalView();
-  },
+  goBack = (): void => {
+    this.#get().popPortalView();
+  };
 
-  goHome: () => {
-    set(
+  goHome = (): void => {
+    this.#set(
       {
         portalStack: [{ type: PortalViewType.Home }],
         showPortal: true,
@@ -101,52 +163,68 @@ export const chatPortalSlice: StateCreator<
       false,
       'goHome',
     );
-  },
+  };
 
-  // ============== Convenience Methods (using stack operations) ==============
-  openArtifact: (artifact) => {
-    get().pushPortalView({ artifact, type: PortalViewType.Artifact });
-  },
+  openArtifact = (artifact: PortalArtifact): void => {
+    this.#get().pushPortalView({ artifact, type: PortalViewType.Artifact });
+  };
 
-  openDocument: (documentId) => {
-    get().pushPortalView({ documentId, type: PortalViewType.Document });
-  },
+  openDocument = (documentId: string): void => {
+    this.#get().pushPortalView({ documentId, type: PortalViewType.Document });
+  };
 
-  openFilePreview: (file) => {
-    get().pushPortalView({ file, type: PortalViewType.FilePreview });
-  },
+  openFilePreview = (file: PortalFile): void => {
+    this.#get().pushPortalView({ file, type: PortalViewType.FilePreview });
+  };
 
-  openMessageDetail: (messageId) => {
-    get().pushPortalView({ messageId, type: PortalViewType.MessageDetail });
-  },
+  openLocalFile = ({
+    filePath,
+    workingDirectory,
+  }: {
+    filePath: string;
+    workingDirectory: string;
+  }): void => {
+    const { openLocalFiles } = this.#get();
+    const exists = openLocalFiles.some((f) => f.filePath === filePath);
+    const nextFiles = exists ? openLocalFiles : [...openLocalFiles, { filePath, workingDirectory }];
+    this.#set({ activeLocalFilePath: filePath, openLocalFiles: nextFiles }, false, 'openLocalFile');
+    this.#get().pushPortalView({ type: PortalViewType.LocalFile });
+  };
 
-  openNotebook: () => {
-    get().pushPortalView({ type: PortalViewType.Notebook });
-  },
+  setActiveLocalFile = (filePath: string): void => {
+    this.#set({ activeLocalFilePath: filePath }, false, 'setActiveLocalFile');
+  };
 
-  openToolUI: (messageId, identifier) => {
-    get().pushPortalView({ identifier, messageId, type: PortalViewType.ToolUI });
-  },
+  openMessageDetail = (messageId: string): void => {
+    this.#get().pushPortalView({ messageId, type: PortalViewType.MessageDetail });
+  };
 
-  popPortalView: () => {
-    const { portalStack } = get();
+  openNotebook = (): void => {
+    this.#get().pushPortalView({ type: PortalViewType.Notebook });
+  };
+
+  openToolUI = (messageId: string, identifier: string): void => {
+    this.#get().pushPortalView({ identifier, messageId, type: PortalViewType.ToolUI });
+  };
+
+  popPortalView = (): void => {
+    const { portalStack } = this.#get();
 
     if (portalStack.length <= 1) {
       // Stack empty or only one item, clear stack and close portal
-      set({ portalStack: [], showPortal: false }, false, 'popPortalView/close');
+      this.#set({ portalStack: [], showPortal: false }, false, 'popPortalView/close');
     } else {
-      set({ portalStack: portalStack.slice(0, -1) }, false, 'popPortalView');
+      this.#set({ portalStack: portalStack.slice(0, -1) }, false, 'popPortalView');
     }
-  },
+  };
 
-  // ============== Core Stack Operations ==============
-  pushPortalView: (view) => {
-    const { portalStack } = get();
+  pushPortalView = (view: PortalViewData): void => {
+    const { portalStack } = this.#get();
     const top = portalStack.at(-1);
 
     // If top of stack is same type, replace instead of push (avoid duplicates)
     if (top?.type === view.type) {
-      set(
+      this.#set(
         {
           portalStack: [...portalStack.slice(0, -1), view],
           showPortal: true,
@@ -155,7 +233,7 @@ export const chatPortalSlice: StateCreator<
         'pushPortalView/replace',
       );
     } else {
-      set(
+      this.#set(
         {
           portalStack: [...portalStack, view],
           showPortal: true,
@@ -164,15 +242,15 @@ export const chatPortalSlice: StateCreator<
         'pushPortalView',
       );
     }
-  },
+  };
 
-  replacePortalView: (view) => {
-    const { portalStack } = get();
+  replacePortalView = (view: PortalViewData): void => {
+    const { portalStack } = this.#get();
 
     if (portalStack.length === 0) {
-      set({ portalStack: [view], showPortal: true }, false, 'replacePortalView/push');
+      this.#set({ portalStack: [view], showPortal: true }, false, 'replacePortalView/push');
     } else {
-      set(
+      this.#set(
         {
           portalStack: [...portalStack.slice(0, -1), view],
           showPortal: true,
@@ -181,17 +259,19 @@ export const chatPortalSlice: StateCreator<
         'replacePortalView',
       );
     }
-  },
+  };
 
-  toggleNotebook: (open) => {
-    const { portalStack } = get();
+  toggleNotebook = (open?: boolean): void => {
+    const { portalStack } = this.#get();
     const isCurrentlyNotebook = getCurrentViewType(portalStack) === PortalViewType.Notebook;
     const shouldOpen = open ?? !isCurrentlyNotebook;
 
     if (shouldOpen) {
-      get().openNotebook();
+      this.#get().openNotebook();
     } else {
-      get().closeNotebook();
+      this.#get().closeNotebook();
     }
-  },
-});
+  };
+}
+
+export type ChatPortalAction = Pick<ChatPortalActionImpl, keyof ChatPortalActionImpl>;

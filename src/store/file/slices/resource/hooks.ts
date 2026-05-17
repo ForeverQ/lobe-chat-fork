@@ -3,9 +3,10 @@ import { shallow } from 'zustand/shallow';
 
 import { mutate, useClientDataSWR } from '@/libs/swr';
 import { resourceService } from '@/services/resource';
-import type { ResourceQueryParams } from '@/types/resource';
+import { type ResourceQueryParams } from '@/types/resource';
 
 import { useFileStore } from '../../store';
+import { mergeServerResourcesWithOptimistic } from './utils';
 
 const SWR_KEY_RESOURCES = 'SWR_RESOURCES';
 
@@ -23,7 +24,7 @@ export const revalidateResources = async (params?: ResourceQueryParams) => {
 /**
  * Custom SWR hook for fetching resources with caching and revalidation
  */
-export const useFetchResources = (params: ResourceQueryParams | null, enable = true) => {
+export const useFetchResources = (params: ResourceQueryParams | null, enable: any = true) => {
   return useClientDataSWR(
     enable && params ? [SWR_KEY_RESOURCES, params] : null,
     async ([, queryParams]: [string, ResourceQueryParams]) => {
@@ -39,9 +40,9 @@ export const useFetchResources = (params: ResourceQueryParams | null, enable = t
       dedupingInterval: 2000,
       onSuccess: (data: { hasMore: boolean; items: any[]; total?: number }) => {
         const { resourceList, resourceMap } = useFileStore.getState();
-
-        const newResourceMap = new Map(data.items.map((item: any) => [item.id, item]));
-        const newResourceList = data.items;
+        const merged = mergeServerResourcesWithOptimistic(data.items, resourceMap, params);
+        const newResourceList = merged.resourceList;
+        const newResourceMap = merged.resourceMap;
 
         // Only update store if data actually changed
         if (!isEqual(newResourceList, resourceList) || !isEqual(newResourceMap, resourceMap)) {

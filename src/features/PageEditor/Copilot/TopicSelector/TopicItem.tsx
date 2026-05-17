@@ -9,17 +9,19 @@ import { useDropdownMenu } from './useDropdownMenu';
 interface TopicItemProps {
   active: boolean;
   onClose: () => void;
+  onDelete?: (topicId: string) => void;
   onTopicChange: (topicId: string) => void;
   topicId: string;
   topicTitle: string;
 }
 
 const TopicItem = memo<TopicItemProps>(
-  ({ active, onClose, onTopicChange, topicId, topicTitle }) => {
+  ({ active, onClose, onDelete, onTopicChange, topicId, topicTitle }) => {
     const { t } = useTranslation('topic');
 
     const dropdownMenu = useDropdownMenu({
       onClose,
+      onDelete,
       topicId,
       topicTitle,
     });
@@ -29,12 +31,12 @@ const TopicItem = memo<TopicItemProps>(
         actions={<Actions dropdownMenu={dropdownMenu} />}
         active={active}
         contextMenuItems={dropdownMenu}
+        style={{ flexShrink: 0 }}
+        title={topicTitle || t('untitled', { defaultValue: 'Untitled' })}
         onClick={() => {
           onTopicChange(topicId);
           onClose();
         }}
-        style={{ flexShrink: 0 }}
-        title={topicTitle || t('untitled', { defaultValue: 'Untitled' })}
       />
     );
   },

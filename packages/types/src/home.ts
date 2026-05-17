@@ -17,12 +17,28 @@ export interface GroupMemberAvatar {
 export interface SidebarAgentItem {
   /**
    * Avatar can be:
-   * - string: single avatar for agents
-   * - GroupMemberAvatar[]: array of member avatars for groups
+   * - string: single avatar for agents or custom group avatar
+   * - GroupMemberAvatar[]: array of member avatars for groups (when no custom avatar)
    * - null: no avatar
    */
   avatar?: GroupMemberAvatar[] | string | null;
+  /**
+   * Background color for the avatar (used for custom group avatars)
+   */
+  backgroundColor?: string | null;
   description?: string | null;
+  /**
+   * Group's own avatar (emoji or uploaded image URL)
+   * Only present for chat groups (type === 'group')
+   */
+  groupAvatar?: string | null;
+  /**
+   * Heterogeneous agent runtime type (e.g. `claude-code`) when the agent is
+   * driven by an external CLI. `null` / absent means it's a regular LobeHub
+   * agent. Present so sidebar / list items can render an "External" tag
+   * without per-item agent config lookups.
+   */
+  heterogeneousType?: string | null;
   id: string;
   pinned: boolean;
   sessionId?: string | null;

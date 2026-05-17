@@ -1,30 +1,12 @@
 import { type SSOProvider } from '@lobechat/types';
-import { type StateCreator } from 'zustand/vanilla';
 
-import type { UserStore } from '../../store';
+import { type StoreSetter } from '@/store/types';
+
+import { type UserStore } from '../../store';
 
 interface AuthProvidersData {
   hasPasswordAccount: boolean;
   providers: SSOProvider[];
-}
-
-export interface UserAuthAction {
-  /**
-   * Fetch auth providers (SSO accounts) for the current user
-   */
-  fetchAuthProviders: () => Promise<void>;
-  /**
-   * universal logout method
-   */
-  logout: () => Promise<void>;
-  /**
-   * universal login method
-   */
-  openLogin: () => Promise<void>;
-  /**
-   * Refresh auth providers after link/unlink
-   */
-  refreshAuthProviders: () => Promise<void>;
 }
 
 const fetchAuthProvidersData = async (): Promise<AuthProvidersData> => {
@@ -50,25 +32,44 @@ const fetchAuthProvidersData = async (): Promise<AuthProvidersData> => {
   return { hasPasswordAccount, providers };
 };
 
-export const createAuthSlice: StateCreator<
-  UserStore,
-  [['zustand/devtools', never]],
-  [],
-  UserAuthAction
-> = (set, get) => ({
-  fetchAuthProviders: async () => {
+type Setter = StoreSetter<UserStore>;
+export const createAuthSlice = (set: Setter, get: () => UserStore, _api?: unknown) =>
+  new UserAuthActionImpl(set, get, _api);
+
+export class UserAuthActionImpl {
+  readonly #get: () => UserStore;
+  readonly #set: Setter;
+
+  constructor(set: Setter, get: () => UserStore, _api?: unknown) {
+    void _api;
+    this.#set = set;
+    this.#get = get;
+  }
+
+  fetchAuthProviders = async (): Promise<void> => {
     // Skip if already loaded
-    if (get().isLoadedAuthProviders) return;
+    if (this.#get().isLoadedAuthProviders) return;
 
     try {
       const { hasPasswordAccount, providers } = await fetchAuthProvidersData();
-      set({ authProviders: providers, hasPasswordAccount, isLoadedAuthProviders: true });
+      this.#set({ authProviders: providers, hasPasswordAccount, isLoadedAuthProviders: true });
     } catch (error) {
       console.error('Failed to fetch auth providers:', error);
-      set({ isLoadedAuthProviders: true });
+      this.#set({ isLoadedAuthProviders: true });
     }
-  },
-  logout: async () => {
+  };
+
+  logout = async (): Promise<void> => {
+    // Clear the OIDC Provider session for the current browser *before*
+    // destroying the better-auth session. This prevents a stale OIDC session
+    // from silently issuing tokens for the old account after the user signs
+    // in as someone else.
+    try {
+      await fetch('/oidc/clear-session', { method: 'POST' });
+    } catch {
+      // Best-effort: don't block sign-out if the cleanup request fails
+    }
+
     const { signOut } = await import('@/libs/better-auth/auth-client');
     await signOut({
       fetchOptions: {
@@ -79,8 +80,9 @@ export const createAuthSlice: StateCreator<
         },
       },
     });
-  },
-  openLogin: async () => {
+  };
+
+  openLogin = async (): Promise<void> => {
     // Skip if already on a login page (/signin, /signup)
     const pathname = location.pathname;
     if (pathname.startsWith('/signin') || pathname.startsWith('/signup')) {
@@ -89,13 +91,16 @@ export const createAuthSlice: StateCreator<
 
     const currentUrl = location.toString();
     window.location.href = `/signin?callbackUrl=${encodeURIComponent(currentUrl)}`;
-  },
-  refreshAuthProviders: async () => {
+  };
+
+  refreshAuthProviders = async (): Promise<void> => {
     try {
       const { hasPasswordAccount, providers } = await fetchAuthProvidersData();
-      set({ authProviders: providers, hasPasswordAccount });
+      this.#set({ authProviders: providers, hasPasswordAccount });
     } catch (error) {
       console.error('Failed to refresh auth providers:', error);
     }
-  },
-});
+  };
+}
+
+export type UserAuthAction = Pick<UserAuthActionImpl, keyof UserAuthActionImpl>;

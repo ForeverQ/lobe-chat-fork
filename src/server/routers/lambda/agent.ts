@@ -1,5 +1,6 @@
 import { DEFAULT_AGENT_CONFIG, INBOX_SESSION_ID } from '@lobechat/const';
-import { type KnowledgeItem, KnowledgeType } from '@lobechat/types';
+import { CreateAgentSchema, type KnowledgeItem } from '@lobechat/types';
+import { KnowledgeType } from '@lobechat/types';
 import { z } from 'zod';
 
 import { AgentModel } from '@/database/models/agent';
@@ -8,8 +9,6 @@ import { FileModel } from '@/database/models/file';
 import { KnowledgeBaseModel } from '@/database/models/knowledgeBase';
 import { SessionModel } from '@/database/models/session';
 import { UserModel } from '@/database/models/user';
-import { insertAgentSchema } from '@/database/schemas';
-import { pino } from '@/libs/logger';
 import { authedProcedure, router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { AgentService } from '@/server/services/agent';
@@ -50,36 +49,17 @@ export const agentRouter = router({
   createAgent: agentProcedure
     .input(
       z.object({
-        config: insertAgentSchema
-          .omit({
-            chatConfig: true,
-            openingMessage: true,
-            openingQuestions: true,
-            plugins: true,
-            tags: true,
-            tts: true,
-          })
-          .passthrough()
-          .partial()
-          .optional(),
+        config: CreateAgentSchema.optional(),
         groupId: z.string().optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      const session = await ctx.sessionModel.create({
-        config: input.config,
-        session: { groupId: input.groupId },
-        type: 'agent',
+      const agent = await ctx.agentModel.create({
+        ...input.config,
+        sessionGroupId: input.groupId,
       });
 
-      // Get the agent ID from the created session
-      const sessionWithAgent = await ctx.sessionModel.findByIdOrSlug(session.id);
-      const agentId = sessionWithAgent?.agent?.id;
-
-      return {
-        agentId,
-        sessionId: session.id,
-      };
+      return { agentId: agent.id };
     }),
 
   createAgentFiles: agentProcedure
@@ -213,7 +193,7 @@ export const agentRouter = router({
           if (!user) return DEFAULT_AGENT_CONFIG;
 
           const res = await ctx.agentService.createInbox();
-          pino.info({ res }, 'create inbox session');
+          console.info('create inbox session', res);
         }
       }
 
@@ -296,7 +276,7 @@ export const agentRouter = router({
       z
         .object({
           keyword: z.string().optional(),
-          limit: z.number().optional(),
+          limit: z.number().max(100).optional(),
           offset: z.number().optional(),
         })
         .optional(),

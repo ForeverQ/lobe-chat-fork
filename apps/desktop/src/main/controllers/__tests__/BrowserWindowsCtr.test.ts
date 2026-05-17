@@ -1,7 +1,8 @@
-import { InterceptRouteParams } from '@lobechat/electron-client-ipc';
-import { Mock, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { InterceptRouteParams } from '@lobechat/electron-client-ipc';
+import type { Mock } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AppBrowsersIdentifiers, BrowsersIdentifiers } from '@/appBrowsers';
+import type { AppBrowsersIdentifiers } from '@/appBrowsers';
 import type { App } from '@/core/App';
 import type { IpcContext } from '@/utils/ipc';
 import { runWithIpcContext } from '@/utils/ipc';
@@ -18,7 +19,7 @@ vi.mock('electron', () => ({
   },
 }));
 
-// 模拟 App 及其依赖项
+// Mock App and its dependencies
 const mockToggleVisible = vi.fn();
 const mockLoadUrl = vi.fn();
 const mockShow = vi.fn();
@@ -27,7 +28,9 @@ const mockRedirectToPage = vi.fn();
 const mockCloseWindow = vi.fn();
 const mockMinimizeWindow = vi.fn();
 const mockMaximizeWindow = vi.fn();
+const mockIsWindowMaximized = vi.fn();
 const mockRetrieveByIdentifier = vi.fn();
+const mockStartSession = vi.fn();
 const testSenderIdentifierString: string = 'test-window-event-id';
 
 const mockGetIdentifierByWebContents = vi.fn(() => testSenderIdentifierString);
@@ -54,6 +57,7 @@ const mockApp = {
     closeWindow: mockCloseWindow,
     minimizeWindow: mockMinimizeWindow,
     maximizeWindow: mockMaximizeWindow,
+    isWindowMaximized: mockIsWindowMaximized,
     retrieveByIdentifier: mockRetrieveByIdentifier.mockImplementation(
       (identifier: AppBrowsersIdentifiers | string) => {
         if (identifier === 'some-other-window') {
@@ -62,6 +66,9 @@ const mockApp = {
         return { show: mockShowOther }; // Default mock for other identifiers
       },
     ),
+  },
+  screenCaptureManager: {
+    startSession: mockStartSession,
   },
 } as unknown as App;
 
@@ -75,10 +82,21 @@ describe('BrowserWindowsCtr', () => {
   });
 
   describe('toggleMainWindow', () => {
-    it('should get the main window and toggle its visibility', async () => {
-      await browserWindowsCtr.toggleMainWindow();
+    it('should toggle the main window visibility', () => {
+      browserWindowsCtr.toggleMainWindow();
+
       expect(mockGetMainWindow).toHaveBeenCalled();
       expect(mockToggleVisible).toHaveBeenCalled();
+      expect(mockStartSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('openQuickComposer', () => {
+    it('should start the quick composer session', async () => {
+      await browserWindowsCtr.openQuickComposer();
+      expect(mockStartSession).toHaveBeenCalled();
+      expect(mockGetMainWindow).not.toHaveBeenCalled();
+      expect(mockToggleVisible).not.toHaveBeenCalled();
     });
   });
 
@@ -131,6 +149,20 @@ describe('BrowserWindowsCtr', () => {
       runWithIpcContext(context, () => browserWindowsCtr.maximizeWindow());
       expect(mockGetIdentifierByWebContents).toHaveBeenCalledWith(context.sender);
       expect(mockMaximizeWindow).toHaveBeenCalledWith(testSenderIdentifierString);
+    });
+  });
+
+  describe('isWindowMaximized', () => {
+    it('should return maximized state for the sender window', () => {
+      mockIsWindowMaximized.mockReturnValueOnce(true);
+
+      const sender = {} as any;
+      const context = { sender, event: { sender } as any } as IpcContext;
+      const result = runWithIpcContext(context, () => browserWindowsCtr.isWindowMaximized());
+
+      expect(mockGetIdentifierByWebContents).toHaveBeenCalledWith(context.sender);
+      expect(mockIsWindowMaximized).toHaveBeenCalledWith(testSenderIdentifierString);
+      expect(result).toBe(true);
     });
   });
 

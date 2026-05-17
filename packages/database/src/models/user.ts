@@ -1,4 +1,4 @@
-import {
+import type {
   SSOProvider,
   UserGeneralConfig,
   UserGuide,
@@ -8,21 +8,15 @@ import {
 } from '@lobechat/types';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
-import { and, eq, gt, inArray, or } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, or, sql } from 'drizzle-orm';
 import type { PartialDeep } from 'type-fest';
 
 import { merge } from '@/utils/merge';
 import { today } from '@/utils/time';
 
-import {
-  NewUser,
-  UserItem,
-  UserSettingsItem,
-  nextauthAccounts,
-  userSettings,
-  users,
-} from '../schemas';
-import { LobeChatDatabase } from '../type';
+import type { NewUser, UserItem, UserSettingsItem } from '../schemas';
+import { messages, nextauthAccounts, topics, users, userSettings } from '../schemas';
+import type { LobeChatDatabase } from '../type';
 
 type DecryptUserKeyVaults = (
   encryptKeyVaultsStr: string | null,
@@ -46,9 +40,16 @@ export type ListUsersForMemoryExtractorOptions = {
   whitelist?: string[];
 };
 
+export type ListUsersForHourlyMemoryExtractorOptions = ListUsersForMemoryExtractorOptions;
+
 export interface UserInfoForAIGeneration {
   responseLanguage: string;
   userName: string;
+}
+
+interface LastActiveAtTransition {
+  previousLastActiveAt: Date;
+  userCreatedAt: Date;
 }
 
 export class UserModel {
@@ -84,6 +85,7 @@ export class UserModel {
     const result = await this.db
       .select({
         avatar: users.avatar,
+        agentOnboarding: users.agentOnboarding,
         email: users.email,
         firstName: users.firstName,
         fullName: users.fullName,
@@ -101,6 +103,7 @@ export class UserModel {
         settingsLanguageModel: userSettings.languageModel,
         settingsMarket: userSettings.market,
         settingsMemory: userSettings.memory,
+        settingsNotification: userSettings.notification,
         settingsSystemAgent: userSettings.systemAgent,
         settingsTTS: userSettings.tts,
         settingsTool: userSettings.tool,
@@ -135,6 +138,7 @@ export class UserModel {
       languageModel: state.settingsLanguageModel || {},
       market: state.settingsMarket || undefined,
       memory: state.settingsMemory || {},
+      notification: state.settingsNotification || {},
       systemAgent: state.settingsSystemAgent || {},
       tool: state.settingsTool || {},
       tts: state.settingsTTS || {},
@@ -142,6 +146,7 @@ export class UserModel {
 
     return {
       avatar: state.avatar || undefined,
+      agentOnboarding: state.agentOnboarding || undefined,
       email: state.email || undefined,
       firstName: state.firstName || undefined,
       fullName: state.fullName || undefined,
@@ -196,6 +201,45 @@ export class UserModel {
       .update(users)
       .set({ ...nextValue, updatedAt: new Date() })
       .where(eq(users.id, this.userId));
+  };
+
+  /**
+   * Atomically advances `lastActiveAt` and returns the previous DB value.
+   *
+   * The previous timestamp must stay inside the SQL statement because Postgres
+   * keeps microseconds while JS `Date` rounds to milliseconds. For example,
+   * `2026-03-01T00:00:00.123456Z` is read as `...123Z`, so comparing the JS
+   * value back against `last_active_at` can miss the row.
+   */
+  advanceLastActiveAt = async (currentTime: Date): Promise<LastActiveAtTransition | undefined> => {
+    const result = await this.db.execute(sql`
+      WITH previous_user AS MATERIALIZED (
+        SELECT id, created_at, last_active_at
+        FROM ${users}
+        WHERE id = ${this.userId}
+      ),
+      updated_user AS (
+        UPDATE ${users}
+        SET last_active_at = ${currentTime}, updated_at = ${currentTime}
+        FROM previous_user
+        WHERE ${users.id} = previous_user.id
+          AND ${users.lastActiveAt} = previous_user.last_active_at
+        RETURNING
+          previous_user.created_at AS "userCreatedAt",
+          previous_user.last_active_at AS "previousLastActiveAt"
+      )
+      SELECT "userCreatedAt", "previousLastActiveAt" FROM updated_user
+    `);
+
+    const row = result.rows[0] as
+      | { previousLastActiveAt: Date | string; userCreatedAt: Date | string }
+      | undefined;
+    if (!row) return;
+
+    return {
+      previousLastActiveAt: new Date(row.previousLastActiveAt),
+      userCreatedAt: new Date(row.userCreatedAt),
+    };
   };
 
   deleteSetting = async () => {
@@ -298,6 +342,11 @@ export class UserModel {
     return db.query.users.findFirst({ where: eq(users.email, email) });
   };
 
+  static findByIds = async (db: LobeChatDatabase, ids: string[]) => {
+    if (ids.length === 0) return [];
+    return db.query.users.findMany({ where: inArray(users.id, ids) });
+  };
+
   static getUserApiKeys = async (
     db: LobeChatDatabase,
     id: string,
@@ -344,6 +393,52 @@ export class UserModel {
       orderBy: (fields, { asc }) => [asc(fields.createdAt), asc(fields.id)],
       where,
     });
+  };
+
+  static listUsersForHourlyMemoryExtractor = (
+    db: LobeChatDatabase,
+    options: ListUsersForHourlyMemoryExtractorOptions = {},
+  ) => {
+    const cursorCondition = options.cursor
+      ? or(
+          gt(users.createdAt, options.cursor.createdAt),
+          and(eq(users.createdAt, options.cursor.createdAt), gt(users.id, options.cursor.id)),
+        )
+      : undefined;
+
+    const whitelistCondition =
+      options.whitelist && options.whitelist.length > 0
+        ? inArray(users.id, options.whitelist)
+        : undefined;
+
+    // User memory defaults to enabled=true when user settings are missing.
+    const memoryEnabledCondition = sql`COALESCE((${userSettings.memory} ->> 'enabled')::boolean, true) = true`;
+    // Eligible users must have at least one topic with at least one user message.
+    const hasChattedTopicCondition = sql`
+      EXISTS (
+        SELECT 1
+        FROM ${topics}
+        INNER JOIN ${messages}
+          ON ${messages.topicId} = ${topics.id}
+          AND ${messages.userId} = ${users.id}
+          AND ${messages.role} = 'user'
+        WHERE ${topics.userId} = ${users.id}
+      )
+    `;
+
+    const query = db
+      .select({
+        createdAt: users.createdAt,
+        id: users.id,
+      })
+      .from(users)
+      .leftJoin(userSettings, eq(users.id, userSettings.id))
+      .where(
+        and(cursorCondition, whitelistCondition, memoryEnabledCondition, hasChattedTopicCondition),
+      )
+      .orderBy(asc(users.createdAt), asc(users.id));
+
+    return options.limit !== undefined ? query.limit(options.limit) : query;
   };
 
   /**

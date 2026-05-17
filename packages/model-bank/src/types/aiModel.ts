@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ModelParamsSchema } from '../standard-parameters';
+import { type ModelParamsSchema, type VideoModelParamsSchema } from '../standard-parameters';
 
 export type ModelPriceCurrency = 'CNY' | 'USD';
 
@@ -18,7 +18,7 @@ export const AiModelTypeSchema = z.enum([
   'tts',
   'stt',
   'image',
-  'text2video',
+  'video',
   'text2music',
   'realtime',
 ] as const);
@@ -144,12 +144,17 @@ export type PricingUnitName =
   | 'imageGeneration' // for image generation models
   | 'imageInput'
   | 'imageInput_cacheRead'
-  | 'imageOutput';
+  | 'imageOutput'
+
+  // Video-based pricing units
+  | 'videoInput'
+  | 'videoGeneration';
 
 export type PricingUnitType =
   | 'millionTokens' // per 1M tokens
   | 'millionCharacters' // per 1M characters
   | 'image' // per image
+  | 'video' // per video
   | 'megapixel' // per megapixel
   | 'second'; // per second
 
@@ -162,6 +167,10 @@ export interface PricingUnitBase {
 }
 
 export interface FixedPricingUnit extends PricingUnitBase {
+  /**
+   * Original display price before discounts. Billing and cost calculation use `rate`.
+   */
+  originalRate?: number;
   rate: number;
   strategy: 'fixed';
 }
@@ -189,6 +198,10 @@ export interface Pricing {
    * Fallback approximate per-image price (USD) when detailed pricing table is unavailable
    */
   approximatePricePerImage?: number;
+  /**
+   * Fallback approximate per-video price (USD) when detailed pricing table is unavailable
+   */
+  approximatePricePerVideo?: number;
   currency?: ModelPriceCurrency;
   units: PricingUnit[];
 }
@@ -216,7 +229,14 @@ export interface AIBaseModelCard {
   organization?: string;
 
   releasedAt?: string;
+  /**
+   * Whether the model should be shown in user-facing model lists.
+   * Runtime-only aliases can set this to false while staying enabled and resolvable.
+   */
+  visible?: boolean;
 }
+
+export const isAiModelVisible = (model: { visible?: boolean }) => model.visible !== false;
 
 export interface AiModelConfig {
   /**
@@ -234,23 +254,46 @@ export type ModelSearchImplementType = 'tool' | 'params' | 'internal';
 
 export type ExtendParamsType =
   | 'reasoningBudgetToken'
+  | 'reasoningBudgetToken32k'
+  | 'reasoningBudgetToken80k'
   | 'enableReasoning'
+  | 'enableAdaptiveThinking'
   | 'disableContextCaching'
+  | 'effort'
+  | 'deepseekV4ReasoningEffort'
   | 'reasoningEffort'
   | 'gpt5ReasoningEffort'
   | 'gpt5_1ReasoningEffort'
   | 'gpt5_2ReasoningEffort'
   | 'gpt5_2ProReasoningEffort'
+  | 'grok4_20ReasoningEffort'
+  | 'grok4_3ReasoningEffort'
+  | 'hy3ReasoningEffort'
+  | 'codexMaxReasoningEffort'
+  | 'opus47Effort'
   | 'textVerbosity'
   | 'thinking'
   | 'thinkingBudget'
   | 'thinkingLevel'
   | 'thinkingLevel2'
+  | 'thinkingLevel3'
+  | 'thinkingLevel4'
+  | 'thinkingLevel5'
   | 'imageAspectRatio'
+  | 'imageAspectRatio2'
   | 'imageResolution'
+  | 'imageResolution2'
   | 'urlContext';
 
+export type DisabledParamType = 'temperature' | 'top_p' | 'frequency_penalty' | 'presence_penalty';
+
 export interface AiModelSettings {
+  /**
+   * Chat params that should be hidden from the agent config UI and stripped from
+   * outbound requests. Use this for models whose API rejects specific sampling
+   * params (e.g. Claude Opus 4.7 returns 400 on any non-default temperature / top_p).
+   */
+  disabledParams?: DisabledParamType[];
   extendParams?: ExtendParamsType[];
   /**
    * How the model layer implements search
@@ -258,6 +301,56 @@ export interface AiModelSettings {
   searchImpl?: ModelSearchImplementType;
   searchProvider?: string;
 }
+
+export const ExtendParamsTypeSchema = z.enum([
+  'reasoningBudgetToken',
+  'reasoningBudgetToken32k',
+  'reasoningBudgetToken80k',
+  'enableReasoning',
+  'enableAdaptiveThinking',
+  'disableContextCaching',
+  'effort',
+  'deepseekV4ReasoningEffort',
+  'reasoningEffort',
+  'gpt5ReasoningEffort',
+  'gpt5_1ReasoningEffort',
+  'gpt5_2ReasoningEffort',
+  'gpt5_2ProReasoningEffort',
+  'grok4_20ReasoningEffort',
+  'grok4_3ReasoningEffort',
+  'hy3ReasoningEffort',
+  'codexMaxReasoningEffort',
+  'opus47Effort',
+  'textVerbosity',
+  'thinking',
+  'thinkingBudget',
+  'thinkingLevel',
+  'thinkingLevel2',
+  'thinkingLevel3',
+  'thinkingLevel4',
+  'thinkingLevel5',
+  'imageAspectRatio',
+  'imageAspectRatio2',
+  'imageResolution',
+  'imageResolution2',
+  'urlContext',
+]);
+
+export const ModelSearchImplementTypeSchema = z.enum(['tool', 'params', 'internal']);
+
+export const DisabledParamTypeSchema = z.enum([
+  'temperature',
+  'top_p',
+  'frequency_penalty',
+  'presence_penalty',
+]);
+
+export const AiModelSettingsSchema = z.object({
+  disabledParams: z.array(DisabledParamTypeSchema).optional(),
+  extendParams: z.array(ExtendParamsTypeSchema).optional(),
+  searchImpl: ModelSearchImplementTypeSchema.optional(),
+  searchProvider: z.string().optional(),
+});
 
 export interface AIChatModelCard extends AIBaseModelCard {
   abilities?: ModelAbilities;
@@ -279,6 +372,12 @@ export interface AIImageModelCard extends AIBaseModelCard {
   pricing?: Pricing;
   resolutions?: string[];
   type: 'image';
+}
+
+export interface AIVideoModelCard extends AIBaseModelCard {
+  parameters?: VideoModelParamsSchema;
+  pricing?: Pricing;
+  type: 'video';
 }
 
 export interface AITTSModelCard extends AIBaseModelCard {
@@ -328,6 +427,7 @@ export interface AiFullModelCard extends AIBaseModelCard {
   maxDimension?: number;
   parameters?: ModelParamsSchema;
   pricing?: Pricing;
+  settings?: AiModelSettings;
   type: AiModelType;
 }
 
@@ -344,6 +444,7 @@ export const CreateAiModelSchema = z.object({
   id: z.string(),
   providerId: z.string(),
   releasedAt: z.string().optional(),
+  settings: AiModelSettingsSchema.optional(),
   type: AiModelTypeSchema.optional(),
 
   // checkModel: z.string().optional(),
@@ -368,6 +469,7 @@ export interface AiProviderModelListItem {
   settings?: AiModelSettings;
   source?: AiModelSourceType;
   type: AiModelType;
+  visible?: boolean;
 }
 
 // Update
@@ -380,6 +482,7 @@ export const UpdateAiModelSchema = z.object({
     .optional(),
   contextWindowTokens: z.number().nullable().optional(),
   displayName: z.string().nullable().optional(),
+  settings: AiModelSettingsSchema.optional(),
   type: AiModelTypeSchema.optional(),
 });
 
@@ -407,6 +510,10 @@ export interface AiModelForSelect {
    * Approximate per-image price (USD), used when exact calculation is not possible
    */
   approximatePricePerImage?: number;
+  /**
+   * Approximate per-video price (USD), used when exact calculation is not possible
+   */
+  approximatePricePerVideo?: number;
   contextWindowTokens?: number;
   description?: string;
   displayName?: string;
@@ -416,6 +523,10 @@ export interface AiModelForSelect {
    * Exact per-image price (USD) calculated from pricing units
    */
   pricePerImage?: number;
+  /**
+   * Exact per-video price (USD) when resolved from pricing units
+   */
+  pricePerVideo?: number;
   pricing?: Pricing;
   releasedAt?: string;
 }
@@ -433,4 +544,5 @@ export interface EnabledAiModel {
   settings?: AiModelSettings;
   sort?: number;
   type: AiModelType;
+  visible?: boolean;
 }

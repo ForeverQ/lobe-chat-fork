@@ -6,8 +6,10 @@ import { agentService } from '@/services/agent';
 import { chatGroupService } from '@/services/chatGroup';
 import { homeService } from '@/services/home';
 import { sessionService } from '@/services/session';
+import type * as AgentStoreModule from '@/store/agent';
 import { getAgentStoreState } from '@/store/agent';
 import { useHomeStore } from '@/store/home';
+import type * as SessionStoreModule from '@/store/session';
 import { getSessionStoreState } from '@/store/session';
 
 // Mock dependencies
@@ -20,18 +22,29 @@ vi.mock('@/components/AntdStaticMethods', () => ({
   },
 }));
 
-vi.mock('@/store/session', () => ({
-  getSessionStoreState: vi.fn(() => ({
-    activeId: 'test-session',
-    switchSession: vi.fn(),
-  })),
-}));
+vi.mock('@/store/session', async (importOriginal) => {
+  const actual = await importOriginal<typeof SessionStoreModule>();
 
-vi.mock('@/store/agent', () => ({
-  getAgentStoreState: vi.fn(() => ({
-    setActiveAgentId: vi.fn(),
-  })),
-}));
+  return {
+    ...actual,
+    getSessionStoreState: vi.fn(() => ({
+      activeId: 'test-session',
+      switchSession: vi.fn(),
+    })),
+  };
+});
+
+vi.mock('@/store/agent', async (importOriginal) => {
+  const actual = await importOriginal<typeof AgentStoreModule>();
+
+  return {
+    ...actual,
+    getAgentStoreState: vi.fn(() => ({
+      setActiveAgentId: vi.fn(),
+    })),
+    useAgentStore: actual.useAgentStore,
+  };
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -317,32 +330,6 @@ describe('createSidebarUISlice', () => {
   });
 
   // ========== UI State Actions ==========
-  describe('setAgentRenamingId', () => {
-    it('should set agent renaming id', () => {
-      const { result } = renderHook(() => useHomeStore());
-
-      act(() => {
-        result.current.setAgentRenamingId('agent-123');
-      });
-
-      expect(result.current.agentRenamingId).toBe('agent-123');
-    });
-
-    it('should clear agent renaming id when set to null', () => {
-      const { result } = renderHook(() => useHomeStore());
-
-      act(() => {
-        result.current.setAgentRenamingId('agent-123');
-      });
-
-      act(() => {
-        result.current.setAgentRenamingId(null);
-      });
-
-      expect(result.current.agentRenamingId).toBeNull();
-    });
-  });
-
   describe('setAgentUpdatingId', () => {
     it('should set agent updating id', () => {
       const { result } = renderHook(() => useHomeStore());
@@ -366,32 +353,6 @@ describe('createSidebarUISlice', () => {
       });
 
       expect(result.current.agentUpdatingId).toBeNull();
-    });
-  });
-
-  describe('setGroupRenamingId', () => {
-    it('should set group renaming id', () => {
-      const { result } = renderHook(() => useHomeStore());
-
-      act(() => {
-        result.current.setGroupRenamingId('group-123');
-      });
-
-      expect(result.current.groupRenamingId).toBe('group-123');
-    });
-
-    it('should clear group renaming id when set to null', () => {
-      const { result } = renderHook(() => useHomeStore());
-
-      act(() => {
-        result.current.setGroupRenamingId('group-123');
-      });
-
-      act(() => {
-        result.current.setGroupRenamingId(null);
-      });
-
-      expect(result.current.groupRenamingId).toBeNull();
     });
   });
 

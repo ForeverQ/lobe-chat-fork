@@ -3,12 +3,11 @@ import {
   type ActionIconGroupItemType,
   type DropdownItem,
   type GenericItemType,
-  createRawModal,
-  showContextMenu,
 } from '@lobehub/ui';
+import { createRawModal, showContextMenu } from '@lobehub/ui';
 import { App } from 'antd';
 import isEqual from 'fast-deep-equal';
-import type { MouseEvent, ReactNode } from 'react';
+import { type MouseEvent, type ReactNode } from 'react';
 import { useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -18,12 +17,13 @@ import { sessionSelectors } from '@/store/session/selectors';
 import { useUserStore } from '@/store/user';
 import { userGeneralSettingsSelectors } from '@/store/user/selectors';
 
-import ShareMessageModal, { type ShareModalProps } from '../components/ShareMessageModal';
+import { type ShareModalProps } from '../components/ShareMessageModal';
+import ShareMessageModal from '../components/ShareMessageModal';
 import {
-  Provider,
   createStore,
   dataSelectors,
   messageStateSelectors,
+  Provider,
   useConversationStore,
   useConversationStoreApi,
 } from '../store';
@@ -72,6 +72,7 @@ export const useChatItemContextMenu = ({
 
   const isThreadMode = useConversationStore(messageStateSelectors.isThreadMode);
   const isGroupSession = useSessionStore(sessionSelectors.isCurrentSessionGroupSession);
+  const isDevMode = useUserStore((s) => userGeneralSettingsSelectors.config(s).isDevMode);
   const actionsBar = useChatListActionsBar({ hasThread, isRegenerating });
   const inThread = isThreadMode || inPortalThread;
 
@@ -134,7 +135,7 @@ export const useChatItemContextMenu = ({
       const collapseAction = isCollapsed ? expand : collapse;
       const list: MenuItem[] = [edit, copy, collapseAction];
 
-      if (!inThread && !isGroupSession) list.push(branching);
+      if (!inThread && !isGroupSession && isDevMode) list.push(branching);
 
       list.push(
         divider,
@@ -174,7 +175,7 @@ export const useChatItemContextMenu = ({
     if (role === 'user') {
       const list: MenuItem[] = [edit, copy];
 
-      if (!inThread) list.push(branching);
+      if (!inThread && isDevMode) list.push(branching);
 
       list.push(divider, tts, translate, divider, regenerate, del);
 
@@ -182,7 +183,7 @@ export const useChatItemContextMenu = ({
     }
 
     return [];
-  }, [actionsBar, error, inThread, isCollapsed, isGroupSession, role]);
+  }, [actionsBar, error, inThread, isCollapsed, isDevMode, isGroupSession, role]);
 
   const handleShare = useCallback(() => {
     const item = getMessage();

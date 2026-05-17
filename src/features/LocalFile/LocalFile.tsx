@@ -38,9 +38,14 @@ interface LocalFileProps {
   isDirectory?: boolean;
   name: string;
   path?: string;
+  /**
+   * When true, disable interactive actions (Open / Show in Folder).
+   * Used in share pages where local file operations are not available.
+   */
+  readonly?: boolean;
 }
 
-export const LocalFile = ({ name, path, isDirectory = false }: LocalFileProps) => {
+export const LocalFile = ({ name, path, isDirectory = false, readonly = false }: LocalFileProps) => {
   const { t } = useTranslation('components');
 
   const handleOpenFile = () => {
@@ -55,22 +60,22 @@ export const LocalFile = ({ name, path, isDirectory = false }: LocalFileProps) =
 
   const fileContent = (
     <Flexbox
+      horizontal
       align={'center'}
       className={styles.container}
       gap={4}
-      horizontal
-      onClick={isDirectory ? handleOpenFile : undefined}
       style={{ display: 'inline-flex', verticalAlign: 'middle' }}
+      onClick={isDirectory ? handleOpenFile : undefined}
     >
       <FileIcon fileName={name} isDirectory={isDirectory} size={22} variant={'raw'} />
-      <Flexbox align={'baseline'} gap={4} horizontal style={{ overflow: 'hidden', width: '100%' }}>
+      <Flexbox horizontal align={'baseline'} gap={4} style={{ overflow: 'hidden', width: '100%' }}>
         <div className={styles.title}>{name}</div>
       </Flexbox>
     </Flexbox>
   );
 
-  // Directory: no popover, just click to open
-  if (isDirectory) {
+  // Directory or readonly mode (e.g. share page): no popover, just display
+  if (isDirectory || readonly) {
     return fileContent;
   }
 
@@ -79,17 +84,17 @@ export const LocalFile = ({ name, path, isDirectory = false }: LocalFileProps) =
     <Space.Compact>
       <Button
         icon={ExternalLink}
-        onClick={handleOpenFile}
         size="small"
         title={t('LocalFile.action.open')}
+        onClick={handleOpenFile}
       >
         {t('LocalFile.action.open')}
       </Button>
       <Button
         icon={FolderOpen}
-        onClick={handleOpenFolder}
         size="small"
         title={t('LocalFile.action.showInFolder')}
+        onClick={handleOpenFolder}
       >
         {t('LocalFile.action.showInFolder')}
       </Button>
@@ -99,10 +104,10 @@ export const LocalFile = ({ name, path, isDirectory = false }: LocalFileProps) =
   return (
     <Popover
       content={popoverContent}
+      trigger="hover"
       styles={{
         content: { padding: 0 },
       }}
-      trigger="hover"
     >
       {fileContent}
     </Popover>

@@ -8,9 +8,9 @@ import urlJoin from 'url-join';
 
 import { CustomMDX } from '@/components/mdx';
 import { OFFICIAL_SITE } from '@/const/url';
-import type { Locales } from '@/locales/resources';
-import { ChangelogService } from '@/server/services/changelog';
-import type { ChangelogIndexItem } from '@/types/changelog';
+import { lambdaClient } from '@/libs/trpc/client';
+import { type Locales } from '@/locales/resources';
+import { type ChangelogIndexItem } from '@/types/changelog';
 
 import VersionTag from './VersionTag';
 
@@ -25,8 +25,7 @@ interface PostItemProps extends ChangelogIndexItem {
 
 const PostItem = ({ id, versionRange, locale, showDivider = true }: PostItemProps) => {
   const { data } = useSWR([`changelog-post-${id}`, locale], async () => {
-    const changelogService = new ChangelogService();
-    return await changelogService.getPostById(id, { locale });
+    return await lambdaClient.changelog.getPostById.query({ id, locale });
   });
 
   if (!data || !data.title) return null;
@@ -43,7 +42,16 @@ const PostItem = ({ id, versionRange, locale, showDivider = true }: PostItemProp
         >
           <h2 id={id}>{data.rawTitle || data.title}</h2>
         </a>
-        {data.image && <Image alt={data.title} src={data.image} />}
+        {data.image && (
+          <Image
+            alt={data.title}
+            src={
+              data.image.startsWith('/blog')
+                ? urlJoin('https://hub-apac-1.lobeobjects.space/', data.image)
+                : data.image
+            }
+          />
+        )}
         <Suspense fallback={<div>Loading...</div>}>
           <CustomMDX source={data.content} />
         </Suspense>

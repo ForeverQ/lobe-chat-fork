@@ -1,6 +1,6 @@
-import { ModelPerformance, ModelTokensUsage, ModelUsage } from '@lobechat/types';
+import type { ModelPerformance, ModelTokensUsage, ModelUsage } from '@lobechat/types';
 
-import { MessageToolCall, MessageToolCallChunk } from './toolsCalling';
+import type { MessageToolCall, MessageToolCallChunk } from './toolsCalling';
 
 export type LLMRoleType = 'user' | 'system' | 'assistant' | 'function' | 'tool';
 
@@ -62,6 +62,11 @@ export interface OpenAIChatMessage {
 export interface ChatStreamPayload {
   apiMode?: 'chatCompletion' | 'responses';
   /**
+   * @title Provider deployment name
+   */
+  deploymentName?: string;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  /**
    * Enable context caching
    */
   enabledContextCaching?: boolean;
@@ -79,9 +84,10 @@ export interface ChatStreamPayload {
    */
   imageAspectRatio?: string;
   /**
-   * @title Image resolution for image generation (e.g., '1K', '2K', '4K')
+   * @title Image resolution for image generation (e.g., '512px', '1K', '2K', '4K')
    */
-  imageResolution?: '1K' | '2K' | '4K';
+  imageResolution?: '512px' | '1K' | '2K' | '4K';
+  logprobs?: boolean;
   /**
    * @title Maximum length of generated text
    */
@@ -90,6 +96,20 @@ export interface ChatStreamPayload {
    * @title List of chat messages
    */
   messages: OpenAIChatMessage[];
+  /**
+   * @title Custom text chunks for mock response
+   */
+  mockChunks?: string[];
+  /**
+   * @title Delay in milliseconds between mock chunks
+   * @default 50
+   */
+  mockDelayMs?: number;
+  /**
+   * @title Enable mock response for benchmark testing
+   * @description When true, returns a simulated SSE stream without calling real LLM API
+   */
+  mockResponse?: boolean;
   /**
    * @title Model name
    */
@@ -108,9 +128,9 @@ export interface ChatStreamPayload {
     effort?: string;
     summary?: string;
   };
-  reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high';
-  responseMode?: 'stream' | 'json';
+  reasoning_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   response_format?: ChatResponseFormat;
+  responseMode?: 'stream' | 'json';
   /**
    * @title Whether to enable streaming requests
    * @default true
@@ -129,19 +149,20 @@ export interface ChatStreamPayload {
    */
   thinking?: {
     budget_tokens: number;
-    type: 'enabled' | 'disabled';
+    type?: 'enabled' | 'disabled' | 'adaptive';
   };
   thinkingBudget?: number;
   /**
    * Thinking level for Gemini models (e.g., gemini-3.0-pro)
    */
-  thinkingLevel?: 'low' | 'high';
+  thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high';
   tool_choice?: string;
   tools?: ChatCompletionTool[];
   /**
    * @title Controls the highest probability single token in generated text
    * @default 1
    */
+  top_logprobs?: number;
   top_p?: number;
   truncation?: 'auto' | 'disabled';
   /**
@@ -157,6 +178,8 @@ export interface ChatMethodOptions {
    * response headers
    */
   headers?: Record<string, any>;
+  /** Metadata passed to hooks (billing, tracing, etc.) */
+  metadata?: Record<string, unknown>;
   /**
    * send the request to the ai api endpoint
    */
@@ -201,6 +224,14 @@ export interface ChatCompletionTool {
 }
 
 export interface OnFinishData {
+  error?: any;
+  /**
+   * The terminal finishReason emitted by the provider in the `stop` SSE chunk
+   * (e.g. Google: STOP / SAFETY / RECITATION / MAX_TOKENS; OpenAI: stop / length;
+   * Anthropic: end_turn / max_tokens / tool_use). Used to detect "soft interrupts"
+   * where the provider returns empty content with a non-normal finishReason.
+   */
+  finishReason?: string;
   grounding?: any;
   speed?: ModelPerformance;
   text: string;
@@ -250,6 +281,8 @@ export interface ChatStreamCallbacks {
    * Used for models that return structured content with mixed text and images.
    */
   onContentPart?: (data: ContentPartData) => Promise<void> | void;
+  /** `onError`: Called when a stream error event is received from the provider. */
+  onError?: (error: any) => Promise<void> | void;
   /**
    * `onFinal`: Called once when the stream is closed with the final completion message.
    **/

@@ -5,7 +5,7 @@
  * Note: AgentStateManager and StreamEventManager will automatically use
  * InMemory implementations when Redis is not available (test environment).
  */
-import { LobeChatDatabase } from '@lobechat/database';
+import { type LobeChatDatabase } from '@lobechat/database';
 import { agents, messages, threads, topics } from '@lobechat/database/schemas';
 import { getTestDB } from '@lobechat/database/test-utils';
 import { and, eq } from 'drizzle-orm';
@@ -40,7 +40,6 @@ vi.mock('@/server/services/file', () => ({
   })),
 }));
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let mockResponsesCreate: any;
 
 let serverDB: LobeChatDatabase;
@@ -95,7 +94,9 @@ describe('execAgent', () => {
 
       expect(result.success).toBe(true);
       expect(result.operationId).toBeDefined();
-      expect(result.operationId).toMatch(/^op_\d+_agt_.+_tpc_.+_\w+$/);
+      expect(result.operationId).toMatch(
+        /^op_\d+_agt_.+_tpc_.(?:[^\n\r_\u2028\u2029]*_[^\w\n\r\u2028\u2029])*[^\n\r_\u2028\u2029]*_\w+(?:[^\w\n\r\u2028\u2029](?:[^\n\r_\u2028\u2029]*_[^\w\n\r\u2028\u2029])*[^\n\r_\u2028\u2029]*_\w+)*$/,
+      );
 
       // Verify topic was created
       const createdTopics = await serverDB
@@ -232,14 +233,15 @@ describe('execAgent', () => {
         })
         .returning();
 
-      const [thread] = await serverDB
+      const threadResult = (await serverDB
         .insert(threads)
         .values({
           topicId: topic.id,
           type: 'standalone',
           userId,
         })
-        .returning();
+        .returning()) as { id: string }[];
+      const thread = threadResult[0];
 
       const caller = aiAgentRouter.createCaller(createTestContext());
 
@@ -425,7 +427,7 @@ describe('execAgent', () => {
           item: {
             type: 'function_call',
             call_id: toolCallId,
-            name: 'lobe-web-browsing____search____builtin',
+            name: 'lobe-web-browsing____search',
             arguments: JSON.stringify({ query: '杭州天气' }),
           },
         },
@@ -448,7 +450,7 @@ describe('execAgent', () => {
               {
                 type: 'function_call',
                 call_id: toolCallId,
-                name: 'lobe-web-browsing____search____builtin',
+                name: 'lobe-web-browsing____search',
                 arguments: JSON.stringify({ query: '杭州天气' }),
               },
             ],

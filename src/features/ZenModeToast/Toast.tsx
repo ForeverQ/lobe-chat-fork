@@ -1,5 +1,6 @@
 'use client';
 
+import { HotkeyEnum } from '@lobechat/const/hotkeys';
 import { Flexbox, Hotkey } from '@lobehub/ui';
 import { createStaticStyles } from 'antd-style';
 import { useEffect, useState } from 'react';
@@ -7,7 +8,6 @@ import { useTranslation } from 'react-i18next';
 
 import { useUserStore } from '@/store/user';
 import { settingsSelectors } from '@/store/user/selectors';
-import { HotkeyEnum } from '@/types/hotkey';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
   closeButton: css`
@@ -78,7 +78,7 @@ const Toast = () => {
   return (
     <div className={styles.container}>
       <div className={styles.toast}>
-        <Flexbox align={'center'} className={styles.text} gap={8} horizontal>
+        <Flexbox horizontal align={'center'} className={styles.text} gap={8}>
           {t('zenMode')} <Hotkey inverseTheme keys={hotkey} />
         </Flexbox>
       </div>

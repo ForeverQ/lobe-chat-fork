@@ -1,5 +1,6 @@
 import type { BuiltinToolManifest } from '@lobechat/types';
 import {
+  ACTIVITY_TYPES,
   CONTEXT_OBJECT_TYPES,
   CONTEXT_STATUS,
   CONTEXT_SUBJECT_TYPES,
@@ -8,36 +9,213 @@ import {
   MERGE_STRATEGIES,
   RELATIONSHIPS,
 } from '@lobechat/types';
+import type { JSONSchema7 } from 'json-schema';
 
 import { systemPrompt } from './systemRole';
 import { MemoryApiName } from './types';
 
 export const MemoryIdentifier = 'lobe-user-memory';
 
+const timeIntentSelectorEnum = [
+  'today',
+  'yesterday',
+  'currentWeek',
+  'lastWeek',
+  'lastWeekend',
+  'lastWeekdays',
+  'currentMonth',
+  'lastMonth',
+  'currentYear',
+  'lastYear',
+  'day',
+  'month',
+  'year',
+  'relativeDay',
+  'range',
+] as const;
+
+const searchMemoryTimeIntentInnerSchema: JSONSchema7 = {
+  additionalProperties: false,
+  properties: {
+    anchor: {
+      description: 'When nested as a relativeDay anchor, only "today" or "yesterday" is allowed.',
+      enum: ['today', 'yesterday'],
+      type: 'string',
+    },
+    date: { format: 'date-time', type: 'string' },
+    end: { format: 'date-time', type: 'string' },
+    month: { maximum: 12, minimum: 1, type: 'integer' },
+    offsetDays: { type: 'integer' },
+    selector: {
+      enum: [...timeIntentSelectorEnum],
+      type: 'string',
+    },
+    start: { format: 'date-time', type: 'string' },
+    year: { maximum: 9999, minimum: 1970, type: 'integer' },
+  },
+  required: ['selector'],
+  type: 'object',
+};
+
+const searchMemoryTimeIntentSchema: JSONSchema7 = {
+  additionalProperties: false,
+  description:
+    'Optional calendar-friendly time selector that the server always resolves into an exact createdAt timeRange. Prefer this for prompts like "December 2025", "last month", or "yesterday".',
+  properties: {
+    anchor: {
+      anyOf: [
+        {
+          enum: ['today', 'yesterday'],
+          type: 'string',
+        },
+        searchMemoryTimeIntentInnerSchema,
+      ],
+      description:
+        'Anchor for relativeDay. Use the string "today"/"yesterday", or a non-recursive timeIntent object such as { "selector": "day", "date": "2025-12-15T00:00:00.000Z" }.',
+    },
+    date: { format: 'date-time', type: 'string' },
+    end: { format: 'date-time', type: 'string' },
+    month: { maximum: 12, minimum: 1, type: 'integer' },
+    offsetDays: { type: 'integer' },
+    selector: {
+      enum: [...timeIntentSelectorEnum],
+      type: 'string',
+    },
+    start: { format: 'date-time', type: 'string' },
+    year: { maximum: 9999, minimum: 1970, type: 'integer' },
+  },
+  required: ['selector'],
+  type: 'object',
+};
+
 export const MemoryManifest: BuiltinToolManifest = {
   api: [
     {
       description:
-        'Retrieve memories based on a search query. Use this to recall previously saved information.',
+        'Retrieve memories using one or more search queries plus optional filters for categories, tags, labels, relationships, and time range.',
       name: MemoryApiName.searchUserMemory,
       parameters: {
         additionalProperties: false,
         properties: {
-          query: { type: 'string' },
-          topK: {
-            additionalProperties: false,
-            properties: {
-              contexts: { minimum: 0, type: 'integer' },
-              experiences: { minimum: 0, type: 'integer' },
-              preferences: { minimum: 0, type: 'integer' },
+          categories: {
+            description: 'Optional memory categories to constrain retrieval.',
+            items: { type: 'string' },
+            type: 'array',
+          },
+          labels: {
+            description: 'Optional extracted labels to constrain retrieval.',
+            items: { type: 'string' },
+            type: 'array',
+          },
+          layers: {
+            description:
+              'Optional memory layers to search. Must be an array even for one layer, for example ["preference"].',
+            items: {
+              enum: ['activity', 'context', 'experience', 'identity', 'preference'],
+              type: 'string',
             },
-            required: ['contexts', 'experiences', 'preferences'],
+            type: 'array',
+          },
+          queries: {
+            description: 'One or more search queries to retrieve relevant memories.',
+            items: { type: 'string' },
+            type: 'array',
+          },
+          relationships: {
+            description: 'Optional identity relationships to constrain retrieval.',
+            items: { enum: RELATIONSHIPS, type: 'string' },
+            type: 'array',
+          },
+          status: {
+            description: 'Optional status values for activity or context memories.',
+            items: { type: 'string' },
+            type: 'array',
+          },
+          tags: {
+            description: 'Optional user or system tags to constrain retrieval.',
+            items: { type: 'string' },
+            type: 'array',
+          },
+          timeIntent: searchMemoryTimeIntentSchema,
+          timeRange: {
+            additionalProperties: false,
+            description:
+              'Optional exact time range filter applied to the selected field. Use this when you already know precise boundaries; otherwise prefer timeIntent.',
+            properties: {
+              end: { format: 'date-time', type: 'string' },
+              field: {
+                enum: [
+                  'capturedAt',
+                  'createdAt',
+                  'endsAt',
+                  'episodicDate',
+                  'startsAt',
+                  'updatedAt',
+                ],
+                type: 'string',
+              },
+              start: { format: 'date-time', type: 'string' },
+            },
             type: 'object',
           },
+          topK: {
+            additionalProperties: false,
+            description: 'Optional limits on number of memories to return per layer.',
+            properties: {
+              activities: { minimum: 0, type: 'integer' },
+              contexts: { minimum: 0, type: 'integer' },
+              experiences: { minimum: 0, type: 'integer' },
+              identities: { minimum: 0, type: 'integer' },
+              preferences: { minimum: 0, type: 'integer' },
+            },
+            type: 'object',
+          },
+          types: {
+            description: 'Optional memory types to constrain retrieval.',
+            items: { type: 'string' },
+            type: 'array',
+          },
         },
-        required: ['query', 'topK'],
         type: 'object',
-      },
+      } satisfies JSONSchema7,
+    },
+    {
+      description:
+        'List existing taxonomy options such as categories, tags, labels, statuses, roles, and relationships so memory retrieval and extraction can use the current vocabulary.',
+      name: MemoryApiName.queryTaxonomyOptions,
+      parameters: {
+        additionalProperties: false,
+        properties: {
+          include: {
+            description:
+              'Select which taxonomy buckets to return. Must be an array even for one bucket.',
+            items: {
+              enum: ['categories', 'labels', 'relationships', 'roles', 'statuses', 'tags', 'types'],
+              type: 'string',
+            },
+            type: 'array',
+          },
+          layers: {
+            description:
+              'Optional memory layers to scope the taxonomy lookup. Must be an array even for one layer.',
+            items: {
+              enum: ['activity', 'context', 'experience', 'identity', 'preference'],
+              type: 'string',
+            },
+            type: 'array',
+          },
+          limit: {
+            description: 'Maximum number of options to return for each bucket.',
+            minimum: 1,
+            type: 'integer',
+          },
+          q: {
+            description: 'Optional keyword used to filter taxonomy options.',
+            type: 'string',
+          },
+        },
+        type: 'object',
+      } satisfies JSONSchema7,
     },
     {
       description:
@@ -186,6 +364,164 @@ export const MemoryManifest: BuiltinToolManifest = {
           'tags',
           'title',
           'withContext',
+        ],
+        type: 'object',
+      },
+    },
+    {
+      description:
+        'Record an activity memory capturing what happened, when, where, with whom, and how it felt. Include narrative, feedback, timing, associations, and tags.',
+      name: MemoryApiName.addActivityMemory,
+      parameters: {
+        additionalProperties: false,
+        properties: {
+          details: {
+            description: 'Optional detailed information or longer notes supporting the summary.',
+            type: 'string',
+          },
+          memoryCategory: {
+            description: 'Memory category best matching the activity (e.g., work, health).',
+            type: 'string',
+          },
+          memoryType: {
+            const: 'activity',
+            description: 'Memory type; always activity.',
+            type: 'string',
+          },
+          summary: {
+            description: 'Concise overview of this activity.',
+            type: 'string',
+          },
+          tags: {
+            description: 'Model generated tags summarizing key facets of the activity.',
+            items: { type: 'string' },
+            type: 'array',
+          },
+          title: {
+            description: 'Brief descriptive title for the activity.',
+            type: 'string',
+          },
+          withActivity: {
+            additionalProperties: false,
+            properties: {
+              associatedLocations: {
+                description: 'Places linked to this activity.',
+                items: {
+                  additionalProperties: false,
+                  properties: {
+                    address: { type: ['string', 'null'] },
+                    extra: { type: ['string', 'null'] },
+                    name: { type: 'string' },
+                    tags: { items: { type: 'string' }, type: ['array', 'null'] },
+                    type: { type: 'string' },
+                  },
+                  required: ['name'],
+                  type: 'object',
+                },
+                type: 'array',
+              },
+              associatedObjects: {
+                description: 'Non-living entities or items tied to the activity.',
+                items: {
+                  additionalProperties: false,
+                  properties: {
+                    extra: { type: ['string', 'null'] },
+                    name: { type: 'string' },
+                    type: { type: 'string' },
+                  },
+                  required: ['name'],
+                  type: 'object',
+                },
+                type: 'array',
+              },
+              associatedSubjects: {
+                description: 'Living beings involved (people, pets, groups).',
+                items: {
+                  additionalProperties: false,
+                  properties: {
+                    extra: { type: ['string', 'null'] },
+                    name: { type: 'string' },
+                    type: { type: 'string' },
+                  },
+                  required: ['name'],
+                  type: 'object',
+                },
+                type: 'array',
+              },
+              endsAt: {
+                description: 'ISO 8601 end time if provided.',
+                format: 'date-time',
+                type: ['string', 'null'],
+              },
+              feedback: {
+                description: 'Subjective feelings or evaluation of how the activity went.',
+                type: ['string', 'null'],
+              },
+              metadata: {
+                additionalProperties: true,
+                description: 'Additional structured metadata to keep raw hints (JSON object).',
+                type: ['object', 'null'],
+              },
+              narrative: {
+                description: 'Factual story of what happened; required for recall.',
+                type: 'string',
+              },
+              notes: {
+                description: 'Short annotations distinct from narrative.',
+                type: ['string', 'null'],
+              },
+              startsAt: {
+                description: 'ISO 8601 start time if provided.',
+                format: 'date-time',
+                type: ['string', 'null'],
+              },
+              status: {
+                description:
+                  'Lifecycle status when mentioned. Use planned/completed/cancelled/ongoing/on_hold/pending. Omit if unclear.',
+                enum: ['planned', 'completed', 'cancelled', 'ongoing', 'on_hold', 'pending'],
+                type: ['string', 'null'],
+              },
+              tags: {
+                description: 'Optional activity-specific tags or facets.',
+                items: { type: 'string' },
+                type: ['array', 'null'],
+              },
+              timezone: {
+                description: 'IANA timezone string for the start/end times when provided.',
+                type: ['string', 'null'],
+              },
+              type: {
+                description: 'Activity type enum; choose the closest match.',
+                enum: ACTIVITY_TYPES,
+                type: 'string',
+              },
+            },
+            required: [
+              'narrative',
+              'type',
+              'associatedLocations',
+              'associatedObjects',
+              'associatedSubjects',
+              'startsAt',
+              'endsAt',
+              'status',
+              'tags',
+              'timezone',
+              'metadata',
+              'feedback',
+              'notes',
+            ],
+            type: 'object',
+          },
+        },
+        required: [
+          'title',
+          'summary',
+          'details',
+          'memoryType',
+          'memoryCategory',
+          'tags',
+          'withActivity',
         ],
         type: 'object',
       },
@@ -555,6 +891,7 @@ export const MemoryManifest: BuiltinToolManifest = {
               memoryType: {
                 description: 'Memory type, use null for omitting the field',
                 enum: [...MEMORY_TYPES, null],
+                type: ['string', 'null'],
               },
               summary: {
                 description:
@@ -627,6 +964,8 @@ export const MemoryManifest: BuiltinToolManifest = {
   identifier: 'lobe-user-memory',
   meta: {
     avatar: '🧠',
+    description:
+      'Store and recall user preferences, activities, identities, and experiences across conversations',
     title: 'Memory',
   },
   systemRole: systemPrompt,

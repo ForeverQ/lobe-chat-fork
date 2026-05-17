@@ -21,8 +21,8 @@ jobs:
       - id: skip_check
         uses: fkirc/skip-duplicate-actions@v5
         with:
-          concurrent_skipping: "same_content_newer"
-          skip_after_successful_duplicate: "true"
+          concurrent_skipping: 'same_content_newer'
+          skip_after_successful_duplicate: 'true'
           do_not_skip: '["workflow_dispatch", "schedule"]'
 
   # Package tests - all packages in single job to save runner resources
@@ -32,24 +32,16 @@ jobs:
     runs-on: ubuntu-latest
     name: Test Packages
     env:
-      PACKAGES: "@lobechat/file-loaders @lobechat/prompts @lobechat/model-runtime @lobechat/web-crawler @lobechat/electron-server-ipc @lobechat/utils @lobechat/python-interpreter @lobechat/context-engine @lobechat/agent-runtime @lobechat/conversation-flow @lobechat/ssrf-safe-fetch @lobechat/memory-user-memory model-bank"
+      PACKAGES: '@lobechat/file-loaders @lobechat/prompts @lobechat/model-runtime @lobechat/web-crawler @lobechat/electron-server-ipc @lobechat/utils @lobechat/python-interpreter @lobechat/context-engine @lobechat/agent-runtime @lobechat/conversation-flow @lobechat/ssrf-safe-fetch @lobechat/memory-user-memory @lobechat/types @lobechat/builtin-tool-lobe-agent model-bank'
 
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-          package-manager-cache: false
-
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ secrets.BUN_VERSION }}
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       - name: Install deps
-        run: bun i
+        run: pnpm install
 
       - name: Test packages with coverage
         run: |
@@ -105,28 +97,20 @@ jobs:
     if: needs.check-duplicate-run.outputs.should_skip != 'true'
     strategy:
       matrix:
-        shard: [1, 2]
-    name: Test App (shard ${{ matrix.shard }}/2)
+        shard: [1, 2, 3]
+    name: Test App (shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-          package-manager-cache: false
-
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       - name: Install deps
-        run: bun i
+        run: pnpm install
 
       - name: Run tests
-        run: bunx vitest --coverage --silent='passed-only' --reporter=default --reporter=blob --shard=${{ matrix.shard }}/2
+        run: bunx vitest --coverage --silent='passed-only' --reporter=default --reporter=blob --shard=${{ matrix.shard }}/3
 
       - name: Upload blob report
         if: ${{ !cancelled() }}
@@ -146,13 +130,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       - name: Install deps
-        run: bun i
+        run: pnpm install
 
       - name: Download blob reports
         uses: actions/download-artifact@v7
@@ -181,16 +163,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-          package-manager-cache: false
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 10
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       - name: Install deps
         run: pnpm install
@@ -228,33 +202,21 @@ jobs:
         options: >-
           --health-cmd pg_isready --health-interval 10s --health-timeout 5s  --health-retries 5
 
+
         ports:
           - 5432:5432
 
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-          package-manager-cache: false
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
 
       - name: Install deps
         run: pnpm i
 
       - name: Lint
-        run: npm run lint
-
-      - name: Test Client DB
-        run: pnpm --filter @lobechat/database test:client-db
-        env:
-          KEY_VAULTS_SECRET: Kix2wcUONd4CX51E/ZPAd36BqM4wzJgKjPtz2sGztqQ=
-          S3_PUBLIC_DOMAIN: https://example.com
-          APP_URL: https://home.com
+        run: bun run lint
 
       - name: Test Coverage
         run: pnpm --filter @lobechat/database test:coverage

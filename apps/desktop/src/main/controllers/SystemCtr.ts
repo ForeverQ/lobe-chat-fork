@@ -1,10 +1,12 @@
-import { ElectronAppState, ThemeMode } from '@lobechat/electron-client-ipc';
-import { app, dialog, nativeTheme, shell } from 'electron';
-import { macOS } from 'electron-is';
-import { pathExists, readdir } from 'fs-extra';
 import process from 'node:process';
 
+import type { ElectronAppState, ThemeMode } from '@lobechat/electron-client-ipc';
+import { app, dialog, nativeTheme, shell } from 'electron';
+import * as electronIs from 'electron-is';
+import { pathExists, readdir } from 'fs-extra';
+
 import { legacyLocalDbDir } from '@/const/dir';
+import { detectRepoType } from '@/utils/git';
 import { createLogger } from '@/utils/logger';
 import {
   getAccessibilityStatus,
@@ -101,7 +103,7 @@ export default class SystemController extends ControllerModule {
       return 'granted';
     }
 
-    if (!macOS()) {
+    if (!electronIs.macOS()) {
       logger.info('[FullDiskAccess] Not macOS, returning granted');
       return 'granted';
     }
@@ -122,8 +124,8 @@ export default class SystemController extends ControllerModule {
       buttons: [openSettingsButtonText, skipButtonText],
       cancelId: 1,
       defaultId: 0,
-      message: message,
-      title: title,
+      message,
+      title,
       type: 'info',
     });
 
@@ -168,7 +170,7 @@ export default class SystemController extends ControllerModule {
   async selectFolder(payload?: {
     defaultPath?: string;
     title?: string;
-  }): Promise<string | undefined> {
+  }): Promise<{ path: string; repoType?: 'git' | 'github' } | undefined> {
     const mainWindow = this.app.browserManager.getMainWindow()?.browserWindow;
 
     const result = await dialog.showOpenDialog(mainWindow!, {
@@ -181,7 +183,23 @@ export default class SystemController extends ControllerModule {
       return undefined;
     }
 
-    return result.filePaths[0];
+    const folderPath = result.filePaths[0];
+    const repoType = await detectRepoType(folderPath);
+
+    try {
+      const approvedRoot = await this.app.localFileProtocolManager.approveWorkspaceRoot(folderPath);
+
+      if (approvedRoot) {
+        const storedRoots = this.app.storeManager.get('localFileWorkspaceRoots', []);
+        if (!storedRoots.includes(approvedRoot)) {
+          this.app.storeManager.set('localFileWorkspaceRoots', [approvedRoot, ...storedRoots]);
+        }
+      }
+    } catch (error) {
+      logger.error(`Failed to approve local file workspace root ${folderPath}:`, error);
+    }
+
+    return { path: folderPath, repoType };
   }
 
   @IpcMethod()
@@ -203,12 +221,8 @@ export default class SystemController extends ControllerModule {
   async updateThemeModeHandler(themeMode: ThemeMode) {
     this.app.storeManager.set('themeMode', themeMode);
     this.app.browserManager.broadcastToAllWindows('themeChanged', { themeMode });
-
-    // Apply visual effects to all browser windows when theme mode changes
-    this.app.browserManager.handleAppThemeChange();
-    // Set app theme mode to the system theme mode
-
     this.setSystemThemeMode(themeMode);
+    this.app.browserManager.handleAppThemeChange();
   }
 
   @IpcMethod()

@@ -1,15 +1,19 @@
 // @vitest-environment node
-import { LobeChatDatabase } from '@lobechat/database';
+import { type LobeChatDatabase } from '@lobechat/database';
 import {
   agents,
   agentsToSessions,
   files,
+  messageGroups,
   messages,
   sessions,
   topics,
   users,
 } from '@lobechat/database/schemas';
 import { getTestDB } from '@lobechat/database/test-utils';
+import { HeterogeneousAgentSessionErrorCode } from '@lobechat/electron-client-ipc';
+import { AgentRuntimeErrorType } from '@lobechat/model-runtime';
+import { MessageGroupType } from '@lobechat/types';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -35,7 +39,7 @@ beforeEach(async () => {
 
     await trx.insert(files).values({
       id: 'f1',
-      userId: userId,
+      userId,
       url: 'abc',
       name: 'file-1',
       fileType: 'image/png',
@@ -258,6 +262,46 @@ describe('MessageService Integration Tests', () => {
       expect(result.messages).toHaveLength(1);
       expect(result.messages![0].content).toBe('updated content');
     });
+
+    it('should persist message errors and return them in queried messages', async () => {
+      const messageService = new MessageService(serverDB, userId);
+
+      await serverDB.insert(agents).values({ id: 'agent-1', userId });
+      await serverDB.insert(sessions).values({ id: 'session-1', userId });
+      await serverDB
+        .insert(agentsToSessions)
+        .values({ agentId: 'agent-1', sessionId: 'session-1', userId });
+      await serverDB.insert(topics).values({ id: 'topic-1', userId, sessionId: 'session-1' });
+
+      await serverDB.insert(messages).values({
+        id: 'msg-err-1',
+        userId,
+        agentId: 'agent-1',
+        topicId: 'topic-1',
+        role: 'assistant',
+        content: '',
+      });
+
+      const messageError = {
+        body: {
+          agentType: 'claude-code',
+          code: HeterogeneousAgentSessionErrorCode.AuthRequired,
+          message: 'Failed to authenticate. API Error: 401',
+        },
+        message: 'Failed to authenticate. API Error: 401',
+        type: AgentRuntimeErrorType.AgentRuntimeError,
+      };
+
+      const result = await messageService.updateMessage(
+        'msg-err-1',
+        { error: messageError },
+        { agentId: 'agent-1', topicId: 'topic-1' },
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages![0].error).toEqual(messageError);
+    });
   });
 
   describe('updateMetadata', () => {
@@ -325,6 +369,85 @@ describe('MessageService Integration Tests', () => {
       expect(result.messages![0].id).toBe('msg-1');
       // Should not include other user's messages
       expect(result.messages!.every((m) => m.id !== 'msg-2')).toBe(true);
+    });
+  });
+
+  describe('finalizeCompression', () => {
+    it('should create assistant message with correct parentId (last compressed message ID, not messageGroupId)', async () => {
+      const messageService = new MessageService(serverDB, userId);
+
+      // Setup: agent, session, topic
+      await serverDB.insert(agents).values({ id: 'agent-1', userId });
+      await serverDB.insert(sessions).values({ id: 'session-1', userId });
+      await serverDB
+        .insert(agentsToSessions)
+        .values({ agentId: 'agent-1', sessionId: 'session-1', userId });
+      await serverDB.insert(topics).values({ id: 'topic-1', userId, sessionId: 'session-1' });
+
+      // Create messages to be compressed
+      await serverDB.insert(messages).values([
+        {
+          id: 'msg-1',
+          userId,
+          agentId: 'agent-1',
+          topicId: 'topic-1',
+          role: 'user',
+          content: 'message 1',
+          createdAt: new Date('2024-01-01T10:00:00Z'),
+        },
+        {
+          id: 'msg-2',
+          userId,
+          agentId: 'agent-1',
+          topicId: 'topic-1',
+          role: 'assistant',
+          content: 'message 2',
+          createdAt: new Date('2024-01-01T10:01:00Z'),
+        },
+        {
+          id: 'msg-3',
+          userId,
+          agentId: 'agent-1',
+          topicId: 'topic-1',
+          role: 'user',
+          content: 'message 3 - this is the last compressed message',
+          createdAt: new Date('2024-01-01T10:02:00Z'),
+        },
+      ]);
+
+      // Create compression group
+      await serverDB.insert(messageGroups).values({
+        id: 'comp-group-1',
+        userId,
+        topicId: 'topic-1',
+        content: '...',
+        type: MessageGroupType.Compression,
+        createdAt: new Date('2024-01-01T10:02:30Z'),
+      });
+
+      // Mark messages as compressed
+      await serverDB
+        .update(messages)
+        .set({ messageGroupId: 'comp-group-1' })
+        .where(eq(messages.topicId, 'topic-1'));
+
+      // Call finalizeCompression
+      const result = await messageService.finalizeCompression('comp-group-1', 'Summary content', {
+        agentId: 'agent-1',
+        topicId: 'topic-1',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messages).toBeDefined();
+
+      // Verify compression content was updated
+      const updatedGroup = await serverDB
+        .select()
+        .from(messageGroups)
+        .where(eq(messageGroups.id, 'comp-group-1'));
+
+      expect(updatedGroup).toHaveLength(1);
+      expect(updatedGroup[0].content).toBe('Summary content');
     });
   });
 });

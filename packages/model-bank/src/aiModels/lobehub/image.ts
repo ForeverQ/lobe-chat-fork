@@ -1,13 +1,33 @@
-import { AIImageModelCard } from '../../types/aiModel';
+import type { AIImageModelCard } from '../../types/aiModel';
 import { huanyuanImageParamsSchema, qwenEditParamsSchema, qwenImageParamsSchema } from '../fal';
 import {
   gptImage1Schema,
+  gptImage2Schema,
   imagenBaseParameters,
+  nanoBanana2Parameters,
   nanoBananaParameters,
   nanoBananaProParameters,
 } from './utils';
 
 export const lobehubImageModels: AIImageModelCard[] = [
+  {
+    description:
+      'Gemini 3.1 Flash Image (Nano Banana 2) delivers Pro-level image quality at Flash speed with multimodal chat support.',
+    displayName: 'Nano Banana 2',
+    enabled: true,
+    id: 'gemini-3.1-flash-image-preview:image',
+    parameters: nanoBanana2Parameters,
+    pricing: {
+      approximatePricePerImage: 0.067,
+      units: [
+        { name: 'imageOutput', rate: 60, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput', rate: 0.25, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 1.5, strategy: 'fixed', unit: 'millionTokens' },
+      ],
+    },
+    releasedAt: '2026-02-26',
+    type: 'image',
+  },
   {
     description:
       "Gemini 3 Pro Image (Nano Banana Pro) is Google's image generation model and also supports multimodal chat.",
@@ -30,7 +50,7 @@ export const lobehubImageModels: AIImageModelCard[] = [
     description:
       "Nano Banana is Google's newest, fastest, and most efficient native multimodal model, enabling conversational image generation and editing.",
     displayName: 'Nano Banana',
-    id: 'gemini-2.5-flash-image-preview:image',
+    id: 'gemini-2.5-flash-image:image',
     parameters: nanoBananaParameters,
     pricing: {
       approximatePricePerImage: 0.039,
@@ -78,6 +98,28 @@ export const lobehubImageModels: AIImageModelCard[] = [
       units: [{ name: 'imageGeneration', rate: 0.06, strategy: 'fixed', unit: 'image' }],
     },
     releasedAt: '2025-08-15',
+    type: 'image',
+  },
+  {
+    description:
+      "OpenAI's next-generation multimodal image model with native reasoning, up to 4K resolution, near-perfect text rendering, and high-fidelity multilingual support.",
+    displayName: 'GPT Image 2',
+    enabled: true,
+    id: 'gpt-image-2',
+    parameters: gptImage2Schema,
+    pricing: {
+      // Medium quality at 1024x1024: ~1767 output tokens * $30/M = $0.053 per image.
+      // Source: https://developers.openai.com/api/docs/guides/image-generation#calculating-costs
+      approximatePricePerImage: 0.053,
+      units: [
+        { name: 'textInput', rate: 5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput_cacheRead', rate: 1.25, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'imageInput', rate: 8, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'imageInput_cacheRead', rate: 2, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'imageOutput', rate: 30, strategy: 'fixed', unit: 'millionTokens' },
+      ],
+    },
+    releasedAt: '2026-04-21',
     type: 'image',
   },
   {
@@ -154,6 +196,37 @@ export const lobehubImageModels: AIImageModelCard[] = [
         },
       ],
     },
+    type: 'image',
+  },
+  {
+    description:
+      'ByteDance-Seedream-5.0-lite by BytePlus features web-retrieval-augmented generation for real-time information, enhanced complex prompt interpretation, and improved reference consistency for professional visual creation.',
+    displayName: 'Seedream 5 Lite',
+    enabled: true,
+    id: 'seedream-5-0-260128',
+    parameters: {
+      imageUrls: { default: [], maxCount: 14, maxFileSize: 10 * 1024 * 1024 },
+      prompt: { default: '' },
+      seed: { default: null },
+      size: {
+        default: '2048x2048',
+        enum: [
+          '2048x2048',
+          '2560x1440',
+          '1440x2560',
+          '3072x2048',
+          '2048x3072',
+          '2560x2048',
+          '2048x2560',
+          '3072x1920',
+          '1920x3072',
+        ],
+      },
+    },
+    pricing: {
+      units: [{ name: 'imageGeneration', rate: 0.035, strategy: 'fixed', unit: 'image' }],
+    },
+    releasedAt: '2026-02-24',
     type: 'image',
   },
   {

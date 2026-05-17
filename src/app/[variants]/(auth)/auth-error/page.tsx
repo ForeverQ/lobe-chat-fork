@@ -2,14 +2,14 @@
 
 import { SiDiscord } from '@icons-pack/react-simple-icons';
 import { SOCIAL_URL } from '@lobechat/business-const';
-import { Alert, Button, Flexbox, Icon } from '@lobehub/ui';
+import { Button, Flexbox, Icon, Text } from '@lobehub/ui';
 import { cssVar } from 'antd-style';
+import Link from 'next/link';
 import { parseAsString, useQueryState } from 'nuqs';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import AuthCard from '@/features/AuthCard';
-import Link from '@/libs/next/Link';
 
 const normalizeErrorCode = (code?: string | null) =>
   (code || 'UNKNOWN').trim().toUpperCase().replaceAll('-', '_');
@@ -23,6 +23,8 @@ const AuthErrorPage = memo(() => {
 
   return (
     <AuthCard
+      subtitle={description}
+      title={t('title')}
       footer={
         <Flexbox gap={12} justify="center" wrap="wrap">
           <Link href="/signin">
@@ -42,10 +44,10 @@ const AuthErrorPage = memo(() => {
           </Link>
         </Flexbox>
       }
-      subtitle={description}
-      title={t('title')}
     >
-      <Alert title={error || 'UNKNOWN'} type={'error'} />
+      <Text style={{ fontFamily: cssVar.fontFamilyCode }} type={'secondary'}>
+        ErrorCode: {error || 'UNKNOWN'}
+      </Text>
     </AuthCard>
   );
 });

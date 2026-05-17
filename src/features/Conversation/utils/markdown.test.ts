@@ -275,6 +275,76 @@ This code provides a basic calculator that can perform addition, subtraction, mu
 
 This code provides a basic calculator that can perform addition, subtraction, multiplication, and division.`);
   });
+
+  it('should remove line breaks from multiple artifact tags in the same message', () => {
+    const input = `Here are two artifacts:
+
+<lobeArtifact identifier="first-artifact" type="text/markdown" title="First">
+Line 1
+Line 2
+</lobeArtifact>
+
+<lobeArtifact identifier="second-artifact" type="text/markdown" title="Second">
+Line A
+Line B
+</lobeArtifact>
+
+Done.`;
+
+    const output = processWithArtifact(input);
+
+    // Both artifacts should have their newlines removed
+    expect(output).toEqual(`Here are two artifacts:
+
+<lobeArtifact identifier="first-artifact" type="text/markdown" title="First">Line 1Line 2</lobeArtifact>
+
+<lobeArtifact identifier="second-artifact" type="text/markdown" title="Second">Line ALine B</lobeArtifact>
+
+Done.`);
+  });
+
+  it('should handle multiple artifacts where second is still generating (unclosed)', () => {
+    const input = `Two artifacts:
+
+<lobeArtifact identifier="done" type="text/markdown" title="Done">
+Content 1
+</lobeArtifact>
+
+<lobeArtifact identifier="generating" type="text/markdown" title="Generating">
+Content 2 still going`;
+
+    const output = processWithArtifact(input);
+
+    // Both artifacts should have newlines removed, even the unclosed one
+    expect(output).toEqual(`Two artifacts:
+
+<lobeArtifact identifier="done" type="text/markdown" title="Done">Content 1</lobeArtifact>
+
+<lobeArtifact identifier="generating" type="text/markdown" title="Generating">Content 2 still going`);
+  });
+
+  it('should keep HTML script blocks inside flattened artifact markup', () => {
+    const input = `<lobeArtifact identifier="snake-game" type="text/html" title="Snake Game">
+<!DOCTYPE html>
+<html>
+<body>
+<script>
+// Move the snake every frame
+const url = " // keep string content untouched";
+window.snakeStarted = true;
+</script${'\t'}
+ bar>
+</body>
+</html>
+</lobeArtifact>`;
+
+    const output = processWithArtifact(input);
+
+    expect(output).toContain(
+      '<lobeArtifact identifier="snake-game" type="text/html" title="Snake Game"><!DOCTYPE html><html><body><script>// Move the snake every frameconst url = " // keep string content untouched";window.snakeStarted = true;</script\t bar></body></html></lobeArtifact>',
+    );
+    expect(output).not.toContain('<script>\n');
+  });
 });
 
 describe('outer code block removal', () => {

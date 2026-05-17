@@ -4,27 +4,28 @@ import {
 } from '@lobechat/const';
 import { messages, topics } from '@lobechat/database/schemas';
 import {
+  ActivityMemoryItemSchema,
   BenchmarkLocomoContextProvider,
+  type BenchmarkLocomoPart,
   LobeChatTopicContextProvider,
   LobeChatTopicResultRecorder,
+  type MemoryExtractionAgent,
+  type MemoryExtractionJob,
+  type MemoryExtractionResult,
   MemoryExtractionService,
+  type PersistedMemoryResult,
   RetrievalUserMemoryContextProvider,
   RetrievalUserMemoryIdentitiesProvider,
+  type WithActivity,
 } from '@lobechat/memory-user-memory';
-import type {
-  BenchmarkLocomoPart,
-  MemoryExtractionAgent,
-  MemoryExtractionJob,
-  MemoryExtractionResult,
-  PersistedMemoryResult,
-} from '@lobechat/memory-user-memory';
-import { ModelRuntime } from '@lobechat/model-runtime';
-import type {
-  Embeddings,
-  GenerateObjectPayload,
-  LLMRoleType,
-  OpenAIChatMessage,
+import {
+  type Embeddings,
+  type GenerateObjectPayload,
+  type LLMRoleType,
+  type ModelRuntimeHooks,
+  type OpenAIChatMessage,
 } from '@lobechat/model-runtime';
+import { ModelRuntime } from '@lobechat/model-runtime';
 import { SpanStatusCode } from '@lobechat/observability-otel/api';
 import {
   ATTR_GEN_AI_OPERATION_NAME,
@@ -39,40 +40,48 @@ import {
 import { attributesCommon } from '@lobechat/observability-otel/node';
 import type {
   AiProviderRuntimeState,
+  ChatTopicMetadata,
   IdentityMemoryDetail,
   MemoryExtractionAgentCallTrace,
   MemoryExtractionTraceError,
   MemoryExtractionTracePayload,
 } from '@lobechat/types';
+import { RequestTrigger } from '@lobechat/types';
+import { type FlowControl } from '@upstash/qstash';
 import { Client } from '@upstash/workflow';
 import debug from 'debug';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { join } from 'pathe';
 import { z } from 'zod';
 
-import type { ListTopicsForMemoryExtractorCursor } from '@/database/models/topic';
+import { getBusinessModelRuntimeHooks } from '@/business/server/model-runtime';
+import { AsyncTaskModel } from '@/database/models/asyncTask';
+import { type ListTopicsForMemoryExtractorCursor } from '@/database/models/topic';
 import { TopicModel } from '@/database/models/topic';
-import type { ListUsersForMemoryExtractorCursor } from '@/database/models/user';
+import { type ListUsersForMemoryExtractorCursor } from '@/database/models/user';
 import { UserModel } from '@/database/models/user';
+import type { UserMemoryHybridSearchAggregatedResult } from '@/database/models/userMemory';
 import { UserMemoryModel } from '@/database/models/userMemory';
 import { UserMemorySourceBenchmarkLoCoMoModel } from '@/database/models/userMemory/sources/benchmarkLoCoMo';
 import { AiInfraRepos } from '@/database/repositories/aiInfra';
 import { getServerDB } from '@/database/server';
 import { getServerGlobalConfig } from '@/server/globalConfig';
-import {
-  type MemoryAgentConfig,
-  parseMemoryExtractionConfig,
-} from '@/server/globalConfig/parseMemoryExtractionConfig';
+import { type MemoryAgentConfig } from '@/server/globalConfig/parseMemoryExtractionConfig';
+import { parseMemoryExtractionConfig } from '@/server/globalConfig/parseMemoryExtractionConfig';
 import { KeyVaultsGateKeeper } from '@/server/modules/KeyVaultsEncrypt';
 import { S3 } from '@/server/modules/S3';
-import type { GlobalMemoryLayer } from '@/types/serverConfig';
-import type { ProviderConfig } from '@/types/user/settings';
 import {
-  LayersEnum,
-  MemorySourceType,
-  type MergeStrategyEnum,
-  TypesEnum,
-} from '@/types/userMemory';
+  AsyncTaskError,
+  type AsyncTaskErrorBody,
+  AsyncTaskErrorType,
+  AsyncTaskStatus,
+  type AsyncTaskStructuredErrorItem,
+} from '@/types/asyncTask';
+import { type GlobalMemoryLayer } from '@/types/serverConfig';
+import { type ProviderConfig } from '@/types/user/settings';
+import { type MergeStrategyEnum } from '@/types/userMemory';
+import { LayersEnum, MemorySourceType, TypesEnum } from '@/types/userMemory';
+import { trimBasedOnBatchProbe } from '@/utils/chunkers';
 import { encodeAsync } from '@/utils/tokenizer';
 
 const SOURCE_ALIAS_MAP: Record<string, MemorySourceType> = {
@@ -83,6 +92,7 @@ const SOURCE_ALIAS_MAP: Record<string, MemorySourceType> = {
 };
 
 const LAYER_ALIAS = new Set<LayersEnum>([
+  LayersEnum.Activity,
   LayersEnum.Context,
   LayersEnum.Experience,
   LayersEnum.Identity,
@@ -106,7 +116,14 @@ export interface TopicWorkflowCursor extends MemoryExtractionWorkflowCursor {
   userId: string;
 }
 
+export interface MemoryExtractionHourlyWorkflowPayload {
+  baseUrl?: string;
+  cursor?: MemoryExtractionWorkflowCursor;
+  dryRun?: boolean;
+}
+
 export interface MemoryExtractionNormalizedPayload {
+  asyncTaskId?: string;
   baseUrl: string;
   forceAll: boolean;
   forceTopics: boolean;
@@ -126,9 +143,11 @@ export interface MemoryExtractionNormalizedPayload {
   userCursor?: MemoryExtractionWorkflowCursor;
   userId?: string;
   userIds: string[];
+  userInitiated?: boolean;
 }
 
 export const memoryExtractionPayloadSchema = z.object({
+  asyncTaskId: z.string().uuid().optional(),
   baseUrl: z.string().url().optional(),
   forceAll: z.boolean().optional(),
   forceTopics: z.boolean().optional(),
@@ -155,6 +174,7 @@ export const memoryExtractionPayloadSchema = z.object({
     .optional(),
   userId: z.string().optional(),
   userIds: z.array(z.string()).optional(),
+  userInitiated: z.boolean().optional(),
 });
 
 export type MemoryExtractionPayloadInput = z.infer<typeof memoryExtractionPayloadSchema>;
@@ -188,6 +208,7 @@ export const normalizeMemoryExtractionPayload = (
   if (!baseUrl) throw new Error('Missing baseUrl for workflow trigger');
 
   return {
+    asyncTaskId: parsed.asyncTaskId,
     baseUrl,
     forceAll: parsed.forceAll ?? false,
     forceTopics: parsed.forceTopics ?? false,
@@ -205,6 +226,7 @@ export const normalizeMemoryExtractionPayload = (
     userIds: Array.from(
       new Set([...(parsed.userIds || []), ...(parsed.userId ? [parsed.userId] : [])]),
     ).filter(Boolean),
+    userInitiated: parsed.userInitiated ?? false,
   };
 };
 
@@ -215,7 +237,7 @@ export interface TopicBatchWorkflowPayload extends MemoryExtractionPayloadInput 
   userId: string;
 }
 
-type ProviderKeyVaultMap = Record<
+export type ProviderKeyVaultMap = Record<
   string,
   AiProviderRuntimeState['runtimeConfig'][string]['keyVaults'] | undefined
 >;
@@ -223,6 +245,7 @@ type ProviderKeyVaultMap = Record<
 export const buildWorkflowPayloadInput = (
   payload: MemoryExtractionNormalizedPayload,
 ): MemoryExtractionPayloadInput => ({
+  asyncTaskId: payload.asyncTaskId,
   baseUrl: payload.baseUrl,
   forceAll: payload.forceAll,
   forceTopics: payload.forceTopics,
@@ -238,6 +261,7 @@ export const buildWorkflowPayloadInput = (
   userCursor: payload.userCursor,
   userId: payload.userId ?? payload.userIds[0],
   userIds: payload.userIds,
+  userInitiated: payload.userInitiated,
 });
 
 const normalizeProvider = (provider: string) => provider.toLowerCase();
@@ -252,9 +276,33 @@ const extractCredentialsFromVault = (vault?: Record<string, unknown>) => {
   return { apiKey, baseURL };
 };
 
-const serializeError = (error: unknown): MemoryExtractionTraceError => {
+const getStringErrorProperty = (error: unknown, key: string) => {
+  if (!error || typeof error !== 'object') return undefined;
+
+  const value = (error as Record<string, unknown>)[key];
+
+  return typeof value === 'string' ? value : undefined;
+};
+
+const getErrorCause = (error: unknown) => {
+  if (!error || typeof error !== 'object') return undefined;
+
+  return (error as { cause?: unknown }).cause;
+};
+
+const serializeError = (
+  error: unknown,
+): AsyncTaskStructuredErrorItem & MemoryExtractionTraceError => {
   if (error instanceof Error) {
-    return { message: error.message, name: error.name, stack: error.stack };
+    const cause = getErrorCause(error);
+
+    return {
+      cause: cause ? serializeError(cause) : undefined,
+      code: getStringErrorProperty(error, 'code'),
+      message: error.message,
+      name: error.name,
+      stack: error.stack,
+    };
   }
 
   try {
@@ -262,6 +310,143 @@ const serializeError = (error: unknown): MemoryExtractionTraceError => {
   } catch {
     return { message: String(error) };
   }
+};
+
+type MemoryExtractionErrorStage = 'extract' | 'persist' | 'retrieval';
+
+interface MemoryExtractionTaskErrorItem extends AsyncTaskStructuredErrorItem {
+  stage: MemoryExtractionErrorStage;
+}
+
+interface PersistLayerResult {
+  errors: MemoryExtractionTaskErrorItem[];
+  ids: string[];
+}
+
+class MemoryExtractionAggregateError extends Error {
+  readonly items: MemoryExtractionTaskErrorItem[];
+
+  constructor(message: string, items: MemoryExtractionTaskErrorItem[]) {
+    super(message);
+    this.items = items;
+    this.name = 'MemoryExtractionAggregateError';
+  }
+}
+
+const summarizeUnknown = (value: unknown, limit = 500) => {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string')
+    return value.length > limit ? `${value.slice(0, limit)}...` : value;
+
+  try {
+    const serialized = JSON.stringify(value);
+    if (!serialized) return undefined;
+
+    return serialized.length > limit ? `${serialized.slice(0, limit)}...` : serialized;
+  } catch {
+    return String(value);
+  }
+};
+
+/**
+ * Serializes a memory extraction error for async task persistence.
+ *
+ * Use when:
+ * - Recording extraction, persistence, or retrieval failures on async tasks
+ * - Preserving wrapped database/runtime error causes for production debugging
+ *
+ * Expects:
+ * - Error inputs may be plain values, `Error` instances, or errors with nested `cause`
+ *
+ * Returns:
+ * - A JSON-safe task error item with stage/source context and nested cause details
+ */
+export const makeTaskErrorItem = (
+  stage: MemoryExtractionErrorStage,
+  error: unknown,
+  options: {
+    layer?: string;
+    memoryIndex?: number;
+    preview?: unknown;
+    sourceId?: string;
+    sourceType?: string;
+  } = {},
+): MemoryExtractionTaskErrorItem => {
+  const serialized = serializeError(error);
+
+  return {
+    layer: options.layer,
+    memoryIndex: options.memoryIndex,
+    cause: serialized.cause,
+    code: serialized.code,
+    message: serialized.message,
+    name: serialized.name,
+    preview: options.preview ? summarizeUnknown(options.preview) : undefined,
+    sourceId: options.sourceId,
+    sourceType: options.sourceType,
+    stack: serialized.stack,
+    stage,
+  };
+};
+
+const buildAsyncTaskStructuredError = (
+  detail: string,
+  items: MemoryExtractionTaskErrorItem[],
+): AsyncTaskErrorBody => ({
+  detail,
+  extractErrors: items.filter((item) => item.stage === 'extract'),
+  persistErrors: items.filter((item) => item.stage === 'persist'),
+  retrievalErrors: items.filter((item) => item.stage === 'retrieval'),
+});
+
+const buildAsyncTaskErrorFrom = (
+  error: unknown,
+): AsyncTaskError | { body: AsyncTaskErrorBody; name: string } => {
+  if (error instanceof MemoryExtractionAggregateError) {
+    return {
+      body: buildAsyncTaskStructuredError(error.message, error.items),
+      name: AsyncTaskErrorType.ServerError,
+    };
+  }
+
+  return new AsyncTaskError(
+    AsyncTaskErrorType.ServerError,
+    error instanceof Error ? error.message : 'Extraction failed',
+  );
+};
+
+const normalizeActivityAssociationList = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return value;
+  const list = Array.isArray(value) ? value : typeof value === 'object' ? [value] : value;
+  if (!Array.isArray(list)) return list;
+
+  return list.map((item) => {
+    if (!item || typeof item !== 'object' || !('extra' in item)) return item;
+
+    const extra = (item as Record<string, unknown>).extra;
+    if (extra === null || extra === undefined || typeof extra === 'string') return item;
+
+    return {
+      ...item,
+      extra: typeof extra === 'object' ? JSON.stringify(extra) : String(extra),
+    };
+  });
+};
+
+const normalizeActivityMemoryCandidate = (item: unknown) => {
+  if (!item || typeof item !== 'object' || !('withActivity' in item)) return item;
+  const withActivity = item.withActivity as WithActivity | undefined;
+  if (!withActivity || typeof withActivity !== 'object') return item;
+
+  return {
+    ...item,
+    withActivity: {
+      ...withActivity,
+      associatedLocations: normalizeActivityAssociationList(withActivity.associatedLocations),
+      associatedObjects: normalizeActivityAssociationList(withActivity.associatedObjects),
+      associatedSubjects: normalizeActivityAssociationList(withActivity.associatedSubjects),
+    },
+  };
 };
 
 const resolveLayerModels = (
@@ -282,27 +467,94 @@ const maskSecret = (value?: string) => {
   return `${value.slice(0, 6)}***${value.slice(-4)}`;
 };
 
-const resolveRuntimeAgentConfig = (agent: MemoryAgentConfig, keyVaults?: ProviderKeyVaultMap) => {
-  const provider = agent.provider || 'openai';
-  const { apiKey: userApiKey, baseURL: userBaseURL } = extractCredentialsFromVault(
-    keyVaults?.[normalizeProvider(provider)],
+export type ProviderCredential = { apiKey?: string; baseURL?: string };
+
+export type RuntimeResolveOptions = {
+  fallback?: ProviderCredential;
+  preferred?: {
+    providerIds?: string[];
+  };
+  userId?: string;
+};
+
+export const resolveRuntimeAgentConfig = (
+  agent: MemoryAgentConfig,
+  keyVaults?: ProviderKeyVaultMap,
+  options?: RuntimeResolveOptions,
+  hooks?: ModelRuntimeHooks,
+) => {
+  const normalizedPreferredProviders = (options?.preferred?.providerIds || [])
+    .map(normalizeProvider)
+    .filter(Boolean);
+
+  const providerOrder = Array.from(
+    new Set([
+      ...normalizedPreferredProviders,
+      normalizeProvider(agent.provider || 'openai'),
+      ...Object.keys(keyVaults || {}),
+    ]),
   );
 
-  // Only use the user baseURL if we are also using their API key; otherwise fall back entirely
-  // to system config to avoid mixing credentials.
-  const useUserCredential = !!userApiKey;
-  const apiKey = useUserCredential ? userApiKey : agent.apiKey;
-  const baseURL = useUserCredential ? userBaseURL || agent.baseURL : agent.baseURL;
-  const source = useUserCredential ? 'user-keyvault' : 'system-config';
+  for (const provider of providerOrder) {
+    if (provider === 'lobehub') {
+      debugRuntimeInit(agent, {
+        provider,
+        source: 'user-vault' as const,
+      });
 
-  return { apiKey, baseURL, provider, source };
+      return ModelRuntime.initializeWithProvider(provider, { userId: options?.userId }, hooks);
+    }
+
+    const { apiKey: userApiKey, baseURL: userBaseURL } = extractCredentialsFromVault(
+      keyVaults?.[provider],
+    );
+    if (!userApiKey) {
+      console.warn(
+        `[memory-extraction] skipping provider ${provider} due to missing API key in user vault`,
+      );
+      continue;
+    }
+
+    debugRuntimeInit(agent, {
+      apiKey: userApiKey,
+      baseURL: userBaseURL,
+      provider,
+      source: 'user-vault' as const,
+    });
+
+    // Only use the user baseURL if we are also using their API key; otherwise fall back entirely
+    // to system config to avoid mixing credentials.
+    return ModelRuntime.initializeWithProvider(provider, {
+      apiKey: userApiKey,
+      baseURL: userBaseURL,
+      userId: options?.userId,
+    });
+  }
+
+  debugRuntimeInit(agent, {
+    apiKey: agent.apiKey || options?.fallback?.apiKey,
+    baseURL: agent.baseURL || options?.fallback?.baseURL,
+    provider: agent.provider || 'openai',
+    source: 'system-config' as const,
+  });
+
+  return ModelRuntime.initializeWithProvider(agent.provider || 'openai', {
+    apiKey: agent.apiKey || options?.fallback?.apiKey,
+    baseURL: agent.baseURL || options?.fallback?.baseURL,
+    userId: options?.userId,
+  });
 };
 
 const logRuntime = debug('lobe-server:memory:user-memory:runtime');
 
 const debugRuntimeInit = (
   agent: MemoryAgentConfig,
-  resolved: ReturnType<typeof resolveRuntimeAgentConfig>,
+  resolved: {
+    apiKey?: string;
+    baseURL?: string;
+    provider: string;
+    source: 'user-vault' | 'system-config';
+  },
 ) => {
   if (!logRuntime.enabled) return;
   logRuntime('init runtime', {
@@ -315,26 +567,14 @@ const debugRuntimeInit = (
   });
 };
 
-const initRuntimeForAgent = async (agent: MemoryAgentConfig, keyVaults?: ProviderKeyVaultMap) => {
-  const resolved = resolveRuntimeAgentConfig(agent, keyVaults);
-  debugRuntimeInit(agent, resolved);
-
-  if (!resolved.apiKey) {
-    throw new Error(`Missing API key for ${resolved.provider} memory extraction runtime`);
-  }
-
-  return ModelRuntime.initializeWithProvider(resolved.provider, {
-    apiKey: resolved.apiKey,
-    baseURL: resolved.baseURL,
-  });
-};
-
-const isTopicExtracted = (metadata: any): boolean => {
-  const extractStatus = metadata?.memory_user_memory_extract?.extract_status;
+const isTopicExtracted = (metadata?: ChatTopicMetadata | null): boolean => {
+  const extractStatus = metadata?.userMemoryExtractStatus;
   if (extractStatus) return extractStatus === 'completed';
 
-  const state = metadata?.memoryExtraction?.sources?.chat_topic;
-  return state?.status === 'completed' && !!state?.lastRunAt;
+  return (
+    metadata?.userMemoryExtractStatus === 'completed' &&
+    !!metadata?.userMemoryExtractRunState?.lastRunAt
+  );
 };
 
 type RuntimeBundle = {
@@ -344,14 +584,17 @@ type RuntimeBundle = {
 };
 
 export interface TopicExtractionJob {
+  asyncTaskId?: string;
   forceAll: boolean;
   forceTopics: boolean;
   from?: Date;
   layers: LayersEnum[];
+  reportProgress?: boolean;
   source: MemorySourceType;
   to?: Date;
   topicId: string;
   userId: string;
+  userInitiated?: boolean;
 }
 
 export interface TopicPaginationJob {
@@ -452,13 +695,8 @@ export class MemoryExtractionExecutor {
     return await encodeAsync(normalized);
   }
 
-  private trimTextToTokenLimit(text: string, tokenLimit?: number) {
-    if (!tokenLimit || tokenLimit <= 0) return text;
-
-    const tokens = text.split(/\s+/);
-    if (tokens.length <= tokenLimit) return text;
-
-    return tokens.slice(Math.max(tokens.length - tokenLimit, 0)).join(' ');
+  private async trimTextToTokenLimit(text: string, tokenLimit?: number) {
+    return trimBasedOnBatchProbe(text, tokenLimit);
   }
 
   private async trimConversationsToTokenLimit<T extends OpenAIChatMessage>(
@@ -488,7 +726,7 @@ export class MemoryExtractionExecutor {
 
       const trimmedContent =
         typeof conversation.content === 'string'
-          ? this.trimTextToTokenLimit(conversation.content, remaining)
+          ? await this.trimTextToTokenLimit(conversation.content, remaining)
           : conversation.content;
 
       if (trimmedContent && remaining > 0) {
@@ -505,6 +743,7 @@ export class MemoryExtractionExecutor {
     runtimes: ModelRuntime,
     model: string,
     texts: Array<string | undefined | null>,
+    userId: string,
     tokenLimit?: number,
   ) {
     const attributes = {
@@ -515,16 +754,15 @@ export class MemoryExtractionExecutor {
     };
 
     return tracer.startActiveSpan('gen_ai.embed', { attributes }, async (span) => {
-      const requests = texts
-        .map((text, index) => {
-          if (typeof text !== 'string') return null;
+      const requests: { index: number; text: string }[] = [];
+      for (const [index, text] of texts.entries()) {
+        if (typeof text !== 'string') continue;
 
-          const trimmed = this.trimTextToTokenLimit(text, tokenLimit);
-          if (!trimmed.trim()) return null;
+        const trimmed = await this.trimTextToTokenLimit(text, tokenLimit);
+        if (!trimmed.trim()) continue;
 
-          return { index, text: trimmed };
-        })
-        .filter(Boolean);
+        requests.push({ index, text: trimmed });
+      }
 
       span.setAttribute('memory.embedding.text_count', texts.length);
       span.setAttribute('memory.embedding.request_count', requests.length);
@@ -539,10 +777,10 @@ export class MemoryExtractionExecutor {
         const response = await runtimes.embeddings(
           {
             dimensions: DEFAULT_USER_MEMORY_EMBEDDING_DIMENSIONS,
-            input: requests.map((item) => item!.text),
+            input: requests.map((item) => item.text),
             model,
           },
-          { user: 'memory-extraction' },
+          { metadata: { trigger: RequestTrigger.Memory }, user: userId },
         );
 
         const vectors = texts.map<Embeddings | null>(() => null);
@@ -563,6 +801,7 @@ export class MemoryExtractionExecutor {
           message: error instanceof Error ? error.message : 'Failed to generate embeddings',
         });
         span.recordException(error as Error);
+        console.error('[memory-extraction] failed to generate embeddings', error, 'model:', model);
 
         return texts.map(() => null);
       } finally {
@@ -581,67 +820,99 @@ export class MemoryExtractionExecutor {
     db: Awaited<ReturnType<typeof getServerDB>>,
   ) {
     const insertedIds: string[] = [];
+    const errors: MemoryExtractionTaskErrorItem[] = [];
     const userMemoryModel = new UserMemoryModel(db, job.userId);
 
-    for (const item of result?.memories ?? []) {
-      const activityTags = item.withActivity?.tags ?? item.tags;
-      const associatedObjects = UserMemoryModel.parseAssociatedObjects(
-        item.withActivity?.associatedObjects,
-      );
-      const associatedSubjects = UserMemoryModel.parseAssociatedSubjects(
-        item.withActivity?.associatedSubjects,
-      );
-      const associatedLocations = UserMemoryModel.parseAssociatedLocations(
-        item.withActivity?.associatedLocations,
-      );
-      const [summaryVector, detailsVector, narrativeVector, feedbackVector] =
-        await this.generateEmbeddings(
-          runtime,
-          model,
-          [item.summary, item.details, item.withActivity?.narrative, item.withActivity?.feedback],
-          tokenLimit,
+    for (const [index, rawItem] of (result?.memories ?? []).entries()) {
+      const normalizedItem = normalizeActivityMemoryCandidate(rawItem);
+
+      try {
+        const parsedItem = ActivityMemoryItemSchema.safeParse(normalizedItem);
+
+        if (!parsedItem.success) {
+          errors.push(
+            makeTaskErrorItem('persist', new Error(parsedItem.error.message), {
+              layer: LAYER_LABEL_MAP[LayersEnum.Activity],
+              memoryIndex: index,
+              preview: normalizedItem,
+              sourceId: job.sourceId,
+              sourceType: job.source,
+            }),
+          );
+          continue;
+        }
+
+        const item = parsedItem.data;
+        const activityTags = item.withActivity?.tags ?? item.tags;
+        const associatedObjects = UserMemoryModel.parseAssociatedObjects(
+          item.withActivity?.associatedObjects,
         );
-      const baseMetadata = this.buildBaseMetadata(
-        job,
-        messageIds,
-        LayersEnum.Activity,
-        activityTags,
-      );
+        const associatedSubjects = UserMemoryModel.parseAssociatedSubjects(
+          item.withActivity?.associatedSubjects,
+        );
+        const associatedLocations = UserMemoryModel.parseAssociatedLocations(
+          item.withActivity?.associatedLocations,
+        );
+        const [summaryVector, detailsVector, narrativeVector, feedbackVector] =
+          await this.generateEmbeddings(
+            runtime,
+            model,
+            [item.summary, item.details, item.withActivity?.narrative, item.withActivity?.feedback],
+            job.userId,
+            tokenLimit,
+          );
+        const baseMetadata = this.buildBaseMetadata(
+          job,
+          messageIds,
+          LayersEnum.Activity,
+          activityTags,
+        );
 
-      const { memory } = await userMemoryModel.createActivityMemory({
-        activity: {
-          associatedLocations: associatedLocations.length > 0 ? associatedLocations : [],
-          associatedObjects: associatedObjects.length > 0 ? associatedObjects : [],
-          associatedSubjects: associatedSubjects.length > 0 ? associatedSubjects : [],
+        const { memory } = await userMemoryModel.createActivityMemory({
+          activity: {
+            associatedLocations: associatedLocations.length > 0 ? associatedLocations : [],
+            associatedObjects: associatedObjects.length > 0 ? associatedObjects : [],
+            associatedSubjects: associatedSubjects.length > 0 ? associatedSubjects : [],
+            capturedAt: job.sourceUpdatedAt,
+            endsAt: UserMemoryModel.parseDateFromString(item.withActivity?.endsAt),
+            feedback: item.withActivity?.feedback ?? null,
+            feedbackVector: feedbackVector ?? null,
+            metadata: baseMetadata,
+            narrative: item.withActivity?.narrative ?? null,
+            narrativeVector: narrativeVector ?? null,
+            notes: item.withActivity?.notes ?? null,
+            startsAt: UserMemoryModel.parseDateFromString(item.withActivity?.startsAt),
+            status: item.withActivity?.status ?? 'pending',
+            tags: activityTags ?? null,
+            timezone: item.withActivity?.timezone ?? null,
+            type: item.withActivity?.type ?? 'other',
+          },
           capturedAt: job.sourceUpdatedAt,
-          endsAt: UserMemoryModel.parseDateFromString(item.withActivity?.endsAt),
-          feedback: item.withActivity?.feedback ?? null,
-          feedbackVector: feedbackVector ?? null,
-          metadata: baseMetadata,
-          narrative: item.withActivity?.narrative ?? null,
-          narrativeVector: narrativeVector ?? null,
-          notes: item.withActivity?.notes ?? null,
-          startsAt: UserMemoryModel.parseDateFromString(item.withActivity?.startsAt),
-          status: item.withActivity?.status ?? 'pending',
-          tags: activityTags ?? null,
-          timezone: item.withActivity?.timezone ?? null,
-          type: item.withActivity?.type ?? 'other',
-        },
-        capturedAt: job.sourceUpdatedAt,
-        details: item.details ?? '',
-        detailsEmbedding: detailsVector ?? undefined,
-        memoryCategory: item.memoryCategory ?? null,
-        memoryLayer: (item.memoryLayer as LayersEnum) ?? LayersEnum.Activity,
-        memoryType: (item.memoryType as TypesEnum) ?? TypesEnum.Activity,
-        summary: item.summary ?? '',
-        summaryEmbedding: summaryVector ?? undefined,
-        title: item.title ?? '',
-      });
+          details: item.details ?? '',
+          detailsEmbedding: detailsVector ?? undefined,
+          memoryCategory: item.memoryCategory ?? null,
+          memoryLayer: LayersEnum.Activity,
+          memoryType: (item.memoryType as TypesEnum) ?? TypesEnum.Activity,
+          summary: item.summary ?? '',
+          summaryEmbedding: summaryVector ?? undefined,
+          title: item.title ?? '',
+        });
 
-      insertedIds.push(memory.id);
+        insertedIds.push(memory.id);
+      } catch (error) {
+        errors.push(
+          makeTaskErrorItem('persist', error, {
+            layer: LAYER_LABEL_MAP[LayersEnum.Activity],
+            memoryIndex: index,
+            preview: normalizedItem,
+            sourceId: job.sourceId,
+            sourceType: job.source,
+          }),
+        );
+      }
     }
 
-    return insertedIds;
+    return { errors, ids: insertedIds } satisfies PersistLayerResult;
   }
 
   async persistContextMemories(
@@ -661,6 +932,7 @@ export class MemoryExtractionExecutor {
         runtime,
         model,
         [item.summary, item.details, item.withContext?.description],
+        job.userId,
         tokenLimit,
       );
       const baseMetadata = this.buildBaseMetadata(
@@ -703,7 +975,7 @@ export class MemoryExtractionExecutor {
       insertedIds.push(memory.id);
     }
 
-    return insertedIds;
+    return { errors: [], ids: insertedIds } satisfies PersistLayerResult;
   }
 
   async persistExperienceMemories(
@@ -730,6 +1002,7 @@ export class MemoryExtractionExecutor {
             item.withExperience?.action,
             item.withExperience?.keyLearning,
           ],
+          job.userId,
           tokenLimit,
         );
       const baseMetadata = this.buildBaseMetadata(
@@ -769,7 +1042,7 @@ export class MemoryExtractionExecutor {
       insertedIds.push(memory.id);
     }
 
-    return insertedIds;
+    return { errors: [], ids: insertedIds } satisfies PersistLayerResult;
   }
 
   async persistPreferenceMemories(
@@ -789,6 +1062,7 @@ export class MemoryExtractionExecutor {
         runtime,
         model,
         [item.summary, item.details, item.withPreference?.conclusionDirectives],
+        job.userId,
         tokenLimit,
       );
       const baseMetadata = this.buildBaseMetadata(
@@ -826,7 +1100,7 @@ export class MemoryExtractionExecutor {
       insertedIds.push(memory.id);
     }
 
-    return insertedIds;
+    return { errors: [], ids: insertedIds } satisfies PersistLayerResult;
   }
 
   async persistIdentityMemories(
@@ -850,6 +1124,7 @@ export class MemoryExtractionExecutor {
         runtime,
         model,
         [action.summary, action.details, action.withIdentity.description],
+        job.userId,
         tokenLimit,
       );
       const metadata = this.buildBaseMetadata(
@@ -895,6 +1170,7 @@ export class MemoryExtractionExecutor {
             runtime,
             model,
             [set.summary, set.details, set.withIdentity.description],
+            job.userId,
             tokenLimit,
           )
         : [];
@@ -936,7 +1212,7 @@ export class MemoryExtractionExecutor {
       await userMemoryModel.removeIdentityEntry(action.id);
     }
 
-    return insertedIds;
+    return { errors: [], ids: insertedIds } satisfies PersistLayerResult;
   }
 
   async listConversationsForTopic(userId: string, topicId: string, topicUpdatedAt: Date) {
@@ -978,28 +1254,40 @@ export class MemoryExtractionExecutor {
     userId: string,
     conversations: OpenAIChatMessage[],
     tokenLimit?: number,
-  ) {
+  ): Promise<UserMemoryHybridSearchAggregatedResult> {
     const db = await this.db;
     const userMemoryModel = new UserMemoryModel(db, userId);
     // TODO: make topK configurable
     const topK = 10;
-    const aggregatedContent = this.trimTextToTokenLimit(
+    const aggregatedContent = await this.trimTextToTokenLimit(
       conversations.map((msg) => `${msg.role.toUpperCase()}: ${msg.content}`).join('\n\n'),
       tokenLimit,
     );
 
-    const embeddings = await runtime.embeddings({
-      dimensions: DEFAULT_USER_MEMORY_EMBEDDING_DIMENSIONS,
-      input: [aggregatedContent],
-      model: embeddingModel,
-    });
+    const embeddings = await runtime.embeddings(
+      {
+        dimensions: DEFAULT_USER_MEMORY_EMBEDDING_DIMENSIONS,
+        input: [aggregatedContent],
+        model: embeddingModel,
+      },
+      { metadata: { trigger: RequestTrigger.Memory }, user: userId },
+    );
 
     const vector = embeddings?.[0];
     if (vector) {
-      const retrieved = await userMemoryModel.searchWithEmbedding({
-        embedding: vector,
-        limits: { activities: topK, contexts: topK, experiences: topK, preferences: topK },
-      });
+      const retrieved = await userMemoryModel.searchMemory(
+        {
+          queries: [aggregatedContent],
+          topK: {
+            activities: topK,
+            contexts: topK,
+            experiences: topK,
+            identities: topK,
+            preferences: topK,
+          },
+        },
+        [vector],
+      );
 
       return retrieved;
     }
@@ -1008,6 +1296,19 @@ export class MemoryExtractionExecutor {
       activities: [],
       contexts: [],
       experiences: [],
+      identities: [],
+      meta: {
+        appliedFilters: {},
+        appliedQueries: [],
+        layers: {
+          activities: { hasMore: false, returned: 0, total: 0 },
+          contexts: { hasMore: false, returned: 0, total: 0 },
+          experiences: { hasMore: false, returned: 0, total: 0 },
+          identities: { hasMore: false, returned: 0, total: 0 },
+          preferences: { hasMore: false, returned: 0, total: 0 },
+        },
+        ranking: {},
+      },
       preferences: [],
     };
   }
@@ -1022,6 +1323,18 @@ export class MemoryExtractionExecutor {
     const res = await userMemoryModel.getAllIdentitiesWithMemory();
 
     return res.map((item) => ({ ...item, layer: LayersEnum.Identity }));
+  }
+
+  private async reportUserInitiatedProgress(job: TopicExtractionJob) {
+    if (!job.asyncTaskId || !job.userInitiated) return;
+
+    try {
+      const db = await this.db;
+      const asyncTaskModel = new AsyncTaskModel(db, job.userId);
+      await asyncTaskModel.incrementUserMemoryExtractionProgress(job.asyncTaskId);
+    } catch (error) {
+      console.error('[memory-extraction] failed to update async task progress', error);
+    }
   }
 
   async extractTopic(job: TopicExtractionJob) {
@@ -1050,6 +1363,9 @@ export class MemoryExtractionExecutor {
       'Memory User Memory: Extract Chat Topic',
       { attributes },
       async (span) => {
+        const shouldReportProgress =
+          job.reportProgress !== false && job.userInitiated && !!job.asyncTaskId;
+        let topicProcessed = false;
         const startTime = Date.now();
         let extractionJob: MemoryExtractionJob | null = null;
         let extraction: MemoryExtractionResult | null = null;
@@ -1072,6 +1388,7 @@ export class MemoryExtractionExecutor {
               `[memory-extraction] topic ${job.topicId} not found for user ${job.userId}`,
             );
             span.setStatus({ code: SpanStatusCode.OK, message: 'topic_not_found' });
+            topicProcessed = true;
             return {
               extracted: false,
               layers: {},
@@ -1081,6 +1398,7 @@ export class MemoryExtractionExecutor {
           }
           if ((job.from && topic.createdAt < job.from) || (job.to && topic.createdAt > job.to)) {
             span.setStatus({ code: SpanStatusCode.OK, message: 'topic_out_of_range' });
+            topicProcessed = true;
             return {
               extracted: false,
               layers: {},
@@ -1090,6 +1408,7 @@ export class MemoryExtractionExecutor {
           }
           if (!job.forceAll && !job.forceTopics && isTopicExtracted(topic.metadata)) {
             span.setStatus({ code: SpanStatusCode.OK, message: 'already_extracted' });
+            topicProcessed = true;
             return {
               extracted: false,
               layers: {},
@@ -1112,7 +1431,7 @@ export class MemoryExtractionExecutor {
             userModel.getUserState(KeyVaultsGateKeeper.getUserKeyVaults),
             this.getAiProviderRuntimeState(job.userId),
           ]);
-          const keyVaults = this.resolveRuntimeKeyVaults(aiProviderRuntimeState);
+          const keyVaults = await this.resolveRuntimeKeyVaults(aiProviderRuntimeState);
           const language = userState.settings?.general?.responseLanguage;
 
           const runtimes = await this.getRuntime(job.userId, keyVaults);
@@ -1150,10 +1469,10 @@ export class MemoryExtractionExecutor {
 
           const topicContextProvider = new LobeChatTopicContextProvider({
             conversations: extractorConversations,
-            topic: topic,
+            topic,
             topicId: topic.id,
           });
-          const topicContext = await topicContextProvider.buildContext(extractionJob);
+          const topicContext = await topicContextProvider.buildContext(extractionJob.userId);
 
           resultRecorder = new LobeChatTopicResultRecorder({
             currentMetadata: topic.metadata || {},
@@ -1164,19 +1483,59 @@ export class MemoryExtractionExecutor {
             traceId: span.spanContext().traceId,
           });
 
-          const retrievedMemories = await this.listRelevantUserMemories(
-            extractionJob,
-            runtimes.embeddings,
-            this.modelConfig.embeddingsModel,
-            job.userId,
-            embeddingConversations,
-            embeddingContextLimit,
-          );
+          const retrievalErrors: MemoryExtractionTaskErrorItem[] = [];
+          let searchResult: UserMemoryHybridSearchAggregatedResult = {
+            activities: [],
+            contexts: [],
+            experiences: [],
+            identities: [],
+            meta: {
+              appliedFilters: {},
+              appliedQueries: [],
+              layers: {
+                activities: { hasMore: false, returned: 0, total: 0 },
+                contexts: { hasMore: false, returned: 0, total: 0 },
+                experiences: { hasMore: false, returned: 0, total: 0 },
+                identities: { hasMore: false, returned: 0, total: 0 },
+                preferences: { hasMore: false, returned: 0, total: 0 },
+              },
+              ranking: {},
+            },
+            preferences: [],
+          };
+
+          try {
+            searchResult = await this.listRelevantUserMemories(
+              extractionJob,
+              runtimes.embeddings,
+              this.modelConfig.embeddingsModel,
+              job.userId,
+              embeddingConversations,
+              embeddingContextLimit,
+            );
+          } catch (error) {
+            retrievalErrors.push(
+              makeTaskErrorItem('retrieval', error, {
+                preview: embeddingConversations.map((item) => item.content).join('\n\n'),
+                sourceId: extractionJob.sourceId,
+                sourceType: extractionJob.source,
+              }),
+            );
+          }
           const retrievedMemoryContextProvider = new RetrievalUserMemoryContextProvider({
-            retrievedMemories,
+            retrievedMemories: {
+              activities: searchResult.activities,
+              contexts: searchResult.contexts,
+              experiences: searchResult.experiences,
+              preferences: searchResult.preferences,
+            } as ConstructorParameters<
+              typeof RetrievalUserMemoryContextProvider
+            >[0]['retrievedMemories'],
           });
-          const retrievalMemoryContext =
-            await retrievedMemoryContextProvider.buildContext(extractionJob);
+          const retrievalMemoryContext = await retrievedMemoryContextProvider.buildContext(
+            extractionJob.userId,
+            extractionJob.sourceId,
+          );
 
           const retrievedMemoryIdentities = await this.listUserMemoryIdentities(
             extractionJob,
@@ -1187,15 +1546,23 @@ export class MemoryExtractionExecutor {
               retrievedIdentities: retrievedMemoryIdentities,
             });
           const retrievedIdentityContext =
-            await retrievedMemoryIdentitiesContextProvider.buildContext(extractionJob);
-          const trimmedRetrievedContexts = [
-            topicContext.context,
-            retrievalMemoryContext.context,
-          ].map((context) => this.trimTextToTokenLimit(context, extractorContextLimit));
-          const trimmedRetrievedIdentitiesContext = this.trimTextToTokenLimit(
+            await retrievedMemoryIdentitiesContextProvider.buildContext(
+              extractionJob.userId,
+              extractionJob.sourceId,
+            );
+          const trimmedRetrievedContexts = await Promise.all(
+            [topicContext.context, retrievalMemoryContext.context].map((context) =>
+              this.trimTextToTokenLimit(context, extractorContextLimit),
+            ),
+          );
+          const trimmedRetrievedIdentitiesContext = await this.trimTextToTokenLimit(
             retrievedIdentityContext.context,
             extractorContextLimit,
           );
+          const taxonomyOptions = await new UserMemoryModel(db, job.userId).queryTaxonomyOptions({
+            include: ['categories', 'labels', 'tags'],
+            limit: 20,
+          });
 
           const agentCalls: Partial<
             Record<MemoryExtractionAgent, MemoryExtractionAgentCallTrace<GenerateObjectPayload>>
@@ -1241,7 +1608,7 @@ export class MemoryExtractionExecutor {
             extractionJob,
             memories: {
               identities: retrievedMemoryIdentities,
-              layers: retrievedMemories,
+              layers: searchResult,
             },
             source: {
               chatTopic: {
@@ -1278,8 +1645,11 @@ export class MemoryExtractionExecutor {
               : undefined,
             contextProvider: topicContextProvider,
             gatekeeperLanguage: this.privateConfig.agentGateKeeper.language || 'English',
-            language: language,
-            resultRecorder: resultRecorder,
+            language,
+            resultRecorder: resultRecorder as any,
+            availableCategories: taxonomyOptions.categories.map((item) => item.value),
+            availableLabels: taxonomyOptions.labels.map((item) => item.value),
+            availableTags: taxonomyOptions.tags.map((item) => item.value),
             retrievedContexts: trimmedRetrievedContexts,
             retrievedIdentitiesContext: trimmedRetrievedIdentitiesContext,
 
@@ -1292,6 +1662,7 @@ export class MemoryExtractionExecutor {
           if (!extraction) {
             this.recordJobMetrics(extractionJob, 'completed', Date.now() - startTime);
             span.setStatus({ code: SpanStatusCode.OK, message: 'no_extraction' });
+            topicProcessed = true;
             return {
               extracted: false,
               layers: {},
@@ -1307,6 +1678,12 @@ export class MemoryExtractionExecutor {
             runtimes,
             db,
           );
+          if (retrievalErrors.length > 0) {
+            throw new MemoryExtractionAggregateError(
+              'Memory extraction completed with retrieval errors',
+              retrievalErrors,
+            );
+          }
           if (tracePayload) {
             tracePayload.result = { extraction, persisted: persistedRes };
           }
@@ -1318,6 +1695,7 @@ export class MemoryExtractionExecutor {
           span.setStatus({ code: SpanStatusCode.OK });
           span.setAttribute('memory.processed_memory_count', persistedRes.createdIds.length);
 
+          topicProcessed = true;
           return {
             extracted: true,
             layers: persistedRes.layers,
@@ -1336,12 +1714,35 @@ export class MemoryExtractionExecutor {
             message: error instanceof Error ? error.message : 'Extraction failed',
           });
           span.recordException(error as Error);
+          console.error(
+            '[memory-extraction] topic extraction failed',
+            error,
+            'topicId:',
+            job.topicId,
+            'userId:',
+            job.userId,
+          );
 
           if (tracePayload) {
             tracePayload.error = serializeError(error);
           }
+          if (job.asyncTaskId && job.userInitiated) {
+            try {
+              const asyncTaskModel = new AsyncTaskModel(await this.db, job.userId);
+              await asyncTaskModel.update(job.asyncTaskId, {
+                error: buildAsyncTaskErrorFrom(error),
+                status: AsyncTaskStatus.Error,
+              });
+            } catch (taskError) {
+              console.error('[memory-extraction] failed to update async task status', taskError);
+            }
+          }
           throw error;
         } finally {
+          if (shouldReportProgress && topicProcessed) {
+            await this.reportUserInitiatedProgress(job);
+          }
+
           if (observabilityS3 && tracePayload) {
             try {
               await this.uploadExtractionTrace(
@@ -1428,6 +1829,7 @@ export class MemoryExtractionExecutor {
         const topicIds = await this.filterTopicIdsForUser(userId, payload.topicIds);
         for (const topicId of topicIds) {
           const extracted = await this.extractTopic({
+            asyncTaskId: payload.asyncTaskId,
             forceAll: payload.forceAll,
             forceTopics: payload.forceTopics,
             from: payload.from,
@@ -1436,6 +1838,7 @@ export class MemoryExtractionExecutor {
             to: payload.to,
             topicId,
             userId,
+            userInitiated: payload.userInitiated,
           });
 
           results.push({ ...extracted, topicId, userId });
@@ -1542,6 +1945,35 @@ export class MemoryExtractionExecutor {
     };
   }
 
+  async getUsersForHourlyExtraction(
+    limit: number,
+    cursor?: ListUsersForMemoryExtractorCursor,
+  ): Promise<UserPaginationResult> {
+    const db = await this.db;
+
+    const rows = await UserModel.listUsersForHourlyMemoryExtractor(db, {
+      cursor,
+      limit,
+      whitelist: this.privateConfig.whitelistUsers,
+    });
+    if (!rows?.length) {
+      return { ids: [] };
+    }
+
+    const last = rows.at(-1);
+    const nextCursor = last
+      ? {
+          createdAt: last.createdAt,
+          id: last.id,
+        }
+      : undefined;
+
+    return {
+      cursor: nextCursor,
+      ids: rows.map((row) => row.id),
+    };
+  }
+
   async filterTopicIdsForUser(userId: string, topicIds: string[]) {
     if (!topicIds.length) return [];
 
@@ -1595,14 +2027,27 @@ export class MemoryExtractionExecutor {
   ): Promise<PersistedMemoryResult> {
     const createdIds: string[] = [];
     const perLayer: Partial<Record<LayersEnum, number>> = {};
-    const errors: Error[] = [];
-    const appendError = (layer: LayersEnum, stage: 'extract' | 'persist', error: unknown) => {
-      errors.push(this.normalizeLayerError(layer, stage, error));
+    const errors: MemoryExtractionTaskErrorItem[] = [];
+    const appendError = (
+      layer: LayersEnum,
+      stage: 'extract' | 'persist',
+      error: unknown,
+      options?: { memoryIndex?: number; preview?: unknown },
+    ) => {
+      errors.push(
+        makeTaskErrorItem(stage, this.normalizeLayerError(layer, stage, error), {
+          layer: LAYER_LABEL_MAP[layer],
+          memoryIndex: options?.memoryIndex,
+          preview: options?.preview,
+          sourceId: job.sourceId,
+          sourceType: job.source,
+        }),
+      );
     };
 
     const persistWithSpan = async (
       layer: LayersEnum,
-      persist: () => Promise<string[]>,
+      persist: () => Promise<PersistLayerResult>,
     ): Promise<void> => {
       const attributes = {
         layer: LAYER_LABEL_MAP[layer],
@@ -1617,10 +2062,11 @@ export class MemoryExtractionExecutor {
         { attributes },
         async (span) => {
           try {
-            const ids = await persist();
+            const { errors: persistErrors, ids } = await persist();
 
             createdIds.push(...ids);
             perLayer[layer] = ids.length;
+            errors.push(...persistErrors);
             this.recordLayerEntries(job, layer, ids.length);
             span.setStatus({ code: SpanStatusCode.OK });
             span.setAttribute('memory.persisted_count', ids.length);
@@ -1632,6 +2078,18 @@ export class MemoryExtractionExecutor {
                 error instanceof Error ? error.message : 'Failed to persist extracted memories',
             });
             span.recordException(error as Error);
+            console.error(
+              '[memory-extraction] failed to persist memories',
+              error,
+              'layer:',
+              layer,
+              'source:',
+              job.source,
+              'sourceId:',
+              job.sourceId,
+              'userId:',
+              job.userId,
+            );
           } finally {
             span.end();
           }
@@ -1730,8 +2188,11 @@ export class MemoryExtractionExecutor {
     }
 
     if (errors.length) {
-      const detail = errors.map((error) => `${error.message}${error.cause ? `: ${error.cause}` : ''}`).join('; ');
-      throw new AggregateError(errors, `Memory extraction encountered layer errors: ${detail}`);
+      const detail = errors.map((error) => error.message).join('; ');
+      throw new MemoryExtractionAggregateError(
+        `Memory extraction encountered layer errors: ${detail}`,
+        errors,
+      );
     }
 
     return {
@@ -1747,7 +2208,9 @@ export class MemoryExtractionExecutor {
     return aiInfraRepos.getAiProviderRuntimeState(KeyVaultsGateKeeper.getUserKeyVaults);
   }
 
-  private resolveRuntimeKeyVaults(runtimeState: AiProviderRuntimeState): ProviderKeyVaultMap {
+  private async resolveRuntimeKeyVaults(
+    runtimeState: AiProviderRuntimeState,
+  ): Promise<ProviderKeyVaultMap> {
     const normalizedRuntimeConfig = Object.fromEntries(
       Object.entries(runtimeState.runtimeConfig || {}).map(([providerId, config]) => [
         normalizeProvider(providerId),
@@ -1755,98 +2218,46 @@ export class MemoryExtractionExecutor {
       ]),
     );
 
-    const providerModels = runtimeState.enabledAiModels.reduce<Record<string, Set<string>>>(
-      (acc, model) => {
-        const providerId = normalizeProvider(model.providerId);
-        acc[providerId] = acc[providerId] || new Set<string>();
-        acc[providerId].add(model.id);
-        return acc;
-      },
-      {},
-    );
-
-    const resolveProviderForModel = (
-      modelId: string,
-      fallbackProvider?: string,
-      preferredProviders?: string[],
-      preferredModels?: string[],
-      label?: string,
-    ) => {
-      const providerOrder = Array.from(
-        new Set(
-          [
-            ...(preferredProviders?.map(normalizeProvider) || []),
-            fallbackProvider ? normalizeProvider(fallbackProvider) : undefined,
-            ...Object.keys(providerModels),
-          ].filter(Boolean) as string[],
-        ),
-      );
-
-      const candidateModels = preferredModels && preferredModels.length > 0 ? preferredModels : [];
-
-      for (const providerId of providerOrder) {
-        const models = providerModels[providerId];
-        if (!models) continue;
-        if (models.has(modelId)) return providerId;
-
-        const preferredMatch = candidateModels.find((preferredModel) => models.has(preferredModel));
-        if (preferredMatch) return providerId;
-      }
-      if (fallbackProvider) {
-        console.warn(
-          `[memory-extraction] no enabled provider found for ${label || 'model'} "${modelId}"`,
-          `(preferred ${preferredProviders}), falling back to server-configured provider "${fallbackProvider}".`,
-        );
-
-        return normalizeProvider(fallbackProvider);
-      }
-
-      throw new Error(
-        `Unable to resolve provider for ${label || 'model'} "${modelId}". ` +
-          `Check preferred providers/models configuration.`,
-      );
-    };
-
     const keyVaults: ProviderKeyVaultMap = {};
 
-    const gatekeeperProvider = resolveProviderForModel(
-      this.modelConfig.gateModel,
-      this.privateConfig.agentGateKeeper.provider,
-      this.gatekeeperPreferredProviders,
-      this.gatekeeperPreferredModels,
-      'gatekeeper',
-    );
+    const gatekeeperProvider = await AiInfraRepos.tryMatchingProviderFrom(runtimeState, {
+      fallbackProvider: this.privateConfig.agentGateKeeper.provider,
+      label: 'gatekeeper',
+      modelId: this.modelConfig.gateModel,
+      preferredModels: this.gatekeeperPreferredModels,
+      preferredProviders: this.gatekeeperPreferredProviders,
+    });
     const gatekeeperRuntime = normalizedRuntimeConfig[gatekeeperProvider];
     if (gatekeeperRuntime?.keyVaults) {
       keyVaults[gatekeeperProvider] = gatekeeperRuntime.keyVaults;
     }
 
-    const embeddingProvider = resolveProviderForModel(
-      this.modelConfig.embeddingsModel,
-      this.privateConfig.embedding.provider,
-      this.embeddingPreferredProviders,
-      this.embeddingPreferredModels,
-      'embedding',
-    );
+    const embeddingProvider = await AiInfraRepos.tryMatchingProviderFrom(runtimeState, {
+      fallbackProvider: this.privateConfig.embedding.provider,
+      label: 'embedding',
+      modelId: this.modelConfig.embeddingsModel,
+      preferredModels: this.embeddingPreferredModels,
+      preferredProviders: this.embeddingPreferredProviders,
+    });
     const embeddingRuntime = normalizedRuntimeConfig[embeddingProvider];
     if (embeddingRuntime?.keyVaults) {
       keyVaults[embeddingProvider] = embeddingRuntime.keyVaults;
     }
 
-    Object.values(this.modelConfig.layerModels).forEach((model) => {
-      if (!model) return;
-      const providerId = resolveProviderForModel(
-        model,
-        this.privateConfig.agentLayerExtractor.provider,
-        this.layerPreferredProviders,
-        this.layerPreferredModels,
-        'layer extractor',
-      );
+    for (const model of Object.values(this.modelConfig.layerModels)) {
+      if (!model) continue;
+      const providerId = await AiInfraRepos.tryMatchingProviderFrom(runtimeState, {
+        fallbackProvider: this.privateConfig.agentLayerExtractor.provider,
+        label: 'layer extractor',
+        modelId: model,
+        preferredModels: this.layerPreferredModels,
+        preferredProviders: this.layerPreferredProviders,
+      });
       const runtime = normalizedRuntimeConfig[providerId];
       if (runtime?.keyVaults) {
         keyVaults[providerId] = runtime.keyVaults;
       }
-    });
+    }
 
     return keyVaults;
   }
@@ -1864,10 +2275,54 @@ export class MemoryExtractionExecutor {
     const cached = this.runtimeCache.get(userId);
     if (cached) return cached;
 
+    const embeddingOptions: RuntimeResolveOptions = {
+      fallback: {
+        apiKey: this.privateConfig.embedding.apiKey,
+        baseURL: this.privateConfig.embedding.baseURL,
+      },
+      preferred: { providerIds: this.embeddingPreferredProviders },
+      userId,
+    };
+
+    const gatekeeperOptions: RuntimeResolveOptions = {
+      fallback: {
+        apiKey: this.privateConfig.agentGateKeeper.apiKey,
+        baseURL: this.privateConfig.agentGateKeeper.baseURL,
+      },
+      preferred: { providerIds: this.gatekeeperPreferredProviders },
+      userId,
+    };
+
+    const layerExtractorOptions: RuntimeResolveOptions = {
+      fallback: {
+        apiKey: this.privateConfig.agentLayerExtractor.apiKey,
+        baseURL: this.privateConfig.agentLayerExtractor.baseURL,
+      },
+      preferred: { providerIds: this.layerPreferredProviders },
+      userId,
+    };
+
+    const hooks = getBusinessModelRuntimeHooks(userId, 'lobehub');
+
     const runtimes: RuntimeBundle = {
-      embeddings: await initRuntimeForAgent(this.privateConfig.embedding, keyVaults),
-      gatekeeper: await initRuntimeForAgent(this.privateConfig.agentGateKeeper, keyVaults),
-      layerExtractor: await initRuntimeForAgent(this.privateConfig.agentLayerExtractor, keyVaults),
+      embeddings: await resolveRuntimeAgentConfig(
+        { ...this.privateConfig.embedding },
+        keyVaults,
+        embeddingOptions,
+        hooks,
+      ),
+      gatekeeper: await resolveRuntimeAgentConfig(
+        { ...this.privateConfig.agentGateKeeper },
+        keyVaults,
+        gatekeeperOptions,
+        hooks,
+      ),
+      layerExtractor: await resolveRuntimeAgentConfig(
+        { ...this.privateConfig.agentLayerExtractor },
+        keyVaults,
+        layerExtractorOptions,
+        hooks,
+      ),
     };
 
     this.runtimeCache.set(userId, runtimes);
@@ -1897,7 +2352,7 @@ export class MemoryExtractionExecutor {
       async (span) => {
         const startTime = Date.now();
         let extractionJob: MemoryExtractionJob | null = null;
-        let extraction: MemoryExtractionResult | null = null;
+        let extraction: MemoryExtractionResult | null;
 
         try {
           const db = await this.db;
@@ -1906,7 +2361,7 @@ export class MemoryExtractionExecutor {
             userModel.getUserState(KeyVaultsGateKeeper.getUserKeyVaults),
             this.getAiProviderRuntimeState(params.userId),
           ]);
-          const keyVaults = this.resolveRuntimeKeyVaults(aiProviderRuntimeState);
+          const keyVaults = await this.resolveRuntimeKeyVaults(aiProviderRuntimeState);
           const language = params.language || userState.settings?.general?.responseLanguage;
 
           const runtimes = await this.getRuntime(params.userId, keyVaults);
@@ -1937,9 +2392,9 @@ export class MemoryExtractionExecutor {
             userId: params.userId,
           };
 
-          const builtContext = await contextProvider.buildContext(extractionJob);
+          const builtContext = await contextProvider.buildContext(extractionJob.userId);
           const extractorContextLimit = this.privateConfig.agentLayerExtractor.contextLimit;
-          const trimmedContext = this.trimTextToTokenLimit(
+          const trimmedContext = await this.trimTextToTokenLimit(
             builtContext.context,
             extractorContextLimit,
           );
@@ -2043,6 +2498,14 @@ export class MemoryExtractionExecutor {
             message: error instanceof Error ? error.message : 'Extraction failed',
           });
           span.recordException(error as Error);
+          console.error(
+            '[memory-extraction] benchmark extraction failed',
+            error,
+            'sourceId:',
+            params.sourceId,
+            'userId:',
+            params.userId,
+          );
           throw error;
         } finally {
           span.end();
@@ -2053,6 +2516,8 @@ export class MemoryExtractionExecutor {
 }
 
 const WORKFLOW_PATHS = {
+  hourly: '/api/workflows/memory-user-memory/call-cron-hourly-analysis',
+  personaUpdate: '/api/workflows/memory-user-memory/pipelines/persona/update-writing',
   topicBatch: '/api/workflows/memory-user-memory/pipelines/chat-topic/process-topics',
   userTopics: '/api/workflows/memory-user-memory/pipelines/chat-topic/process-user-topics',
   users: '/api/workflows/memory-user-memory/pipelines/chat-topic/process-users',
@@ -2100,6 +2565,18 @@ export class MemoryExtractionWorkflowService {
     return this.getClient().trigger({ body: payload, headers: options?.extraHeaders, url });
   }
 
+  static triggerHourly(
+    payload: MemoryExtractionHourlyWorkflowPayload,
+    options?: { extraHeaders?: Record<string, string> },
+  ) {
+    if (!payload.baseUrl) {
+      throw new Error('Missing baseUrl for workflow trigger');
+    }
+
+    const url = getWorkflowUrl(WORKFLOW_PATHS.hourly, payload.baseUrl);
+    return this.getClient().trigger({ body: payload, headers: options?.extraHeaders, url });
+  }
+
   static triggerProcessUserTopics(
     payload: UserTopicWorkflowPayload,
     options?: { extraHeaders?: Record<string, string> },
@@ -2109,10 +2586,15 @@ export class MemoryExtractionWorkflowService {
     }
 
     const url = getWorkflowUrl(WORKFLOW_PATHS.userTopics, payload.baseUrl);
-    return this.getClient().trigger({ body: payload, headers: options?.extraHeaders, url });
+    return this.getClient().trigger({
+      body: payload,
+      headers: options?.extraHeaders,
+      url,
+    });
   }
 
   static triggerProcessTopics(
+    userId: string,
     payload: MemoryExtractionPayloadInput,
     options?: { extraHeaders?: Record<string, string> },
   ) {
@@ -2121,6 +2603,41 @@ export class MemoryExtractionWorkflowService {
     }
 
     const url = getWorkflowUrl(WORKFLOW_PATHS.topicBatch, payload.baseUrl);
-    return this.getClient().trigger({ body: payload, headers: options?.extraHeaders, url });
+    return this.getClient().trigger({
+      body: payload,
+      flowControl: {
+        key: `memory-user-memory.pipelines.chat-topic.process-topics.user.${userId}`,
+        // NOTICE: if modified the parallelism of
+        // src/server/workflows-hono/memory-user-memory/workflows/processTopics.ts
+        // or added new memory layer, make sure to update the number below.
+        //
+        // Currently, CEPA (context, experience, preference, activity) + identity = 5 layers.
+        // and since identity requires sequential processing, we set parallelism to 5.
+        parallelism: 5,
+      },
+      headers: options?.extraHeaders,
+      url,
+    });
+  }
+
+  static triggerPersonaUpdate(
+    userId: string,
+    baseUrl: string,
+    options?: { extraHeaders?: Record<string, string> },
+  ) {
+    if (!baseUrl) {
+      throw new Error('Missing baseUrl for workflow trigger');
+    }
+
+    const url = getWorkflowUrl(WORKFLOW_PATHS.personaUpdate, baseUrl);
+    return this.getClient().trigger({
+      body: { userIds: [userId] },
+      flowControl: {
+        key: `memory-user-memory.pipelines.persona.update-write.${userId}`,
+        parallelism: 1,
+      } satisfies FlowControl,
+      headers: options?.extraHeaders,
+      url,
+    });
   }
 }

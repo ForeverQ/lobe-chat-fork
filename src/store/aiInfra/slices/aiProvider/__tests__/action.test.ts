@@ -1,5 +1,5 @@
 import * as runtimeModule from '@lobechat/model-runtime';
-import type { AIImageModelCard, EnabledAiModel, ModelParamsSchema } from 'model-bank';
+import { type AIImageModelCard, type EnabledAiModel, type ModelParamsSchema } from 'model-bank';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -39,14 +39,14 @@ describe('aiProvider action helpers', () => {
   });
 
   describe('normalizeChatModel', () => {
-    it('fills missing optional fields with safe defaults', () => {
+    it('fills missing optional fields with safe defaults', async () => {
       const model = createChatModel({
         abilities: undefined,
         contextWindowTokens: undefined,
         displayName: undefined,
       });
 
-      const result = normalizeChatModel(model);
+      const result = await normalizeChatModel(model);
 
       expect(result).toEqual({
         abilities: {},
@@ -147,6 +147,27 @@ describe('aiProvider action helpers', () => {
     it('returns empty array when provider has no chat models', async () => {
       const result = await getChatModelList(chatModels, 'nonexistent');
       expect(result).toEqual([]);
+    });
+
+    it('filters runtime-only hidden models from visible chat lists', async () => {
+      const result = await getChatModelList(
+        [
+          createChatModel({
+            displayName: 'Visible Model',
+            id: 'visible-model',
+            providerId: 'lobehub',
+          }),
+          createChatModel({
+            displayName: 'Onboarding Alias',
+            id: 'lobehub-onboarding-v1',
+            providerId: 'lobehub',
+            visible: false,
+          }),
+        ],
+        'lobehub',
+      );
+
+      expect(result.map((model) => model.id)).toEqual(['visible-model']);
     });
   });
 

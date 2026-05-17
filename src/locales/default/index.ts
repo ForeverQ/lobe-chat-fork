@@ -1,5 +1,4 @@
-import { businessLocales } from '@/business/locales/index';
-
+import agent from './agent';
 import agentGroup from './agentGroup';
 import auth from './auth';
 import authError from './authError';
@@ -13,6 +12,7 @@ import discover from './discover';
 import editor from './editor';
 import electron from './electron';
 import error from './error';
+import eval_ from './eval';
 import file from './file';
 import home from './home';
 import hotkey from './hotkey';
@@ -21,12 +21,15 @@ import knowledgeBase from './knowledgeBase';
 import labs from './labs';
 import marketAuth from './marketAuth';
 import memory from './memory';
+import messenger from './messenger';
 import metadata from './metadata';
 import migration from './migration';
 import modelProvider from './modelProvider';
 import models from './models';
+import notification from './notification';
 import oauth from './oauth';
 import onboarding from './onboarding';
+import openInApp from './openInApp';
 import plugin from './plugin';
 import portal from './portal';
 import providers from './providers';
@@ -34,13 +37,17 @@ import ragEval from './ragEval';
 import setting from './setting';
 import spend from './spend';
 import subscription from './subscription';
+import suggestQuestions from './suggestQuestions';
+import taskTemplate from './taskTemplate';
 import thread from './thread';
 import tool from './tool';
 import topic from './topic';
 import ui from './ui';
+import video from './video';
 import welcome from './welcome';
 
 const resources = {
+  agent,
   agentGroup,
   auth,
   authError,
@@ -54,22 +61,24 @@ const resources = {
   editor,
   electron,
   error,
+  'eval': eval_,
   file,
   home,
   hotkey,
-
   image,
   knowledgeBase,
-
   labs,
   marketAuth,
   memory,
+  messenger,
   metadata,
   migration,
   modelProvider,
   models,
+  notification,
   oauth,
   onboarding,
+  openInApp,
   plugin,
   portal,
   providers,
@@ -77,13 +86,14 @@ const resources = {
   setting,
   spend,
   subscription,
+  suggestQuestions,
+  taskTemplate,
   thread,
   tool,
   topic,
   ui,
+  video,
   welcome,
-
-  ...businessLocales,
 } as const;
 
 export default resources;

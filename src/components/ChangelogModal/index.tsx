@@ -5,7 +5,7 @@ import { ArrowUpRightIcon } from 'lucide-react';
 import { memo, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { ChangelogService } from '@/server/services/changelog';
+import { lambdaClient } from '@/libs/trpc/client';
 
 import ChangelogContent from './ChangelogContent';
 
@@ -23,9 +23,8 @@ const ChangelogModal = memo<ChangelogModalProps>(({ open, onClose, shouldLoad })
   useEffect(() => {
     if (shouldLoad && data.length === 0) {
       setIsLoading(true);
-      const changelogService = new ChangelogService();
-      changelogService
-        .getChangelogIndex()
+      lambdaClient.changelog.getIndex
+        .query()
         .then((result) => {
           setData(result);
         })
@@ -40,10 +39,10 @@ const ChangelogModal = memo<ChangelogModalProps>(({ open, onClose, shouldLoad })
 
   return open ? (
     <Modal
-      footer={null}
       maskClosable
-      onCancel={onClose}
+      footer={null}
       open={true}
+      width={800}
       styles={{
         body: {
           maxHeight: '70vh',
@@ -55,14 +54,14 @@ const ChangelogModal = memo<ChangelogModalProps>(({ open, onClose, shouldLoad })
           <Button
             icon={<ArrowUpRightIcon size={16} />}
             iconPlacement="end"
-            onClick={onClose}
             type="text"
+            onClick={onClose}
           >
             {t('changelog')}
           </Button>
         </Flexbox>
       }
-      width={800}
+      onCancel={onClose}
     >
       <Flexbox gap={16} padding={16} style={{ width: '100%' }}>
         {isLoading || data.length === 0 ? (

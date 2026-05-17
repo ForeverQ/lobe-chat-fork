@@ -1,9 +1,21 @@
 import debug from 'debug';
 
-import type { StreamChunkData, StreamEvent } from './StreamEventManager';
-import type { IStreamEventManager } from './types';
+import { type StreamChunkData, type StreamEvent } from './StreamEventManager';
+import { type IStreamEventManager } from './types';
 
 const log = debug('lobe-server:agent-runtime:in-memory-stream-event-manager');
+
+const getDefaultReasonDetail = (finalState: any, reason?: string): string => {
+  if (reason === 'error') {
+    return finalState?.error?.message || finalState?.error?.type || 'Agent runtime failed';
+  }
+
+  if (reason === 'interrupted') {
+    return finalState?.error?.message || 'Agent runtime interrupted';
+  }
+
+  return 'Agent runtime completed successfully';
+};
 
 type EventCallback = (events: StreamEvent[]) => void;
 
@@ -98,7 +110,7 @@ export class InMemoryStreamEventManager implements IStreamEventManager {
         operationId,
         phase: 'execution_complete',
         reason: reason || 'completed',
-        reasonDetail: reasonDetail || 'Agent runtime completed successfully',
+        reasonDetail: reasonDetail || getDefaultReasonDetail(finalState, reason),
       },
       stepIndex,
       type: 'agent_runtime_end',
@@ -128,6 +140,42 @@ export class InMemoryStreamEventManager implements IStreamEventManager {
   async disconnect(): Promise<void> {
     // In-memory implementation doesn't need to disconnect
     log('InMemoryStreamEventManager disconnected');
+  }
+
+  /**
+   * Subscribe to stream events (for SSE endpoint)
+   * Compatible with Redis StreamEventManager.subscribeStreamEvents
+   */
+  async subscribeStreamEvents(
+    operationId: string,
+    _lastEventId: string,
+    onEvents: (events: StreamEvent[]) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const unsubscribe = this.subscribe(operationId, (events) => {
+        onEvents(events);
+        // Check if agent_runtime_end was received — caller will handle closing
+        const hasEnd = events.some((e) => e.type === 'agent_runtime_end');
+        if (hasEnd) {
+          unsubscribe();
+          resolve();
+        }
+      });
+
+      // Handle abort signal
+      if (signal) {
+        const onAbort = () => {
+          unsubscribe();
+          resolve();
+        };
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+    });
   }
 
   /**
@@ -180,7 +228,6 @@ export class InMemoryStreamEventManager implements IStreamEventManager {
   ): Promise<StreamEvent> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
         unsubscribe();
         reject(new Error(`Timeout waiting for event ${eventType}`));
       }, timeout);

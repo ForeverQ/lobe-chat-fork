@@ -1,11 +1,11 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { documents, files, users } from '../../schemas';
-import { LobeChatDatabase } from '../../type';
+import { getTestDB } from '../../core/getTestDB';
+import { documentHistories, documents, files, users } from '../../schemas';
+import type { LobeChatDatabase } from '../../type';
 import { DocumentModel } from '../document';
 import { FileModel } from '../file';
-import { getTestDB } from '../../core/getTestDB';
 
 const serverDB: LobeChatDatabase = await getTestDB();
 
@@ -24,6 +24,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await serverDB.delete(users);
   await serverDB.delete(files);
+  await serverDB.delete(documentHistories);
   await serverDB.delete(documents);
 });
 
@@ -54,6 +55,51 @@ const createTestDocument = async (model: DocumentModel, fModel: FileModel, conte
 };
 
 describe('DocumentModel', () => {
+  describe('findOrCreateFolder', () => {
+    it('should create a new folder when none exists', async () => {
+      const folder = await documentModel.findOrCreateFolder('bookmark');
+
+      expect(folder).toBeDefined();
+      expect(folder.fileType).toBe('custom/folder');
+      expect(folder.filename).toBe('bookmark');
+      expect(folder.title).toBe('bookmark');
+      expect(folder.source).toBe('');
+      expect(folder.sourceType).toBe('api');
+      expect(folder.totalCharCount).toBe(0);
+      expect(folder.content).toBe('');
+    });
+
+    it('should return existing folder on second call', async () => {
+      const first = await documentModel.findOrCreateFolder('bookmark');
+      const second = await documentModel.findOrCreateFolder('bookmark');
+
+      expect(second.id).toBe(first.id);
+    });
+
+    it('should isolate folders by user', async () => {
+      const folder1 = await documentModel.findOrCreateFolder('bookmark');
+      const folder2 = await documentModel2.findOrCreateFolder('bookmark');
+
+      expect(folder1.id).not.toBe(folder2.id);
+    });
+
+    it('should support parentId for nested folders', async () => {
+      const parent = await documentModel.findOrCreateFolder('root');
+      const child = await documentModel.findOrCreateFolder('sub', parent.id);
+
+      expect(child.parentId).toBe(parent.id);
+      expect(child.id).not.toBe(parent.id);
+    });
+
+    it('should distinguish folders with same name but different parentId', async () => {
+      const topLevel = await documentModel.findOrCreateFolder('notes');
+      const parent = await documentModel.findOrCreateFolder('root');
+      const nested = await documentModel.findOrCreateFolder('notes', parent.id);
+
+      expect(topLevel.id).not.toBe(nested.id);
+    });
+  });
+
   describe('create', () => {
     it('should create a new document', async () => {
       const { id: fileId } = await fileModel.create({
@@ -133,6 +179,29 @@ describe('DocumentModel', () => {
       expect(result.total).toBe(2);
     });
 
+    it('should exclude agent-owned documents unless sourceTypes explicitly requests them', async () => {
+      await createTestDocument(documentModel, fileModel, 'Visible document');
+      await documentModel.create({
+        content: 'Agent document',
+        fileType: 'agent/document',
+        filename: 'agent-document',
+        source: 'agent-document://agent-1/agent-document',
+        sourceType: 'agent',
+        totalCharCount: 14,
+        totalLineCount: 1,
+      });
+
+      const defaultResult = await documentModel.query();
+
+      expect(defaultResult.items).toHaveLength(1);
+      expect(defaultResult.items[0].sourceType).not.toBe('agent');
+
+      const agentResult = await documentModel.query({ sourceTypes: ['agent'] });
+
+      expect(agentResult.items).toHaveLength(1);
+      expect(agentResult.items[0].sourceType).toBe('agent');
+    });
+
     it('should only return documents for the current user', async () => {
       await createTestDocument(documentModel, fileModel, 'User 1 document');
       await createTestDocument(documentModel2, fileModel2, 'User 2 document');
@@ -142,6 +211,134 @@ describe('DocumentModel', () => {
       expect(result.items).toHaveLength(1);
       expect(result.total).toBe(1);
       expect(result.items[0].content).toBe(null); // content is excluded in query
+    });
+
+    it('should filter documents by sourceTypes', async () => {
+      // Create documents with different source types
+      const { id: fileId1 } = await fileModel.create({
+        fileType: 'text/plain',
+        name: 'test1.txt',
+        size: 100,
+        url: 'https://example.com/test1.txt',
+      });
+      const file1 = await fileModel.findById(fileId1);
+      if (!file1) throw new Error('File not found');
+
+      const { id: fileId2 } = await fileModel.create({
+        fileType: 'text/html',
+        name: 'test2.html',
+        size: 200,
+        url: 'https://example.com/test2.html',
+      });
+      const file2 = await fileModel.findById(fileId2);
+      if (!file2) throw new Error('File not found');
+
+      const { id: fileId3 } = await fileModel.create({
+        fileType: 'application/json',
+        name: 'test3.json',
+        size: 300,
+        url: 'https://example.com/test3.json',
+      });
+      const file3 = await fileModel.findById(fileId3);
+      if (!file3) throw new Error('File not found');
+
+      await documentModel.create({
+        content: 'File document',
+        fileId: file1.id,
+        fileType: 'text/plain',
+        source: file1.url,
+        sourceType: 'file',
+        totalCharCount: 13,
+        totalLineCount: 1,
+      });
+
+      await documentModel.create({
+        content: 'Web document',
+        fileId: file2.id,
+        fileType: 'text/html',
+        source: 'https://example.com/page',
+        sourceType: 'web',
+        totalCharCount: 12,
+        totalLineCount: 1,
+      });
+
+      await documentModel.create({
+        content: 'API document',
+        fileId: file3.id,
+        fileType: 'application/json',
+        source: 'https://api.example.com/data',
+        sourceType: 'api',
+        totalCharCount: 12,
+        totalLineCount: 1,
+      });
+
+      // Query with sourceTypes filter for 'file' only
+      const fileResult = await documentModel.query({ sourceTypes: ['file'] });
+      expect(fileResult.items).toHaveLength(1);
+      expect(fileResult.total).toBe(1);
+      expect(fileResult.items[0].sourceType).toBe('file');
+
+      // Query with sourceTypes filter for 'web' and 'api'
+      const webApiResult = await documentModel.query({ sourceTypes: ['web', 'api'] });
+      expect(webApiResult.items).toHaveLength(2);
+      expect(webApiResult.total).toBe(2);
+      expect(
+        webApiResult.items.every((d) => d.sourceType === 'web' || d.sourceType === 'api'),
+      ).toBe(true);
+
+      // Query without sourceTypes filter should return all
+      const allResult = await documentModel.query();
+      expect(allResult.items).toHaveLength(3);
+      expect(allResult.total).toBe(3);
+    });
+
+    it('should filter documents by fileTypes', async () => {
+      const { id: fileId1 } = await fileModel.create({
+        fileType: 'text/plain',
+        name: 'test1.txt',
+        size: 100,
+        url: 'https://example.com/test1.txt',
+      });
+      const file1 = await fileModel.findById(fileId1);
+      if (!file1) throw new Error('File not found');
+
+      const { id: fileId2 } = await fileModel.create({
+        fileType: 'application/pdf',
+        name: 'test2.pdf',
+        size: 200,
+        url: 'https://example.com/test2.pdf',
+      });
+      const file2 = await fileModel.findById(fileId2);
+      if (!file2) throw new Error('File not found');
+
+      await documentModel.create({
+        content: 'Text document',
+        fileId: file1.id,
+        fileType: 'text/plain',
+        source: file1.url,
+        sourceType: 'file',
+        totalCharCount: 13,
+        totalLineCount: 1,
+      });
+
+      await documentModel.create({
+        content: 'PDF document',
+        fileId: file2.id,
+        fileType: 'application/pdf',
+        source: file2.url,
+        sourceType: 'file',
+        totalCharCount: 12,
+        totalLineCount: 1,
+      });
+
+      // Filter by fileTypes
+      const textResult = await documentModel.query({ fileTypes: ['text/plain'] });
+      expect(textResult.items).toHaveLength(1);
+      expect(textResult.total).toBe(1);
+
+      // Without filter returns all
+      const allResult = await documentModel.query();
+      expect(allResult.items).toHaveLength(2);
     });
 
     it('should return documents ordered by updatedAt desc', async () => {
@@ -218,6 +415,42 @@ describe('DocumentModel', () => {
       const unchanged = await documentModel.findById(documentId);
 
       expect(unchanged?.content).toBe('Original content');
+    });
+  });
+
+  describe('findBySlug', () => {
+    it('should find document by slug', async () => {
+      const { documentId } = await createTestDocument(
+        documentModel,
+        fileModel,
+        'Test content for slug',
+      );
+
+      // Get the document to find its auto-generated slug
+      const doc = await documentModel.findById(documentId);
+      expect(doc).toBeDefined();
+      expect(doc?.slug).toBeDefined();
+
+      const found = await documentModel.findBySlug(doc!.slug!);
+      expect(found).toBeDefined();
+      expect(found?.id).toBe(documentId);
+      expect(found?.content).toBe('Test content for slug');
+    });
+
+    it('should not find document from another user by slug', async () => {
+      const { documentId } = await createTestDocument(documentModel, fileModel, 'Test content');
+
+      const doc = await documentModel.findById(documentId);
+      expect(doc?.slug).toBeDefined();
+
+      // Try to find with another user's model
+      const found = await documentModel2.findBySlug(doc!.slug!);
+      expect(found).toBeUndefined();
+    });
+
+    it('should return undefined for non-existent slug', async () => {
+      const found = await documentModel.findBySlug('non-existent-slug');
+      expect(found).toBeUndefined();
     });
   });
 

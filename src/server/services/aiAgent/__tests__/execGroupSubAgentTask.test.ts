@@ -25,6 +25,7 @@ vi.mock('@/database/models/thread', () => ({
 vi.mock('@/database/models/agent', () => ({
   AgentModel: vi.fn().mockImplementation(() => ({
     getAgentConfig: vi.fn(),
+    queryAgents: vi.fn().mockResolvedValue([]),
   })),
 }));
 
@@ -48,6 +49,19 @@ vi.mock('@/database/models/topic', () => ({
   })),
 }));
 
+// Mock AgentService
+vi.mock('@/server/services/agent', () => ({
+  AgentService: vi.fn().mockImplementation(() => ({
+    getAgentConfig: vi.fn().mockResolvedValue({
+      chatConfig: {},
+      id: 'agent-1',
+      model: 'gpt-4',
+      plugins: [],
+      provider: 'openai',
+    }),
+  })),
+}));
+
 // Mock AgentRuntimeService
 vi.mock('@/server/services/agentRuntime', () => ({
   AgentRuntimeService: vi.fn().mockImplementation(() => ({
@@ -58,6 +72,24 @@ vi.mock('@/server/services/agentRuntime', () => ({
       success: true,
     }),
   })),
+}));
+
+// Mock MarketService
+vi.mock('@/server/services/market', () => ({
+  MarketService: vi.fn().mockImplementation(() => ({
+    getLobehubSkillManifests: vi.fn().mockResolvedValue([]),
+  })),
+}));
+
+// Mock KlavisService
+vi.mock('@/server/services/klavis', () => ({
+  KlavisService: vi.fn().mockImplementation(() => ({
+    getKlavisManifests: vi.fn().mockResolvedValue([]),
+  })),
+}));
+
+vi.mock('@/server/modules/ModelRuntime', () => ({
+  initModelRuntimeFromDB: vi.fn(),
 }));
 
 describe('AiAgentService.execSubAgentTask', () => {
@@ -180,11 +212,11 @@ describe('AiAgentService.execSubAgentTask', () => {
           topicId: 'topic-1',
         },
         autoStart: true,
+        hooks: expect.arrayContaining([
+          expect.objectContaining({ id: 'thread-metadata-update', type: 'afterStep' }),
+          expect.objectContaining({ id: 'thread-completion', type: 'onComplete' }),
+        ]),
         prompt: 'Test instruction',
-        stepCallbacks: expect.objectContaining({
-          onAfterStep: expect.any(Function),
-          onComplete: expect.any(Function),
-        }),
         userInterventionConfig: {
           approvalMode: 'headless',
         },
@@ -420,20 +452,21 @@ describe('AiAgentService.execSubAgentTask', () => {
         topicId: 'topic-1',
       });
 
-      // Verify that stepCallbacks was passed with onComplete
+      // Verify that hooks were passed with onComplete
       expect(execAgentSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          stepCallbacks: expect.objectContaining({
-            onComplete: expect.any(Function),
-          }),
+          hooks: expect.arrayContaining([
+            expect.objectContaining({ id: 'thread-completion', type: 'onComplete' }),
+          ]),
         }),
       );
 
-      // Get the onComplete callback
+      // Get the onComplete hook handler
       const callArgs = execAgentSpy.mock.calls[0][0];
-      const onComplete = callArgs.stepCallbacks?.onComplete;
+      const onCompleteHook = callArgs.hooks?.find((h: any) => h.id === 'thread-completion');
 
-      expect(onComplete).toBeDefined();
+      expect(onCompleteHook).toBeDefined();
+      expect(onCompleteHook!.handler).toBeInstanceOf(Function);
     });
   });
 });

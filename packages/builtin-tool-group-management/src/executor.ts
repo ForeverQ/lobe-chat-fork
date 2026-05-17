@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Lobe Group Management Executor
  *
@@ -6,20 +5,23 @@
  * Note: Member management (searchAgent, inviteAgent, createAgent, removeAgent)
  * is handled by group-agent-builder. This executor focuses on orchestration.
  */
-import {
+import type {
   BroadcastParams,
   CreateWorkflowParams,
   DelegateParams,
   ExecuteTaskParams,
   ExecuteTasksParams,
-  GroupManagementApiName,
-  GroupManagementIdentifier,
   InterruptParams,
   SpeakParams,
   SummarizeParams,
   VoteParams,
 } from '@lobechat/builtin-tool-group-management';
-import { BaseExecutor, type BuiltinToolContext, type BuiltinToolResult } from '@lobechat/types';
+import {
+  GroupManagementApiName,
+  GroupManagementIdentifier,
+} from '@lobechat/builtin-tool-group-management';
+import type { BuiltinToolContext, BuiltinToolResult } from '@lobechat/types';
+import { BaseExecutor } from '@lobechat/types';
 
 class GroupManagementExecutor extends BaseExecutor<typeof GroupManagementApiName> {
   readonly identifier = GroupManagementIdentifier;
@@ -124,16 +126,19 @@ class GroupManagementExecutor extends BaseExecutor<typeof GroupManagementApiName
     params: ExecuteTaskParams,
     ctx: BuiltinToolContext,
   ): Promise<BuiltinToolResult> => {
+    const { agentId, instruction, timeout, skipCallSupervisor, runInClient } = params;
+
     // Register afterCompletion callback to trigger async task execution after AgentRuntime completes
     // This follows the same pattern as speak/broadcast - trigger mode, not blocking
     if (ctx.groupOrchestration && ctx.agentId && ctx.registerAfterCompletion) {
       ctx.registerAfterCompletion(() =>
         ctx.groupOrchestration!.triggerExecuteTask({
-          agentId: params.agentId,
-          skipCallSupervisor: params.skipCallSupervisor,
+          agentId,
+          instruction,
+          runInClient,
+          skipCallSupervisor,
           supervisorAgentId: ctx.agentId!,
-          task: params.task,
-          timeout: params.timeout,
+          timeout,
           toolMessageId: ctx.messageId,
         }),
       );
@@ -141,12 +146,13 @@ class GroupManagementExecutor extends BaseExecutor<typeof GroupManagementApiName
 
     // Returns stop: true to indicate the supervisor should stop and let the task execute
     return {
-      content: `Triggered async task for agent "${params.agentId}".`,
+      content: `Triggered async task for agent "${agentId}"${runInClient ? ' (client-side)' : ''}.`,
       state: {
-        agentId: params.agentId,
-        skipCallSupervisor: params.skipCallSupervisor,
-        task: params.task,
-        timeout: params.timeout,
+        agentId,
+        instruction,
+        runInClient,
+        skipCallSupervisor,
+        timeout,
         type: 'executeAgentTask',
       },
       stop: true,

@@ -1,11 +1,11 @@
 import { ASYNC_TASK_TIMEOUT } from '@lobechat/business-config/server';
+import { RequestTrigger } from '@lobechat/types';
 import { TRPCError } from '@trpc/server';
 import { chunk } from 'es-toolkit/compat';
 import pMap from 'p-map';
 import { z } from 'zod';
 
-import { checkBudgetsUsage, checkEmbeddingUsage } from '@/business/server/trpc-middlewares/async';
-import { serverDBEnv } from '@/config/db';
+import { checkEmbeddingUsage } from '@/business/server/trpc-middlewares/async';
 import { DEFAULT_FILE_EMBEDDING_MODEL_ITEM } from '@/const/settings/knowledge';
 import { AsyncTaskModel } from '@/database/models/asyncTask';
 import { ChunkModel } from '@/database/models/chunk';
@@ -17,13 +17,10 @@ import { asyncAuthedProcedure, asyncRouter as router } from '@/libs/trpc/async';
 import { getServerDefaultFilesConfig } from '@/server/globalConfig';
 import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
 import { ChunkService } from '@/server/services/chunk';
+import { DocumentService } from '@/server/services/document';
 import { FileService } from '@/server/services/file';
-import {
-  AsyncTaskError,
-  AsyncTaskErrorType,
-  AsyncTaskStatus,
-  type IAsyncTaskError,
-} from '@/types/asyncTask';
+import { type IAsyncTaskError } from '@/types/asyncTask';
+import { AsyncTaskError, AsyncTaskErrorType, AsyncTaskStatus } from '@/types/asyncTask';
 import { safeParseJSON } from '@/utils/safeParseJSON';
 import { sanitizeUTF8 } from '@/utils/sanitizeUTF8';
 
@@ -35,6 +32,7 @@ const fileProcedure = asyncAuthedProcedure.use(async (opts) => {
       asyncTaskModel: new AsyncTaskModel(ctx.serverDB, ctx.userId),
       chunkModel: new ChunkModel(ctx.serverDB, ctx.userId),
       chunkService: new ChunkService(ctx.serverDB, ctx.userId),
+      documentService: new DocumentService(ctx.serverDB, ctx.userId),
       embeddingModel: new EmbeddingModel(ctx.serverDB, ctx.userId),
       fileModel: new FileModel(ctx.serverDB, ctx.userId),
       fileService: new FileService(ctx.serverDB, ctx.userId),
@@ -45,7 +43,6 @@ const fileProcedure = asyncAuthedProcedure.use(async (opts) => {
 export const fileRouter = router({
   embeddingChunks: fileProcedure
     .use(checkEmbeddingUsage)
-    .use(checkBudgetsUsage)
     .input(
       z.object({
         fileId: z.string(),
@@ -86,8 +83,8 @@ export const fileRouter = router({
 
           const startAt = Date.now();
 
-          const CHUNK_SIZE = 50;
-          const CONCURRENCY = 10;
+          const CHUNK_SIZE = fileEnv.EMBEDDING_BATCH_SIZE;
+          const CONCURRENCY = fileEnv.EMBEDDING_CONCURRENCY;
 
           const chunks = await ctx.chunkModel.getChunksTextByFileId(input.fileId);
           const requestArray = chunk(chunks, CHUNK_SIZE);
@@ -102,11 +99,14 @@ export const fileRouter = router({
                   provider,
                 );
 
-                const embeddings = await modelRuntime.embeddings({
-                  dimensions: 1024,
-                  input: chunks.map((c) => c.text),
-                  model,
-                });
+                const embeddings = await modelRuntime.embeddings(
+                  {
+                    dimensions: 1024,
+                    input: chunks.map((c) => c.text),
+                    model,
+                  },
+                  { metadata: { trigger: RequestTrigger.FileEmbedding }, user: ctx.userId },
+                );
 
                 const items: NewEmbeddingsItem[] =
                   embeddings?.map((e, idx) => ({
@@ -167,16 +167,56 @@ export const fileRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'File not found' });
       }
 
+      // Inline documents (custom/document) keep a mirror file row whose url is the
+      // `internal://document/placeholder` marker. Their content lives on documents.content
+      // and is intentionally not chunked — searching is handled by BM25 instead.
+      if (file.url.startsWith('internal://')) {
+        await ctx.asyncTaskModel.update(input.taskId, {
+          error: new AsyncTaskError(
+            AsyncTaskErrorType.TaskTriggerError,
+            'Inline documents (custom/document) do not require chunking; content is searched via BM25.',
+          ),
+          status: AsyncTaskStatus.Error,
+        });
+        return {
+          message: `File ${file.name}(${input.taskId}) is an inline document and was skipped`,
+          success: false,
+        };
+      }
+
       let content: Uint8Array | undefined;
       try {
         content = await ctx.fileService.getFileByteArray(file.url);
       } catch (e) {
         console.error(e);
-        // if file not found, delete it from db
-        if ((e as any).Code === 'NoSuchKey') {
-          await ctx.fileModel.delete(input.fileId, serverDBEnv.REMOVE_GLOBAL_FILE);
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'File not found' });
+        const errorCode = (e as any).Code;
+        // Storage returned NoSuchKey. Do NOT delete the file row — transient S3
+        // outages, IAM misconfig, or already-orphaned DB rows must not cascade
+        // into destroying chunks/embeddings/documents. Mark the task as Error
+        // so users see a clear message and can re-upload or retry.
+        if (errorCode === 'NoSuchKey') {
+          await ctx.asyncTaskModel.update(input.taskId, {
+            error: new AsyncTaskError(
+              AsyncTaskErrorType.TaskTriggerError,
+              'File content unavailable in storage. Verify storage access or re-upload.',
+            ),
+            status: AsyncTaskStatus.Error,
+          });
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'File content unavailable in storage.',
+          });
         }
+        // Other fetch errors (network, IAM, etc.) — mark the task as Error so
+        // the user surface stays consistent, then propagate.
+        await ctx.asyncTaskModel.update(input.taskId, {
+          error: new AsyncTaskError(
+            AsyncTaskErrorType.TaskTriggerError,
+            `Failed to fetch file content: ${(e as Error)?.message ?? errorCode ?? 'unknown error'}`,
+          ),
+          status: AsyncTaskStatus.Error,
+        });
+        throw e;
       }
 
       if (!content) return;
@@ -203,6 +243,17 @@ export const fileRouter = router({
           const chunkService = ctx.chunkService;
           // update the task status to processing
           await ctx.asyncTaskModel.update(input.taskId, { status: AsyncTaskStatus.Processing });
+
+          // parse file to document record first (for detailed content viewing)
+          try {
+            await ctx.documentService.parseFile(input.fileId);
+          } catch (e) {
+            // document parsing failure should not block chunking
+            console.warn(
+              '[parseFileToChunks] document parsing failed, continuing with chunking:',
+              e,
+            );
+          }
 
           // partition file to chunks
           const chunkResult = await chunkService.chunkContent({

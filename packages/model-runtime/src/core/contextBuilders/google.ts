@@ -1,13 +1,12 @@
-import {
+import type {
   Content,
   FunctionDeclaration,
-  Tool as GoogleFunctionCallTool,
   Part,
-  Type as SchemaType,
+  Tool as GoogleFunctionCallTool,
 } from '@google/genai';
 import { imageUrlToBase64 } from '@lobechat/utils';
 
-import { ChatCompletionTool, OpenAIChatMessage, UserMessageContentPart } from '../../types';
+import type { ChatCompletionTool, OpenAIChatMessage, UserMessageContentPart } from '../../types';
 import { safeParseJSON } from '../../utils/safeParseJSON';
 import { parseDataUri } from '../../utils/uriParser';
 
@@ -25,10 +24,13 @@ const isImageTypeSupported = (mimeType: string | null): boolean => {
 };
 
 /**
- * Magic thoughtSignature
- * @see https://ai.google.dev/gemini-api/docs/thought-signatures#model-behavior:~:text=context_engineering_is_the_way_to_go
+ * Magic thoughtSignature to bypass Gemini thought signature validation.
+ * Use `skip_thought_signature_validator` instead of `context_engineering_is_the_way_to_go`
+ * because Vertex AI only accepts `skip_thought_signature_validator`.
+ * @see https://ai.google.dev/gemini-api/docs/thought-signatures
+ * @see https://github.com/pydantic/pydantic-ai/issues/3881
  */
-export const GEMINI_MAGIC_THOUGHT_SIGNATURE = 'context_engineering_is_the_way_to_go';
+export const GEMINI_MAGIC_THOUGHT_SIGNATURE = 'skip_thought_signature_validator';
 
 /**
  * Convert OpenAI content part to Google Part format
@@ -120,13 +122,49 @@ export const buildGoogleMessage = async (
   // Handle assistant messages with tool_calls
   if (!!message.tool_calls) {
     return {
-      parts: message.tool_calls.map<Part>((tool) => ({
-        functionCall: {
-          args: safeParseJSON(tool.function.arguments)!,
-          name: tool.function.name,
-        },
-        thoughtSignature: tool.thoughtSignature,
-      })),
+      parts: message.tool_calls.map<Part>((tool) => {
+        const parsed = safeParseJSON(tool.function.arguments);
+        // Gemini's functionCall.args requires a plain object, same constraint
+        // as Anthropic's tool_use.input. See anthropic.ts for the full
+        // recovery rationale.
+        let args: Record<string, unknown> = {};
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          args = parsed as Record<string, unknown>;
+        } else if (
+          Array.isArray(parsed) &&
+          parsed.length > 0 &&
+          parsed[0] &&
+          typeof parsed[0] === 'object' &&
+          !Array.isArray(parsed[0])
+        ) {
+          args = parsed[0] as Record<string, unknown>;
+          console.warn(
+            '[google] functionCall.args recovered from array — parsed arguments was wrapped in []',
+            {
+              argumentsLength: tool.function.arguments?.length,
+              arrayLength: parsed.length,
+              name: tool.function.name,
+            },
+          );
+        } else if (parsed !== undefined) {
+          console.warn(
+            '[google] functionCall.args fallback to {} — parsed arguments is not a plain object',
+            {
+              argumentsLength: tool.function.arguments?.length,
+              name: tool.function.name,
+              parsedType: Array.isArray(parsed)
+                ? 'array'
+                : parsed === null
+                  ? 'null'
+                  : typeof parsed,
+            },
+          );
+        }
+        return {
+          functionCall: { args, name: tool.function.name },
+          thoughtSignature: tool.thoughtSignature,
+        };
+      }),
       role: 'model',
     };
   }
@@ -187,9 +225,28 @@ export const buildGoogleMessages = async (messages: OpenAIChatMessage[]): Promis
   const contents = await Promise.all(pools);
 
   // Filter out empty messages: contents.parts must not be empty.
-  const filteredContents = contents.filter(
+  const nonEmptyContents = contents.filter(
     (content: Content) => content.parts && content.parts.length > 0,
   );
+
+  // Merge consecutive functionResponse contents into a single Content.
+  // Vertex AI requires the number of functionResponse parts to equal
+  // the number of functionCall parts in the preceding model turn.
+  const filteredContents: Content[] = [];
+  for (const content of nonEmptyContents) {
+    const isFunctionResponse =
+      content.role === 'user' && content.parts?.every((p) => p.functionResponse);
+
+    const last = filteredContents.at(-1);
+    const lastIsFunctionResponse =
+      last?.role === 'user' && last.parts?.every((p) => p.functionResponse);
+
+    if (isFunctionResponse && lastIsFunctionResponse) {
+      last!.parts = [...(last!.parts || []), ...(content.parts || [])];
+    } else {
+      filteredContents.push(content);
+    }
+  }
 
   // Check if the last message is a tool message
   const lastMessage = messages.at(-1);
@@ -227,62 +284,105 @@ export const buildGoogleMessages = async (messages: OpenAIChatMessage[]): Promis
 };
 
 /**
- * Sanitize JSON Schema for Google GenAI compatibility
- * Google's API doesn't support certain JSON Schema keywords like 'const'
- * This function recursively processes the schema and converts unsupported keywords
+ * Recursively sanitize a JSON Schema to comply with Gemini proto constraints:
+ * - `enum` is only allowed on STRING type fields
+ * - `required` is only allowed on OBJECT type fields
+ *
+ * This handles the OpenAI→Gemini schema bridge where the upstream
+ * schema may place `enum` on non-STRING types (e.g. number, boolean)
+ * or `required` on non-OBJECT types.
+ *
+ * @see https://linear.app/lobehub/issue/LOBE-8661
  */
-const sanitizeSchemaForGoogle = (schema: Record<string, any>): Record<string, any> => {
+export const sanitizeGeminiSchema = (schema: any): any => {
   if (!schema || typeof schema !== 'object') return schema;
 
-  // Handle arrays
-  if (Array.isArray(schema)) {
-    return schema.map((item) => sanitizeSchemaForGoogle(item));
+  const sanitized = { ...schema };
+
+  // Determine if the schema type is (or includes) STRING / OBJECT.
+  // Handles both `type: 'string'` and nullable `type: ['string', 'null']`.
+  const isStringType = (t: unknown): boolean =>
+    typeof t === 'string' ? t === 'string' : Array.isArray(t) && t.includes('string');
+  const isObjectType = (t: unknown): boolean =>
+    typeof t === 'string' ? t === 'object' : Array.isArray(t) && t.includes('object');
+
+  // Strip enum from non-STRING types and empty enums
+  // Gemini proto: "enum: only allowed for STRING type"
+  if (sanitized.enum !== undefined) {
+    if (!isStringType(sanitized.type) || !Array.isArray(sanitized.enum) || sanitized.enum.length === 0) {
+      console.warn(
+        '[google] sanitizeGeminiSchema stripped enum — not allowed for non-STRING type or empty',
+        { type: sanitized.type, enumLength: sanitized.enum?.length },
+      );
+      delete sanitized.enum;
+    }
   }
 
-  const result: Record<string, any> = {};
-
-  for (const [key, value] of Object.entries(schema)) {
-    // Convert 'const' to 'enum' with single value (Google doesn't support 'const')
-    if (key === 'const') {
-      result['enum'] = [value];
-      continue;
-    }
-
-    // Recursively process nested objects
-    if (value && typeof value === 'object') {
-      result[key] = sanitizeSchemaForGoogle(value);
-    } else {
-      result[key] = value;
+  // Strip required from non-OBJECT types and empty required arrays
+  // Gemini proto: "required: only allowed for OBJECT type"
+  if (sanitized.required !== undefined) {
+    if (!isObjectType(sanitized.type) || !Array.isArray(sanitized.required) || sanitized.required.length === 0) {
+      console.warn(
+        '[google] sanitizeGeminiSchema stripped required — not allowed for non-OBJECT type or empty',
+        { type: sanitized.type, requiredLength: sanitized.required?.length },
+      );
+      delete sanitized.required;
     }
   }
 
-  return result;
+  // Recursively sanitize properties
+  if (sanitized.properties && typeof sanitized.properties === 'object') {
+    for (const key of Object.keys(sanitized.properties)) {
+      sanitized.properties[key] = sanitizeGeminiSchema(sanitized.properties[key]);
+    }
+  }
+
+  // Recursively sanitize items (for array types)
+  if (sanitized.items) {
+    sanitized.items = sanitizeGeminiSchema(sanitized.items);
+  }
+
+  // Recursively sanitize anyOf/oneOf/allOf combinators
+  for (const key of ['anyOf', 'oneOf', 'allOf']) {
+    if (Array.isArray(sanitized[key])) {
+      sanitized[key] = sanitized[key].map(sanitizeGeminiSchema);
+    }
+  }
+
+  // Recursively sanitize definitions/$defs — when a tool schema stores
+  // non-compliant constraints inside a referenced sub-schema the walker
+  // must reach into the definitions map as well.
+  for (const key of ['definitions', '$defs']) {
+    if (sanitized[key] && typeof sanitized[key] === 'object') {
+      for (const defKey of Object.keys(sanitized[key])) {
+        sanitized[key][defKey] = sanitizeGeminiSchema(sanitized[key][defKey]);
+      }
+    }
+  }
+
+  return sanitized;
 };
 
 /**
- * Convert ChatCompletionTool to Google FunctionDeclaration
+ * Convert ChatCompletionTool to Google FunctionDeclaration.
+ * Uses `parametersJsonSchema` to pass standard JSON Schema directly,
+ * avoiding Google's restrictive Schema subset (no $ref, nullable, const, etc.).
  */
 export const buildGoogleTool = (tool: ChatCompletionTool): FunctionDeclaration => {
   const functionDeclaration = tool.function;
   const parameters = functionDeclaration.parameters;
-  // refs: https://github.com/lobehub/lobe-chat/pull/5002
-  const rawProperties =
-    parameters?.properties && Object.keys(parameters.properties).length > 0
-      ? parameters.properties
-      : { dummy: { type: 'string' } }; // dummy property to avoid empty object
 
-  // Sanitize properties to remove unsupported JSON Schema keywords for Google
-  const properties = sanitizeSchemaForGoogle(rawProperties);
+  // refs: https://github.com/lobehub/lobe-chat/pull/5002
+  const hasProperties = parameters?.properties && Object.keys(parameters.properties).length > 0;
+
+  const jsonSchema = hasProperties
+    ? sanitizeGeminiSchema(parameters)
+    : { type: 'object', properties: { dummy: { type: 'string' } } };
 
   return {
     description: functionDeclaration.description,
     name: functionDeclaration.name,
-    parameters: {
-      description: parameters?.description,
-      properties: properties,
-      required: parameters?.required,
-      type: SchemaType.OBJECT,
-    },
+    parametersJsonSchema: jsonSchema,
   };
 };
 
@@ -294,9 +394,19 @@ export const buildGoogleTools = (
 ): GoogleFunctionCallTool[] | undefined => {
   if (!tools || tools.length === 0) return;
 
+  // Deduplicate by function name to prevent Vertex AI 400 error:
+  // "Duplicate function declaration found: xxx"
+  const seenToolNames = new Set<string>();
+  const uniqueTools = tools.filter((tool) => {
+    const name = tool.function.name;
+    if (seenToolNames.has(name)) return false;
+    seenToolNames.add(name);
+    return true;
+  });
+
   return [
     {
-      functionDeclarations: tools.map((tool) => buildGoogleTool(tool)),
+      functionDeclarations: uniqueTools.map((tool) => buildGoogleTool(tool)),
     },
   ];
 };

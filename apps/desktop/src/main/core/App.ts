@@ -1,25 +1,42 @@
-import { ElectronIPCEventHandler, ElectronIPCServer } from '@lobechat/electron-server-ipc';
+import os from 'node:os';
+import path from 'node:path';
+
+import type { ElectronIPCEventHandler } from '@lobechat/electron-server-ipc';
+import { ElectronIPCServer } from '@lobechat/electron-server-ipc';
 import { app, nativeTheme, protocol } from 'electron';
 import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
-import { macOS, windows } from 'electron-is';
-import os from 'node:os';
-import { join } from 'node:path';
+import * as electronIs from 'electron-is';
 
 import { name } from '@/../../package.json';
-import { buildDir } from '@/const/dir';
+import { binDir, buildDir } from '@/const/dir';
 import { isDev } from '@/const/env';
 import { ELECTRON_BE_PROTOCOL_SCHEME } from '@/const/protocol';
-import { IControlModule } from '@/controllers';
-import { IServiceModule } from '@/services';
+import type { IControlModule } from '@/controllers';
+import AuthCtr from '@/controllers/AuthCtr';
+import { generateCliWrapper, getCliWrapperDir } from '@/modules/cliEmbedding';
+import { ScreenCaptureManager } from '@/modules/screenCapture/ScreenCaptureManager';
+import {
+  astSearchDetectors,
+  browserAutomationDetectors,
+  cliAgentDetectors,
+  contentSearchDetectors,
+  fileSearchDetectors,
+  type IToolDetector,
+  runtimeEnvironmentDetectors,
+  type ToolCategory,
+} from '@/modules/toolDetectors';
+import type { IServiceModule } from '@/services';
 import { createLogger } from '@/utils/logger';
 
 import { BrowserManager } from './browser/BrowserManager';
 import { I18nManager } from './infrastructure/I18nManager';
 import { IoCContainer } from './infrastructure/IoCContainer';
+import { LocalFileProtocolManager } from './infrastructure/LocalFileProtocolManager';
 import { ProtocolManager } from './infrastructure/ProtocolManager';
 import { RendererUrlManager } from './infrastructure/RendererUrlManager';
 import { StaticFileServerManager } from './infrastructure/StaticFileServerManager';
 import { StoreManager } from './infrastructure/StoreManager';
+import { ToolDetectorManager } from './infrastructure/ToolDetectorManager';
 import { UpdaterManager } from './infrastructure/UpdaterManager';
 import { MenuManager } from './ui/MenuManager';
 import { ShortcutManager } from './ui/ShortcutManager';
@@ -46,6 +63,9 @@ export class App {
   staticFileServerManager: StaticFileServerManager;
   protocolManager: ProtocolManager;
   rendererUrlManager: RendererUrlManager;
+  localFileProtocolManager: LocalFileProtocolManager;
+  toolDetectorManager: ToolDetectorManager;
+  screenCaptureManager: ScreenCaptureManager;
   chromeFlags: string[] = ['OverlayScrollbar', 'FluentOverlayScrollbar', 'FluentScrollbar'];
 
   /**
@@ -71,14 +91,23 @@ export class App {
     logger.info(` RAM: ${Math.round(os.totalmem() / 1024 / 1024 / 1024)} GB`);
     logger.info(`PATH: ${app.getAppPath()}`);
     logger.info(` lng: ${app.getLocale()}`);
+    logger.info(` bin: ${binDir}`);
     logger.info('----------------------------------------------');
     logger.info('Starting LobeHub...');
+
+    // Append bundled binaries and CLI wrapper directories to PATH for tool resolution
+    const pathSep = process.platform === 'win32' ? ';' : ':';
+    process.env.PATH = `${process.env.PATH}${pathSep}${binDir}${pathSep}${getCliWrapperDir()}`;
 
     logger.debug('Initializing App');
     // Initialize store manager
     this.storeManager = new StoreManager(this);
 
     this.rendererUrlManager = new RendererUrlManager();
+    this.localFileProtocolManager = new LocalFileProtocolManager();
+    void this.localFileProtocolManager.approveWorkspaceRoots(
+      this.storeManager.get('localFileWorkspaceRoots', []),
+    );
     protocol.registerSchemesAsPrivileged([
       {
         privileges: {
@@ -91,6 +120,7 @@ export class App {
         scheme: ELECTRON_BE_PROTOCOL_SCHEME,
       },
       this.rendererUrlManager.protocolScheme,
+      this.localFileProtocolManager.protocolScheme,
     ]);
 
     // load controllers
@@ -119,10 +149,19 @@ export class App {
     this.trayManager = new TrayManager(this);
     this.staticFileServerManager = new StaticFileServerManager(this);
     this.protocolManager = new ProtocolManager(this);
+    this.toolDetectorManager = new ToolDetectorManager(this);
+    this.screenCaptureManager = new ScreenCaptureManager(this);
+
+    // Register built-in tool detectors
+    this.registerBuiltinToolDetectors();
 
     // Configure renderer loading strategy (dev server vs static export)
     // should register before app ready
     this.rendererUrlManager.configureRendererLoader();
+
+    // Serves arbitrary local files (e.g. project file previews) via
+    // `localfile://` to the renderer. Active in both dev and prod.
+    this.localFileProtocolManager.registerHandler();
 
     // initialize protocol handlers
     this.protocolManager.initialize();
@@ -158,6 +197,34 @@ export class App {
     }
   }
 
+  /**
+   * Register built-in tool detectors for content search and file search
+   */
+  private registerBuiltinToolDetectors() {
+    logger.debug('Registering built-in tool detectors');
+
+    const detectorCategories: Partial<Record<ToolCategory, IToolDetector[]>> = {
+      'runtime-environment': runtimeEnvironmentDetectors,
+      'cli-agents': cliAgentDetectors,
+      'ast-search': astSearchDetectors,
+      'browser-automation': browserAutomationDetectors,
+      'content-search': contentSearchDetectors,
+      'file-search': fileSearchDetectors,
+    };
+
+    for (const [category, detectors] of Object.entries(detectorCategories)) {
+      if (detectors) {
+        for (const detector of detectors) {
+          this.toolDetectorManager.register(detector, category as ToolCategory);
+        }
+      }
+    }
+
+    logger.info(
+      `Registered ${this.toolDetectorManager.getRegisteredTools().length} tool detectors`,
+    );
+  }
+
   bootstrap = async () => {
     logger.info('Bootstrapping application');
     // make single instance
@@ -176,6 +243,11 @@ export class App {
     // Initialize app
     await this.makeAppReady();
 
+    // Generate CLI wrapper for terminal usage
+    generateCliWrapper().catch((error) => {
+      logger.warn('Failed to generate CLI wrapper:', error);
+    });
+
     // Initialize i18n. Note: app.getLocale() must be called after app.whenReady() to get the correct value
     await this.i18n.init();
     this.menuManager.initialize();
@@ -186,12 +258,10 @@ export class App {
     // Initialize global shortcuts: globalShortcut must be called after app.whenReady()
     this.shortcutManager.initialize();
 
-    this.browserManager.initializeBrowsers();
+    await this.browserManager.initializeBrowsers();
 
-    // Initialize tray manager
-    if (process.platform === 'win32') {
-      this.trayManager.initializeTrays();
-    }
+    // Initialize tray manager on all platforms (macOS menu bar, Windows / Linux tray).
+    this.trayManager.initializeTrays();
 
     // Initialize updater manager
     await this.updaterManager.initialize();
@@ -200,8 +270,8 @@ export class App {
     this.isQuiting = false;
 
     app.on('window-all-closed', () => {
-      if (windows()) {
-        logger.info('All windows closed, quitting application (Windows)');
+      if (electronIs.windows() || process.platform === 'linux') {
+        logger.info(`All windows closed, quitting application (${process.platform})`);
         app.quit();
       }
     });
@@ -251,6 +321,14 @@ export class App {
   private onActivate = () => {
     logger.debug('Application activated');
     this.browserManager.showMainWindow();
+
+    // Trigger proactive token refresh on app activation (respects 6-hour interval)
+    const authCtr = this.getController(AuthCtr);
+    if (authCtr) {
+      authCtr.onAppActivate().catch((error) => {
+        logger.error('Error during app activation token refresh:', error);
+      });
+    }
   };
 
   /**
@@ -354,8 +432,8 @@ export class App {
 
     logger.debug('Setting up dev branding');
     app.setName('lobehub-desktop-dev');
-    if (macOS()) {
-      app.dock!.setIcon(join(buildDir, 'icon-dev.png'));
+    if (electronIs.macOS()) {
+      app.dock!.setIcon(path.join(buildDir, 'icon-dev.png'));
     }
   };
 

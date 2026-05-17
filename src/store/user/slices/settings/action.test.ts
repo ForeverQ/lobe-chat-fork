@@ -1,14 +1,12 @@
 import { DEFAULT_SETTINGS } from '@lobechat/config';
-import { DEFAULT_AGENT } from '@lobechat/const';
-import { act, renderHook, waitFor } from '@testing-library/react';
-import type { PartialDeep } from 'type-fest';
+import { act, renderHook } from '@testing-library/react';
+import { type PartialDeep } from 'type-fest';
 import { describe, expect, it, vi } from 'vitest';
-import { withSWR } from '~test-utils';
 
 import { userService } from '@/services/user';
 import { useUserStore } from '@/store/user';
-import { LobeAgentSettings } from '@/types/session';
-import { UserSettings } from '@/types/user/settings';
+import { type LobeAgentSettings } from '@/types/session';
+import { type UserSettings } from '@/types/user/settings';
 import { merge } from '@/utils/merge';
 
 vi.mock('zustand/traditional');
@@ -126,6 +124,28 @@ describe('SettingsAction', () => {
       // Assert that updateUserSettings was called with the merged agent settings
       expect(userService.updateUserSettings).toHaveBeenCalledWith(
         { defaultAgent: updatedAgent },
+        expect.any(AbortSignal),
+      );
+    });
+
+    it('should persist default agent model and provider together', async () => {
+      const { result } = renderHook(() => useUserStore());
+
+      await act(async () => {
+        await result.current.updateDefaultAgent({
+          config: { model: 'claude-opus-4-6' },
+        });
+      });
+
+      expect(userService.updateUserSettings).toHaveBeenLastCalledWith(
+        {
+          defaultAgent: {
+            config: {
+              model: 'claude-opus-4-6',
+              provider: DEFAULT_SETTINGS.defaultAgent.config.provider,
+            },
+          },
+        },
         expect.any(AbortSignal),
       );
     });

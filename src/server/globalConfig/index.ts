@@ -8,6 +8,7 @@ import { fileEnv } from '@/envs/file';
 import { imageEnv } from '@/envs/image';
 import { knowledgeEnv } from '@/envs/knowledge';
 import { langfuseEnv } from '@/envs/langfuse';
+import { toolsEnv } from '@/envs/tools';
 import { parseSSOProviders } from '@/libs/better-auth/utils/server';
 import { parseSystemAgent } from '@/server/globalConfig/parseSystemAgent';
 import { type GlobalServerConfig } from '@/types/serverConfig';
@@ -42,13 +43,22 @@ export const getServerGlobalConfig = async () => {
         enabledKey: 'ENABLED_AZURE_OPENAI',
         withDeploymentName: true,
       },
+      azureai: {
+        withDeploymentName: true,
+      },
       bedrock: {
         enabledKey: 'ENABLED_AWS_BEDROCK',
         modelListKey: 'AWS_BEDROCK_MODEL_LIST',
       },
+      deepseek: {
+        enabled: true,
+      },
       giteeai: {
         enabledKey: 'ENABLED_GITEE_AI',
         modelListKey: 'GITEE_AI_MODEL_LIST',
+      },
+      kimicodingplan: {
+        withDeploymentName: true,
       },
       lmstudio: {
         fetchOnClient: isDesktop ? false : undefined,
@@ -63,6 +73,9 @@ export const getServerGlobalConfig = async () => {
       qwen: {
         withDeploymentName: true,
       },
+      spark: {
+        withDeploymentName: true,
+      },
       tencentcloud: {
         enabledKey: 'ENABLED_TENCENT_CLOUD',
         modelListKey: 'TENCENT_CLOUD_MODEL_LIST',
@@ -70,19 +83,37 @@ export const getServerGlobalConfig = async () => {
       volcengine: {
         withDeploymentName: true,
       },
+      volcenginecodingplan: {
+        withDeploymentName: true,
+      },
     }),
     defaultAgent: {
       config: parseAgentConfig(DEFAULT_AGENT_CONFIG),
     },
+    disableEmailPassword: authEnv.AUTH_DISABLE_EMAIL_PASSWORD,
     enableBusinessFeatures: ENABLE_BUSINESS_FEATURES,
     enableEmailVerification: authEnv.AUTH_EMAIL_VERIFICATION,
     enableKlavis: !!klavisEnv.KLAVIS_API_KEY,
     enableLobehubSkill: !!(appEnv.MARKET_TRUSTED_CLIENT_SECRET && appEnv.MARKET_TRUSTED_CLIENT_ID),
-    enableMagicLink: authEnv.ENABLE_MAGIC_LINK,
+    enableMagicLink: authEnv.AUTH_ENABLE_MAGIC_LINK,
     enableMarketTrustedClient: !!(
       appEnv.MARKET_TRUSTED_CLIENT_SECRET && appEnv.MARKET_TRUSTED_CLIENT_ID
     ),
     enableUploadFileToServer: !!fileEnv.S3_SECRET_ACCESS_KEY,
+    enableVisualUnderstanding: !!(
+      toolsEnv.VISUAL_UNDERSTANDING_PROVIDER && toolsEnv.VISUAL_UNDERSTANDING_MODEL
+    ),
+    ...(toolsEnv.VISUAL_UNDERSTANDING_PROVIDER && toolsEnv.VISUAL_UNDERSTANDING_MODEL
+      ? {
+          visualUnderstanding: {
+            model: toolsEnv.VISUAL_UNDERSTANDING_MODEL,
+            provider: toolsEnv.VISUAL_UNDERSTANDING_PROVIDER,
+          },
+        }
+      : undefined),
+
+    // Expose Agent Gateway URL to client (used by hetero agents; also required for queue mode)
+    ...(appEnv.AGENT_GATEWAY_URL ? { agentGatewayUrl: appEnv.AGENT_GATEWAY_URL } : undefined),
 
     image: cleanObject({
       defaultImageNum: imageEnv.AI_IMAGE_DEFAULT_IMAGE_NUM,

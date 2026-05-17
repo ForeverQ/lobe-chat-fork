@@ -1,4 +1,4 @@
-import { ModelParamsSchema } from 'model-bank';
+import type { ModelParamsSchema } from 'model-bank';
 
 // Common parameters for Imagen models
 export const imagenBaseParameters: ModelParamsSchema = {
@@ -10,6 +10,7 @@ export const imagenBaseParameters: ModelParamsSchema = {
 };
 
 export const NANO_BANANA_ASPECT_RATIOS = [
+  'auto',
   '1:1', // 1024x1024 / 2048x2048 / 4096x4096
   '2:3', // 848x1264 / 1696x2528 / 3392x5056
   '3:2', // 1264x848 / 2528x1696 / 5056x3392
@@ -24,7 +25,7 @@ export const NANO_BANANA_ASPECT_RATIOS = [
 
 export const nanoBananaParameters: ModelParamsSchema = {
   aspectRatio: {
-    default: '1:1',
+    default: 'auto',
     enum: NANO_BANANA_ASPECT_RATIOS,
   },
   imageUrls: {
@@ -35,7 +36,7 @@ export const nanoBananaParameters: ModelParamsSchema = {
 
 export const nanoBananaProParameters: ModelParamsSchema = {
   aspectRatio: {
-    default: '1:1',
+    default: 'auto',
     enum: NANO_BANANA_ASPECT_RATIOS,
   },
   imageUrls: {
@@ -48,11 +49,56 @@ export const nanoBananaProParameters: ModelParamsSchema = {
   },
 };
 
+export const NANO_BANANA_2_ASPECT_RATIOS = [
+  ...NANO_BANANA_ASPECT_RATIOS,
+  '1:4',
+  '4:1',
+  '1:8',
+  '8:1',
+];
+
+export const nanoBanana2Parameters: ModelParamsSchema = {
+  aspectRatio: {
+    default: 'auto',
+    enum: NANO_BANANA_2_ASPECT_RATIOS,
+  },
+  imageUrls: {
+    default: [],
+  },
+  prompt: { default: '' },
+  resolution: {
+    default: '1K',
+    enum: ['512', '1K', '2K', '4K'],
+  },
+};
+
 export const gptImage1Schema = {
-  imageUrls: { default: [], maxCount: 1, maxFileSize: 5 },
+  imageUrls: { default: [], maxCount: 1, maxFileSize: 5 * 1024 * 1024 },
   prompt: { default: '' },
   size: {
     default: 'auto',
     enum: ['auto', '1024x1024', '1536x1024', '1024x1536'],
+  },
+};
+
+// gpt-image-2 accepts any resolution satisfying: max edge ≤ 3840px, both edges
+// multiples of 16px, aspect ratio ≤ 3:1, pixels between 655,360 and 8,294,400.
+// Until the schema/UI supports free-form W×H input, we expose the official
+// "Popular sizes" list from https://developers.openai.com/docs/guides/image-generation.
+export const gptImage2Schema = {
+  imageUrls: { default: [], maxCount: 1, maxFileSize: 5 * 1024 * 1024 },
+  prompt: { default: '' },
+  size: {
+    default: 'auto',
+    enum: [
+      'auto',
+      '1024x1024',
+      '1536x1024',
+      '1024x1536',
+      '2048x2048',
+      '2048x1152',
+      '3840x2160',
+      '2160x3840',
+    ],
   },
 };

@@ -1,25 +1,35 @@
-import { memo, useEffect, useRef } from 'react';
+import { HtmlPreview } from '@lobehub/ui';
+import { memo } from 'react';
 
 interface HTMLRendererProps {
+  animated?: boolean;
   height?: string;
   htmlContent: string;
   width?: string;
 }
-const HTMLRenderer = memo<HTMLRendererProps>(({ htmlContent, width = '100%', height = '100%' }) => {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  useEffect(() => {
-    if (!iframeRef.current) return;
+const hideHtmlPreviewActions = () => null;
 
-    const doc = iframeRef.current.contentDocument;
-    if (!doc) return;
-
-    doc.open();
-    doc.write(htmlContent);
-    doc.close();
-  }, [htmlContent]);
-
-  return <iframe ref={iframeRef} style={{ border: 'none', height, width }} title="html-renderer" />;
-});
+const HTMLRenderer = memo<HTMLRendererProps>(
+  ({ animated, htmlContent, width = '100%', height = '100%' }) => {
+    return (
+      <HtmlPreview
+        actionsRender={hideHtmlPreviewActions}
+        animated={animated}
+        copyable={false}
+        downloadable={false}
+        shadow={false}
+        style={{ height, minHeight: 0, overflow: 'hidden', width }}
+        variant={'borderless'}
+        styles={{
+          content: { height: '100%' },
+          iframe: { height: '100%' },
+        }}
+      >
+        {htmlContent}
+      </HtmlPreview>
+    );
+  },
+);
 
 export default HTMLRenderer;

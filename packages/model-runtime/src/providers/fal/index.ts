@@ -1,12 +1,12 @@
 import { fal } from '@fal-ai/client';
 import debug from 'debug';
 import { pick } from 'es-toolkit/compat';
-import { RuntimeImageGenParamsValue } from 'model-bank';
-import { ClientOptions } from 'openai';
+import type { RuntimeImageGenParamsValue } from 'model-bank';
+import type { ClientOptions } from 'openai';
 
-import { LobeRuntimeAI } from '../../core/BaseAI';
+import type { LobeRuntimeAI } from '../../core/BaseAI';
 import { AgentRuntimeErrorType } from '../../types/error';
-import { CreateImagePayload, CreateImageResponse } from '../../types/image';
+import type { CreateImagePayload, CreateImageResponse } from '../../types/image';
 import { AgentRuntimeError } from '../../utils/createError';
 
 // Create debug logger
@@ -101,6 +101,22 @@ export class LobeFalAI implements LobeRuntimeAI {
         throw AgentRuntimeError.createError(AgentRuntimeErrorType.InvalidProviderAPIKey, {
           error,
         });
+      }
+
+      // 422 ValidationError with content_policy_violation — show a clean message
+      if (error instanceof Error && 'status' in error && error.status === 422) {
+        const body = 'body' in error ? (error as any).body : undefined;
+        const hasContentPolicyViolation =
+          Array.isArray(body?.detail) &&
+          body.detail.some((d: any) => d.type === 'content_policy_violation');
+
+        if (hasContentPolicyViolation) {
+          throw AgentRuntimeError.createError(AgentRuntimeErrorType.ProviderBizError, {
+            error,
+            message:
+              'The request content violates content policy. Please modify your prompt and try again.',
+          });
+        }
       }
 
       throw AgentRuntimeError.createError(AgentRuntimeErrorType.ProviderBizError, { error });

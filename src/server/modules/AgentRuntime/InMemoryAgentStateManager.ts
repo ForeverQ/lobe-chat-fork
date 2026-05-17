@@ -1,8 +1,8 @@
-import type { AgentState } from '@lobechat/agent-runtime';
+import { type AgentState } from '@lobechat/agent-runtime';
 import debug from 'debug';
 
-import type { AgentOperationMetadata, StepResult } from './AgentStateManager';
-import type { IAgentStateManager } from './types';
+import { type AgentOperationMetadata, type StepResult } from './AgentStateManager';
+import { type IAgentStateManager } from './types';
 
 const log = debug('lobe-server:agent-runtime:in-memory-state-manager');
 
@@ -45,7 +45,9 @@ export class InMemoryAgentStateManager implements IAgentStateManager {
 
   async saveStepResult(operationId: string, stepResult: StepResult): Promise<void> {
     // Save latest state
-    this.states.set(operationId, structuredClone(stepResult.newState));
+    // Use JSON round-trip instead of structuredClone to safely handle
+    // non-cloneable objects (e.g. DOM ErrorEvent from Neon DB errors)
+    this.states.set(operationId, JSON.parse(JSON.stringify(stepResult.newState)));
 
     // Save step history
     let stepHistory = this.steps.get(operationId);
@@ -211,6 +213,18 @@ export class InMemoryAgentStateManager implements IAgentStateManager {
     }
 
     return stats;
+  }
+
+  async tryClaimStep(
+    _operationId: string,
+    _stepIndex: number,
+    _ttlSeconds?: number,
+  ): Promise<boolean> {
+    return true;
+  }
+
+  async releaseStepLock(_operationId: string, _stepIndex: number): Promise<void> {
+    // noop
   }
 
   async disconnect(): Promise<void> {

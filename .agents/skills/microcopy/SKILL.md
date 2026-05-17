@@ -1,30 +1,40 @@
 ---
 name: microcopy
 description: UI copy and microcopy guidelines. Use when writing UI text, buttons, error messages, empty states, onboarding, or any user-facing copy. Triggers on i18n translation, UI text writing, or copy improvement tasks. Supports both Chinese and English.
+user-invocable: false
 ---
 
 # LobeHub UI Microcopy Guidelines
+
+This file is the quick-reference summary. For full prompt-style guidelines with extensive examples (anti-patterns, tone matrices, scenario walk-throughs), load the language-specific reference:
+
+- **中文文案** — [`references/zh.md`](./references/zh.md)
+- **English copy** — [`references/en.md`](./references/en.md)
 
 Brand: **Where Agents Collaborate** - Focus on collaborative agent system, not just "generation".
 
 ## Fixed Terminology
 
-| Chinese | English |
-|---------|---------|
-| 空间 | Workspace |
-| 助理 | Agent |
-| 群组 | Group |
-| 上下文 | Context |
-| 记忆 | Memory |
-| 连接器 | Integration |
-| 技能 | Skill |
-| 助理档案 | Agent Profile |
-| 话题 | Topic |
-| 文稿 | Page |
-| 社区 | Community |
-| 资源 | Resource |
-| 库 | Library |
-| 模型服务商 | Provider |
+| Chinese    | English       |
+| ---------- | ------------- |
+| 空间       | Workspace     |
+| 助理       | Agent         |
+| 群组       | Group         |
+| 上下文     | Context       |
+| 记忆       | Memory        |
+| 连接器     | Integration   |
+| 技能       | Skill         |
+| 助理档案   | Agent Profile |
+| 话题       | Topic         |
+| 文稿       | Page          |
+| 社区       | Community     |
+| 资源       | Resource      |
+| 库         | Library       |
+| 模型服务商 | Provider      |
+| 评测       | Evaluation    |
+| 基准       | Benchmark     |
+| 数据集     | Dataset       |
+| 用例       | Test Case     |
 
 ## Brand Principles
 
@@ -47,6 +57,7 @@ Key moments: **70/30** (first-time, empty state, failures, long waits)
 **Hard cap**: At most half sentence of warmth, followed by clear next step.
 
 **Order**:
+
 1. Acknowledge situation (no judgment)
 2. Restore control (pause/replay/edit/undo/clear Memory)
 3. Provide next action
@@ -56,24 +67,29 @@ Key moments: **70/30** (first-time, empty state, failures, long waits)
 ## Patterns
 
 **Getting started**:
+
 - "Starting with one sentence is enough. Describe your goal."
 - "Not sure where to begin? Tell me the outcome."
 
 **Long wait**:
+
 - "Running… You can switch tasks—I'll notify you when done."
 - "This may take a few minutes. To speed up: reduce Context / switch model."
 
 **Failure**:
+
 - "That didn't run through. Retry, or view details to fix."
 - "Connection failed. Re-authorize in Settings, or try again later."
 
 **Collaboration**:
+
 - "Align everyone to the same Context."
 - "Different opinions are fine. Write the goal first."
 
 ## Errors/Exceptions
 
 Must include:
+
 1. **What happened**
 2. (Optional) **Why**
 3. **What user can do next**

@@ -1,30 +1,36 @@
 'use client';
 
-import { BUILTIN_AGENT_SLUGS } from '@lobechat/builtin-agents';
 import { EditorProvider } from '@lobehub/editor/react';
 import { Flexbox } from '@lobehub/ui';
 import { cssVar } from 'antd-style';
-import { type FC, memo, useEffect } from 'react';
+import type { FC, ReactNode } from 'react';
+import { memo } from 'react';
 
-import Loading from '@/components/Loading/BrandTextLoading';
 import DiffAllToolbar from '@/features/EditorCanvas/DiffAllToolbar';
 import WideScreenContainer from '@/features/WideScreenContainer';
 import { useRegisterFilesHotkeys } from '@/hooks/useHotkeys';
-import { useAgentStore } from '@/store/agent';
-import { builtinAgentSelectors } from '@/store/agent/selectors';
-import { useDocumentStore } from '@/store/document';
-import { editorSelectors } from '@/store/document/slices/editor';
 import { usePageStore } from '@/store/page';
 import { StyleSheet } from '@/utils/styles';
 
-import Copilot from './Copilot';
 import EditorCanvas from './EditorCanvas';
 import Header from './Header';
-import PageAgentProvider from './PageAgentProvider';
+import { PageAgentProvider } from './PageAgentProvider';
 import { PageEditorProvider } from './PageEditorProvider';
 import PageTitle from './PageTitle';
-import TitleSection from './TitleSection';
+import RightPanel from './RightPanel';
 import { usePageEditorStore } from './store';
+import TitleSection from './TitleSection';
+
+/**
+ * Header slot for PageEditor.
+ * - `undefined` (default): render the built-in `<Header />`
+ * - `null`: render no header
+ * - any other ReactNode: render the provided node in place of the built-in header
+ *
+ * Custom headers are rendered inside the PageEditor provider tree, so they can
+ * call hooks like `usePageEditorStore` and reuse internal pieces such as `useMenu`.
+ */
+type PageEditorHeader = ReactNode | null;
 
 const styles = StyleSheet.create({
   contentWrapper: {
@@ -44,6 +50,13 @@ const styles = StyleSheet.create({
 
 interface PageEditorProps {
   emoji?: string;
+  /**
+   * When true, the header spans the full editor width above the body and the
+   * right panel only fills the body area. Defaults to false (header sits in
+   * the left column only, right panel runs floor-to-ceiling).
+   */
+  fullWidthHeader?: boolean;
+  header?: PageEditorHeader;
   knowledgeBaseId?: string;
   onBack?: () => void;
   onDelete?: () => void;
@@ -55,58 +68,65 @@ interface PageEditorProps {
   title?: string;
 }
 
-const PageEditorCanvas = memo(() => {
+interface PageEditorCanvasProps {
+  fullWidthHeader?: boolean;
+  header?: PageEditorHeader;
+}
+
+const PageEditorCanvas = memo<PageEditorCanvasProps>(({ header, fullWidthHeader }) => {
   const editor = usePageEditorStore((s) => s.editor);
   const documentId = usePageEditorStore((s) => s.documentId);
-
-  // Get isDirty from DocumentStore
-  const isDirty = useDocumentStore((s) =>
-    documentId ? editorSelectors.isDirty(documentId)(s) : false,
-  );
 
   // Register Files scope and save document hotkey
   useRegisterFilesHotkeys();
 
-  // Warn user before leaving page with unsaved changes
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (isDirty) {
-        // Prevent default and show browser confirmation dialog
-        e.preventDefault();
-        // Most modern browsers require returnValue to be set
-        e.returnValue = '';
-      }
-    };
+  const headerSlot = header === undefined ? <Header /> : header;
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
+  const editorPane = (
+    <Flexbox flex={1} height={'100%'} style={styles.editorContainer}>
+      {!fullWidthHeader && headerSlot}
+      <Flexbox horizontal height={'100%'} style={styles.contentWrapper} width={'100%'}>
+        <WideScreenContainer wrapperStyle={{ cursor: 'text' }} onClick={() => editor?.focus()}>
+          <Flexbox flex={1} style={styles.editorContent}>
+            <TitleSection />
+            <EditorCanvas />
+          </Flexbox>
+        </WideScreenContainer>
+      </Flexbox>
+      {documentId && <DiffAllToolbar documentId={documentId} editor={editor} />}
+    </Flexbox>
+  );
 
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [isDirty]);
+  if (fullWidthHeader) {
+    return (
+      <>
+        <PageTitle />
+        <Flexbox
+          height={'100%'}
+          style={{ backgroundColor: cssVar.colorBgContainer }}
+          width={'100%'}
+        >
+          {headerSlot}
+          <Flexbox horizontal flex={1} style={{ minHeight: 0 }} width={'100%'}>
+            {editorPane}
+            <RightPanel />
+          </Flexbox>
+        </Flexbox>
+      </>
+    );
+  }
 
   return (
     <>
       <PageTitle />
       <Flexbox
-        height={'100%'}
         horizontal
+        height={'100%'}
         style={{ backgroundColor: cssVar.colorBgContainer }}
         width={'100%'}
       >
-        <Flexbox flex={1} height={'100%'} style={styles.editorContainer}>
-          <Header />
-          <Flexbox height={'100%'} horizontal style={styles.contentWrapper} width={'100%'}>
-            <WideScreenContainer onClick={() => editor?.focus()} wrapperStyle={{ cursor: 'text' }}>
-              <Flexbox flex={1} style={styles.editorContent}>
-                <TitleSection />
-                <EditorCanvas />
-              </Flexbox>
-            </WideScreenContainer>
-          </Flexbox>
-          {documentId && <DiffAllToolbar documentId={documentId} editor={editor!} />}
-        </Flexbox>
-        <Copilot />
+        {editorPane}
+        <RightPanel />
       </Flexbox>
     </>
   );
@@ -119,6 +139,8 @@ const PageEditorCanvas = memo(() => {
  */
 export const PageEditor: FC<PageEditorProps> = ({
   pageId,
+  header,
+  fullWidthHeader,
   knowledgeBaseId,
   onDocumentIdChange,
   onEmojiChange,
@@ -128,31 +150,24 @@ export const PageEditor: FC<PageEditorProps> = ({
   title,
   emoji,
 }) => {
-  const useInitBuiltinAgent = useAgentStore((s) => s.useInitBuiltinAgent);
-  const pageAgentId = useAgentStore(builtinAgentSelectors.pageAgentId);
-
-  useInitBuiltinAgent(BUILTIN_AGENT_SLUGS.pageAgent);
-
   const deletePage = usePageStore((s) => s.deletePage);
 
-  if (!pageAgentId) return <Loading debugId="PageEditor > PageAgent Init" />;
-
   return (
-    <PageAgentProvider pageAgentId={pageAgentId}>
+    <PageAgentProvider>
       <EditorProvider>
         <PageEditorProvider
           emoji={emoji}
           knowledgeBaseId={knowledgeBaseId}
+          pageId={pageId}
+          title={title}
           onBack={onBack}
           onDelete={() => deletePage(pageId || '')}
           onDocumentIdChange={onDocumentIdChange}
           onEmojiChange={onEmojiChange}
           onSave={onSave}
           onTitleChange={onTitleChange}
-          pageId={pageId}
-          title={title}
         >
-          <PageEditorCanvas />
+          <PageEditorCanvas fullWidthHeader={fullWidthHeader} header={header} />
         </PageEditorProvider>
       </EditorProvider>
     </PageAgentProvider>

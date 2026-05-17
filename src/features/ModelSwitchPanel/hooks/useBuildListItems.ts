@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 
-import type { EnabledProviderWithModels } from '@/types/aiProvider';
+import { type EnabledProviderWithModels } from '@/types/aiProvider';
 
-import type { GroupMode, ListItem, ModelWithProviders } from '../types';
+import { type GroupMode, type ListItem, type ModelWithProviders } from '../types';
 
 export const useBuildListItems = (
   enabledList: EnabledProviderWithModels[],
@@ -70,15 +70,13 @@ export const useBuildListItems = (
         });
       }
 
-      return modelArray
-        .sort((a, b) => a.displayName.localeCompare(b.displayName))
-        .map((data) => ({
-          data,
-          type:
-            data.providers.length === 1
-              ? ('model-item-single' as const)
-              : ('model-item-multiple' as const),
-        }));
+      return modelArray.map((data) => ({
+        data,
+        type:
+          data.providers.length === 1
+            ? ('model-item-single' as const)
+            : ('model-item-multiple' as const),
+      }));
     } else {
       const items: ListItem[] = [];
 

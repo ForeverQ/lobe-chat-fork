@@ -2,12 +2,16 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { getTestDB } from '../../core/getTestDB';
-import { NewAgent, agents } from '../../schemas/agent';
-import { NewFile, files } from '../../schemas/file';
+import { documents } from '../../schemas';
+import type { NewAgent } from '../../schemas/agent';
+import { agents } from '../../schemas/agent';
+import type { NewFile } from '../../schemas/file';
+import { files, knowledgeBases } from '../../schemas/file';
 import { messages } from '../../schemas/message';
-import { NewTopic, topics } from '../../schemas/topic';
+import type { NewTopic } from '../../schemas/topic';
+import { topics } from '../../schemas/topic';
 import { users } from '../../schemas/user';
-import { LobeChatDatabase } from '../../type';
+import type { LobeChatDatabase } from '../../type';
 import { SearchRepo } from './index';
 
 const userId = 'search-test-user';
@@ -28,7 +32,10 @@ beforeEach(async () => {
   searchRepo = new SearchRepo(serverDB, userId);
 });
 
-describe('SearchRepo', () => {
+// BM25 search requires pg_search extension (ParadeDB), not available in PGlite
+const isServerDB = process.env.TEST_SERVER_DB === '1';
+
+describe.skipIf(!isServerDB)('SearchRepo', () => {
   describe('search - empty query', () => {
     it('should return empty array for empty query', async () => {
       const results = await searchRepo.search({ query: '' });
@@ -113,8 +120,10 @@ describe('SearchRepo', () => {
       expect(topicResults[0].title).toBe('React Hooks Guide');
     });
 
+    // Note: ICU tokenizer treats "react-component.jsx" as a single token,
+    // so we search by prefix "react" which matches via BM25
     it('should find files by name', async () => {
-      const results = await searchRepo.search({ query: 'react-component' });
+      const results = await searchRepo.search({ query: 'react' });
 
       const fileResults = results.filter((r) => r.type === 'file');
       expect(fileResults).toHaveLength(1);
@@ -180,46 +189,28 @@ describe('SearchRepo', () => {
       await serverDB.insert(agents).values(testAgents);
     });
 
-    it('should prioritize exact match (relevance=1)', async () => {
-      const results = await searchRepo.search({ query: 'test' });
-
-      const exactMatch = results.find((r) => r.type === 'agent' && r.slug === 'exact');
-      expect(exactMatch).toBeDefined();
-      expect(exactMatch?.relevance).toBe(1);
-    });
-
-    it('should rank prefix match second (relevance=2)', async () => {
-      const results = await searchRepo.search({ query: 'test' });
-
-      const prefixMatch = results.find((r) => r.type === 'agent' && r.slug === 'prefix');
-      expect(prefixMatch).toBeDefined();
-      expect(prefixMatch?.relevance).toBe(2);
-    });
-
-    it('should rank contains match third (relevance=3)', async () => {
-      const results = await searchRepo.search({ query: 'test' });
-
-      const containsMatch = results.find((r) => r.type === 'agent' && r.slug === 'contains');
-      expect(containsMatch).toBeDefined();
-      expect(containsMatch?.relevance).toBe(3);
-    });
-
-    it('should order results by relevance', async () => {
+    it('should assign relevance values in valid range', async () => {
       const results = await searchRepo.search({ query: 'test' });
 
       const agentResults = results.filter((r) => r.type === 'agent');
+      expect(agentResults.length).toBe(3);
 
-      // Exact match should come first
-      expect(agentResults[0].slug).toBe('exact');
-      expect(agentResults[0].relevance).toBe(1);
+      // All relevance values should be in [1, 3] range
+      for (const result of agentResults) {
+        expect(result.relevance).toBeGreaterThanOrEqual(1);
+        expect(result.relevance).toBeLessThanOrEqual(3);
+      }
+    });
 
-      // Prefix match should come second
-      expect(agentResults[1].slug).toBe('prefix');
-      expect(agentResults[1].relevance).toBe(2);
+    it('should rank results by BM25 relevance (lower = better)', async () => {
+      const results = await searchRepo.search({ query: 'test' });
 
-      // Contains match should come third
-      expect(agentResults[2].slug).toBe('contains');
-      expect(agentResults[2].relevance).toBe(3);
+      const agentResults = results.filter((r) => r.type === 'agent');
+      expect(agentResults.length).toBe(3);
+
+      // Best match should have lowest relevance value
+      expect(agentResults[0].relevance).toBeLessThanOrEqual(agentResults[1].relevance);
+      expect(agentResults[1].relevance).toBeLessThanOrEqual(agentResults[2].relevance);
     });
   });
 
@@ -425,9 +416,9 @@ describe('SearchRepo', () => {
 
       await serverDB.insert(files).values({
         fileType: 'text/plain',
-        name: 'test.txt',
+        name: 'test report',
         size: 100,
-        url: 'file://test.txt',
+        url: 'file://test-report',
         userId,
       });
     });
@@ -548,7 +539,7 @@ describe('SearchRepo', () => {
       ]);
     });
 
-    it('should boost current agent topics in relevance', async () => {
+    it('should only return topics of the current agent when agentId is provided', async () => {
       const results = await searchRepo.search({
         agentId: testAgentId,
         query: 'testing',
@@ -556,45 +547,101 @@ describe('SearchRepo', () => {
 
       const topicResults = results.filter((r) => r.type === 'topic');
 
-      // Current agent's topics should have better relevance (0.5-0.7)
-      const currentAgentTopics = topicResults.filter(
-        (t) => t.type === 'topic' && t.agentId === testAgentId,
-      );
-      const otherTopics = topicResults.filter(
-        (t) => t.type === 'topic' && t.agentId !== testAgentId,
-      );
-
-      expect(currentAgentTopics.length).toBeGreaterThan(0);
-      expect(otherTopics.length).toBeGreaterThan(0);
-
-      // Current agent topics should have lower relevance scores (higher priority)
-      currentAgentTopics.forEach((topic) => {
-        expect(topic.relevance).toBeLessThan(1);
-      });
-
-      otherTopics.forEach((topic) => {
-        expect(topic.relevance).toBeGreaterThanOrEqual(1);
+      expect(topicResults.length).toBeGreaterThan(0);
+      topicResults.forEach((topic) => {
+        if (topic.type === 'topic') {
+          expect(topic.agentId).toBe(testAgentId);
+        }
       });
     });
 
-    it('should show all user topics but rank current agent topics first', async () => {
+    it('should include topics from all agents when agentId is not provided', async () => {
       const results = await searchRepo.search({
-        agentId: testAgentId,
         query: 'testing',
       });
 
       const topicResults = results.filter((r) => r.type === 'topic');
-
-      // Should include topics from all agents (current, other, and no agent)
       const agentIds = new Set(topicResults.map((t) => (t.type === 'topic' ? t.agentId : null)));
+
       expect(agentIds.has(testAgentId)).toBe(true);
       expect(agentIds.has(otherAgentId)).toBe(true);
-      expect(agentIds.has(null)).toBe(true);
+    });
 
-      // First results should be from current agent
-      expect(topicResults[0].type).toBe('topic');
-      if (topicResults[0].type === 'topic') {
-        expect(topicResults[0].agentId).toBe(testAgentId);
+    it('should populate agent metadata on topic results', async () => {
+      // Add avatar/background to an existing agent so we can assert join output
+      const [decoratedAgent] = await serverDB
+        .insert(agents)
+        .values({
+          avatar: '🤖',
+          backgroundColor: '#123456',
+          slug: 'decorated-agent',
+          title: 'Decorated Agent',
+          userId,
+        })
+        .returning();
+
+      await serverDB.insert(topics).values({
+        agentId: decoratedAgent.id,
+        title: 'Testing Decorated Agent',
+        userId,
+      });
+
+      const results = await searchRepo.search({ query: 'decorated' });
+      const topicResults = results.filter((r) => r.type === 'topic');
+      const decoratedTopic = topicResults.find(
+        (t) => t.type === 'topic' && t.agentId === decoratedAgent.id,
+      );
+
+      expect(decoratedTopic).toBeDefined();
+      if (decoratedTopic && decoratedTopic.type === 'topic') {
+        expect(decoratedTopic.agent).toEqual({
+          avatar: '🤖',
+          backgroundColor: '#123456',
+          title: 'Decorated Agent',
+        });
+      }
+
+      // Topic without an agent should have a null agent field
+      const orphanTopic = topicResults.find((t) => t.type === 'topic' && t.agentId === null);
+      if (orphanTopic && orphanTopic.type === 'topic') {
+        expect(orphanTopic.agent).toBeNull();
+      }
+    });
+
+    it('should not leak agent metadata when topic.agentId points to another user', async () => {
+      // Foreign agent owned by a different user
+      const [foreignAgent] = await serverDB
+        .insert(agents)
+        .values({
+          avatar: '🕵️',
+          backgroundColor: '#abcdef',
+          slug: 'foreign-agent',
+          title: 'Foreign Agent',
+          userId: otherUserId,
+        })
+        .returning();
+
+      // Topic owned by the current user but carrying the foreign agent id —
+      // simulates state reachable via crafted/migrated rows (e.g. topic
+      // creation persists input.agentId even when resolveContext fails).
+      await serverDB.insert(topics).values({
+        agentId: foreignAgent.id,
+        title: 'Cross-tenant probe',
+        userId,
+      });
+
+      const results = await searchRepo.search({ query: 'cross-tenant' });
+      const topicResults = results.filter((r) => r.type === 'topic');
+      const probeTopic = topicResults.find(
+        (t) => t.type === 'topic' && t.title === 'Cross-tenant probe',
+      );
+
+      expect(probeTopic).toBeDefined();
+      if (probeTopic && probeTopic.type === 'topic') {
+        // The raw agentId is preserved (used for navigation), but no
+        // foreign agent metadata is surfaced to the renderer.
+        expect(probeTopic.agentId).toBe(foreignAgent.id);
+        expect(probeTopic.agent).toBeNull();
       }
     });
 
@@ -661,18 +708,385 @@ describe('SearchRepo', () => {
       expect(topicResults.length).toBeLessThanOrEqual(3);
     });
 
-    it('should not boost topics when agentId is not provided', async () => {
+    it('should return topics with normal relevance range (1-3) when agentId is not provided', async () => {
       const results = await searchRepo.search({
         query: 'testing',
       });
 
       const topicResults = results.filter((r) => r.type === 'topic');
 
-      // All topics should have normal relevance (1-3)
       topicResults.forEach((topic) => {
         expect(topic.relevance).toBeGreaterThanOrEqual(1);
         expect(topic.relevance).toBeLessThanOrEqual(3);
       });
+    });
+  });
+
+  describe('search - folder search', () => {
+    beforeEach(async () => {
+      // Create test folders (documents with file_type='custom/folder')
+      await serverDB.insert(documents).values([
+        {
+          description: 'My project files',
+          fileType: 'custom/folder',
+          filename: 'project-folder',
+          slug: 'project-folder-slug',
+          source: 'internal://folder-1',
+          sourceType: 'file',
+          title: 'Project Documents',
+          totalCharCount: 0,
+          totalLineCount: 0,
+          userId,
+        },
+        {
+          description: 'Archive folder for old files',
+          fileType: 'custom/folder',
+          filename: 'archive',
+          slug: 'archive-slug',
+          source: 'internal://folder-2',
+          sourceType: 'file',
+          title: 'Archive Folder',
+          totalCharCount: 0,
+          totalLineCount: 0,
+          userId,
+        },
+      ]);
+    });
+
+    it('should find folders by title', async () => {
+      const results = await searchRepo.search({ query: 'Project', type: 'folder' });
+
+      expect(results.length).toBeGreaterThan(0);
+      results.forEach((result) => {
+        expect(result.type).toBe('folder');
+      });
+    });
+
+    it('should find folders by description', async () => {
+      const results = await searchRepo.search({ query: 'archive', type: 'folder' });
+
+      expect(results.length).toBeGreaterThan(0);
+      const folder = results[0];
+      if (folder.type === 'folder') {
+        expect(folder.title.toLowerCase()).toContain('archive');
+      }
+    });
+
+    it('should return correct folder structure', async () => {
+      const results = await searchRepo.search({ query: 'project', type: 'folder' });
+
+      expect(results.length).toBeGreaterThan(0);
+      const folder = results[0];
+
+      expect(folder.type).toBe('folder');
+      expect(folder.id).toBeDefined();
+      expect(folder.title).toBeDefined();
+      expect(folder.relevance).toBeGreaterThan(0);
+      expect(folder.createdAt).toBeInstanceOf(Date);
+      expect(folder.updatedAt).toBeInstanceOf(Date);
+
+      if (folder.type === 'folder') {
+        expect(folder.slug).toBeDefined();
+      }
+    });
+  });
+
+  describe('search - page search', () => {
+    beforeEach(async () => {
+      // Create test pages (documents with file_type='custom/document')
+      await serverDB.insert(documents).values([
+        {
+          content: 'This is the content of my notes page',
+          fileType: 'custom/document',
+          filename: 'my-notes.md',
+          source: 'internal://page-1',
+          sourceType: 'file',
+          title: 'My Notes Page',
+          totalCharCount: 100,
+          totalLineCount: 10,
+          userId,
+        },
+        {
+          content: 'Documentation for the project',
+          fileType: 'custom/document',
+          filename: 'readme.md',
+          source: 'internal://page-2',
+          sourceType: 'file',
+          title: 'Project README',
+          totalCharCount: 200,
+          totalLineCount: 20,
+          userId,
+        },
+      ]);
+    });
+
+    it('should find pages by title', async () => {
+      const results = await searchRepo.search({ query: 'Notes', type: 'page' });
+
+      expect(results.length).toBeGreaterThan(0);
+      results.forEach((result) => {
+        expect(result.type).toBe('page');
+      });
+    });
+
+    it('should find pages by filename', async () => {
+      const results = await searchRepo.search({ query: 'readme', type: 'page' });
+
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].type).toBe('page');
+    });
+
+    it('should return correct page structure', async () => {
+      const results = await searchRepo.search({ query: 'notes', type: 'page' });
+
+      expect(results.length).toBeGreaterThan(0);
+      const page = results[0];
+
+      expect(page.type).toBe('page');
+      expect(page.id).toBeDefined();
+      expect(page.title).toBeDefined();
+      expect(page.relevance).toBeGreaterThan(0);
+      expect(page.createdAt).toBeInstanceOf(Date);
+      expect(page.updatedAt).toBeInstanceOf(Date);
+    });
+  });
+
+  describe('searchKnowledgeBaseDocuments', () => {
+    const kbA = 'kb-search-a';
+    const kbB = 'kb-search-b';
+
+    beforeEach(async () => {
+      // Create two KBs for the test user + one for the other user
+      await serverDB.insert(knowledgeBases).values([
+        { id: kbA, name: 'Knowledge Base A', userId },
+        { id: kbB, name: 'Knowledge Base B', userId },
+        { id: 'kb-other-1', name: 'Other User KB', userId: otherUserId },
+      ]);
+
+      // Documents in KB-A
+      await serverDB.insert(documents).values([
+        {
+          content:
+            'Machine learning algorithms can be supervised, unsupervised, or reinforcement-based. ' +
+            'Common supervised methods include linear regression, decision trees, and neural networks.',
+          fileType: 'custom/document',
+          filename: 'ml-overview.md',
+          knowledgeBaseId: kbA,
+          source: 'internal://document/placeholder',
+          sourceType: 'api',
+          title: 'Machine Learning Overview',
+          totalCharCount: 200,
+          totalLineCount: 5,
+          userId,
+        },
+        {
+          content: 'Documentation about cooking — completely unrelated topic.',
+          fileType: 'custom/document',
+          filename: 'cooking.md',
+          knowledgeBaseId: kbA,
+          source: 'internal://document/placeholder',
+          sourceType: 'api',
+          title: 'Cooking Notes',
+          totalCharCount: 50,
+          totalLineCount: 2,
+          userId,
+        },
+        // Document in KB-B (must NOT be returned when searching KB-A)
+        {
+          content:
+            'This document is in a different knowledge base and should not match KB-A scope.',
+          fileType: 'custom/document',
+          filename: 'ml-other-kb.md',
+          knowledgeBaseId: kbB,
+          source: 'internal://document/placeholder',
+          sourceType: 'api',
+          title: 'Machine Learning in KB-B',
+          totalCharCount: 100,
+          totalLineCount: 3,
+          userId,
+        },
+        // Document for other user (cross-user isolation check)
+        {
+          content: 'Machine learning notes from another user.',
+          fileType: 'custom/document',
+          filename: 'ml-other-user.md',
+          knowledgeBaseId: 'kb-other-1',
+          source: 'internal://document/placeholder',
+          sourceType: 'api',
+          title: 'Other user ML notes',
+          totalCharCount: 50,
+          totalLineCount: 2,
+          userId: otherUserId,
+        },
+      ]);
+    });
+
+    it('should return [] for empty query', async () => {
+      const results = await searchRepo.searchKnowledgeBaseDocuments('', [kbA]);
+      expect(results).toEqual([]);
+    });
+
+    it('should return [] when no knowledgeBaseIds provided', async () => {
+      const results = await searchRepo.searchKnowledgeBaseDocuments('machine learning', []);
+      expect(results).toEqual([]);
+    });
+
+    it('should match documents within KB scope by content', async () => {
+      const results = await searchRepo.searchKnowledgeBaseDocuments('machine learning', [kbA]);
+      expect(results.length).toBeGreaterThan(0);
+      // Should hit ML overview, not cooking
+      expect(results.some((r) => r.title === 'Machine Learning Overview')).toBe(true);
+      expect(results.every((r) => r.knowledgeBaseId === kbA)).toBe(true);
+    });
+
+    it('should respect KB scope (KB-A query does not return KB-B docs)', async () => {
+      const results = await searchRepo.searchKnowledgeBaseDocuments('machine learning', [kbA]);
+      expect(results.every((r) => r.title !== 'Machine Learning in KB-B')).toBe(true);
+    });
+
+    it('should isolate across users', async () => {
+      // Searching with otherUserId's KB should not leak to current user
+      const results = await searchRepo.searchKnowledgeBaseDocuments('machine learning', [
+        'kb-other-1',
+      ]);
+      // Current user (`userId`) does not own kb-other-1, so query against it returns []
+      expect(results).toEqual([]);
+    });
+
+    it('should produce snippet ≤ 300 characters', async () => {
+      const results = await searchRepo.searchKnowledgeBaseDocuments('machine learning', [kbA]);
+      results.forEach((r) => {
+        expect(r.snippet.length).toBeLessThanOrEqual(303); // 300 + '...' suffix
+      });
+    });
+
+    it('should produce relevance in [1, 3] range', async () => {
+      const results = await searchRepo.searchKnowledgeBaseDocuments('machine learning', [kbA]);
+      results.forEach((r) => {
+        expect(r.relevance).toBeGreaterThanOrEqual(1);
+        expect(r.relevance).toBeLessThanOrEqual(3);
+      });
+    });
+  });
+
+  describe('search - context types', () => {
+    beforeEach(async () => {
+      // Create test data for context testing
+      await serverDB.insert(agents).values(
+        Array.from({ length: 5 }, (_, i) => ({
+          slug: `ctx-agent-${i}`,
+          title: `Context Test Agent ${i}`,
+          userId,
+        })),
+      );
+
+      await serverDB.insert(topics).values(
+        Array.from({ length: 5 }, (_, i) => ({
+          title: `Context Test Topic ${i}`,
+          userId,
+        })),
+      );
+
+      await serverDB.insert(files).values(
+        Array.from({ length: 8 }, (_, i) => ({
+          fileType: 'text/plain',
+          name: `context-test-file-${i}.txt`,
+          size: 100,
+          url: `file://context-test-file-${i}.txt`,
+          userId,
+        })),
+      );
+
+      await serverDB.insert(documents).values([
+        ...Array.from({ length: 8 }, (_, i) => ({
+          fileType: 'custom/folder',
+          filename: `context-test-folder-${i}`,
+          source: `internal://ctx-folder-${i}`,
+          sourceType: 'file' as const,
+          title: `Context Test Folder ${i}`,
+          totalCharCount: 0,
+          totalLineCount: 0,
+          userId,
+        })),
+        ...Array.from({ length: 8 }, (_, i) => ({
+          fileType: 'custom/document',
+          filename: `context-test-page-${i}.md`,
+          source: `internal://ctx-page-${i}`,
+          sourceType: 'file' as const,
+          title: `Context Test Page ${i}`,
+          totalCharCount: 100,
+          totalLineCount: 10,
+          userId,
+        })),
+      ]);
+    });
+
+    it('should expand pages to 6 in page context', async () => {
+      const results = await searchRepo.search({
+        contextType: 'page',
+        query: 'context test',
+      });
+
+      const pageResults = results.filter((r) => r.type === 'page');
+      expect(pageResults.length).toBe(6);
+    });
+
+    it('should limit other types to 3 in page context', async () => {
+      const results = await searchRepo.search({
+        contextType: 'page',
+        query: 'context test',
+      });
+
+      const agentResults = results.filter((r) => r.type === 'agent');
+      const topicResults = results.filter((r) => r.type === 'topic');
+      const fileResults = results.filter((r) => r.type === 'file');
+      const folderResults = results.filter((r) => r.type === 'folder');
+
+      expect(agentResults.length).toBeLessThanOrEqual(3);
+      expect(topicResults.length).toBeLessThanOrEqual(3);
+      expect(fileResults.length).toBeLessThanOrEqual(3);
+      expect(folderResults.length).toBeLessThanOrEqual(3);
+    });
+
+    it('should expand files and folders to 6 in resource context', async () => {
+      const results = await searchRepo.search({
+        contextType: 'resource',
+        query: 'context-test',
+      });
+
+      const fileResults = results.filter((r) => r.type === 'file');
+      const folderResults = results.filter((r) => r.type === 'folder');
+
+      expect(fileResults.length).toBe(6);
+      expect(folderResults.length).toBe(6);
+    });
+
+    it('should limit other types to 3 in resource context', async () => {
+      const results = await searchRepo.search({
+        contextType: 'resource',
+        query: 'context test',
+      });
+
+      const agentResults = results.filter((r) => r.type === 'agent');
+      const topicResults = results.filter((r) => r.type === 'topic');
+      const pageResults = results.filter((r) => r.type === 'page');
+
+      expect(agentResults.length).toBeLessThanOrEqual(3);
+      expect(topicResults.length).toBeLessThanOrEqual(3);
+      expect(pageResults.length).toBeLessThanOrEqual(3);
+    });
+
+    it('should use agent context limits with contextType=agent', async () => {
+      const results = await searchRepo.search({
+        contextType: 'agent',
+        query: 'context test',
+      });
+
+      const topicResults = results.filter((r) => r.type === 'topic');
+      expect(topicResults.length).toBeLessThanOrEqual(6);
+
+      const agentResults = results.filter((r) => r.type === 'agent');
+      expect(agentResults.length).toBeLessThanOrEqual(3);
     });
   });
 

@@ -1,10 +1,10 @@
+import { LayersEnum, MemorySourceType } from '@lobechat/types';
 import { describe, expect, it } from 'vitest';
 
 import {
   RetrievalUserMemoryContextProvider,
   RetrievalUserMemoryIdentitiesProvider,
 } from './existingUserMemory';
-import { LayersEnum, MemorySourceType } from '@lobechat/types';
 
 const job = {
   source: MemorySourceType.ChatTopic,
@@ -40,7 +40,6 @@ describe('RetrievalUserMemoryContextProvider', () => {
             updatedAt: new Date(),
             userId: 'user-1',
             userMemoryId: 'mem-act-1',
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
           } as any,
         ],
         contexts: [
@@ -62,7 +61,6 @@ describe('RetrievalUserMemoryContextProvider', () => {
             userId: 'user-1',
             userMemoryIds: ['mem-1'],
             // similarity is appended by retrieval pipeline
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
           } as any,
         ],
         experiences: [
@@ -85,7 +83,6 @@ describe('RetrievalUserMemoryContextProvider', () => {
             updatedAt: new Date(),
             userId: 'user-1',
             userMemoryId: 'mem-2',
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
           } as any,
         ],
         preferences: [
@@ -103,13 +100,12 @@ describe('RetrievalUserMemoryContextProvider', () => {
             updatedAt: new Date(),
             userId: 'user-1',
             userMemoryId: 'mem-3',
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
           } as any,
         ],
       },
     });
 
-    const result = await provider.buildContext(job);
+    const result = await provider.buildContext(job.userId, job.sourceId);
 
     expect(result.sourceId).toBe('topic-1');
     expect(result.userId).toBe('user-1');
@@ -167,7 +163,7 @@ describe('RetrievalUserMemoryIdentitiesProvider', () => {
       ],
     });
 
-    const result = await provider.buildContext(job);
+    const result = await provider.buildContext(job.userId, job.sourceId);
 
     expect(result.sourceId).toBe('topic-1');
     expect(result.userId).toBe('user-1');

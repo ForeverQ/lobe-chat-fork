@@ -1,23 +1,355 @@
-import { ModelParamsSchema } from '../standard-parameters';
 import {
-  AIChatModelCard,
-  AIEmbeddingModelCard,
-  AIImageModelCard,
-  AIRealtimeModelCard,
-  AISTTModelCard,
-  AITTSModelCard,
+  type AIChatModelCard,
+  type AIEmbeddingModelCard,
+  type AIImageModelCard,
+  type AIRealtimeModelCard,
+  type AISTTModelCard,
+  type AITTSModelCard,
+  type AIVideoModelCard,
 } from '../types/aiModel';
-
-export const gptImage1ParamsSchema: ModelParamsSchema = {
-  imageUrls: { default: [] },
-  prompt: { default: '' },
-  size: {
-    default: 'auto',
-    enum: ['auto', '1024x1024', '1536x1024', '1024x1536'],
-  },
-};
+import { gptImage1Schema, gptImage2Schema } from './lobehub';
 
 export const openaiChatModels: AIChatModelCard[] = [
+  {
+    abilities: {
+      functionCall: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 400_000,
+    description: 'Latest Instant model used in ChatGPT.',
+    displayName: 'Chat Latest',
+    id: 'chat-latest',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput', rate: 5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput_cacheRead', rate: 0.5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 30, strategy: 'fixed', unit: 'millionTokens' },
+      ],
+    },
+    releasedAt: '2026-05-05',
+    settings: {
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_050_000,
+    description: 'GPT-5.5 is our newest frontier model for the most complex professional work.',
+    displayName: 'GPT-5.5',
+    enabled: true,
+    id: 'gpt-5.5',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        {
+          lookup: {
+            prices: {
+              '[0, 0.272]': 5,
+              '[0.272, infinity]': 10,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textInput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+        {
+          lookup: {
+            prices: {
+              '[0, 0.272]': 0.5,
+              '[0.272, infinity]': 1,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textInput_cacheRead',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+        {
+          lookup: {
+            prices: {
+              '[0, 0.272]': 30,
+              '[0.272, infinity]': 45,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textOutput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-04-23',
+    settings: {
+      extendParams: ['gpt5_2ReasoningEffort', 'textVerbosity'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_050_000,
+    description:
+      'GPT-5.5 pro uses more compute to think harder and provide consistently better answers.',
+    displayName: 'GPT-5.5 Pro',
+    id: 'gpt-5.5-pro',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        {
+          name: 'textInput',
+          rate: 30,
+          strategy: 'fixed',
+          unit: 'millionTokens',
+        },
+        {
+          name: 'textOutput',
+          rate: 180,
+          strategy: 'fixed',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-04-23',
+    settings: {
+      extendParams: ['gpt5_2ProReasoningEffort', 'textVerbosity'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_050_000,
+    description:
+      'GPT-5.4 is the frontier model for complex professional work with highest reasoning capability.',
+    displayName: 'GPT-5.4',
+    enabled: true,
+    id: 'gpt-5.4',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        {
+          lookup: {
+            prices: {
+              '[0, 0.272]': 2.5,
+              '[0.272, infinity]': 5,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textInput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+        {
+          lookup: {
+            prices: {
+              '[0, 0.272]': 0.25,
+              '[0.272, infinity]': 0.5,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textInput_cacheRead',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+        {
+          lookup: {
+            prices: {
+              '[0, 0.272]': 15,
+              '[0.272, infinity]': 22.5,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textOutput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-03-05',
+    settings: {
+      extendParams: ['gpt5_2ReasoningEffort', 'textVerbosity'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_050_000,
+    description:
+      'GPT-5.4 Pro uses more compute to think harder and provide consistently better answers, available in the Responses API only.',
+    displayName: 'GPT-5.4 Pro',
+    id: 'gpt-5.4-pro',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        {
+          lookup: {
+            prices: {
+              '[0, 0.272]': 30,
+              '[0.272, infinity]': 60,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textInput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+        {
+          lookup: {
+            prices: {
+              '[0, 0.272]': 180,
+              '[0.272, infinity]': 270,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textOutput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-03-05',
+    settings: {
+      extendParams: ['gpt5_2ProReasoningEffort', 'textVerbosity'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 400_000,
+    description:
+      "GPT-5.4 mini is OpenAI's strongest mini model for coding, computer use, and subagents.",
+    displayName: 'GPT-5.4 mini',
+    enabled: true,
+    id: 'gpt-5.4-mini',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput', rate: 0.75, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput_cacheRead', rate: 0.075, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 4.5, strategy: 'fixed', unit: 'millionTokens' },
+      ],
+    },
+    releasedAt: '2026-03-18',
+    settings: {
+      extendParams: ['gpt5_2ReasoningEffort', 'textVerbosity'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 400_000,
+    description:
+      "GPT-5.4 nano is OpenAI's cheapest GPT-5.4-class model for simple high-volume tasks.",
+    displayName: 'GPT-5.4 nano',
+    id: 'gpt-5.4-nano',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput', rate: 0.2, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput_cacheRead', rate: 0.02, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 1.25, strategy: 'fixed', unit: 'millionTokens' },
+      ],
+    },
+    releasedAt: '2026-03-18',
+    settings: {
+      extendParams: ['gpt5_2ReasoningEffort', 'textVerbosity'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      vision: true,
+      structuredOutput: true,
+    },
+    contextWindowTokens: 128_000,
+    description:
+      'GPT-5.3 Chat is the latest ChatGPT model used in ChatGPT with improved conversation experiences.',
+    displayName: 'GPT-5.3 Chat',
+    id: 'gpt-5.3-chat-latest',
+    maxOutput: 16_384,
+    pricing: {
+      units: [
+        { name: 'textInput', rate: 1.75, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput_cacheRead', rate: 0.175, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 14, strategy: 'fixed', unit: 'millionTokens' },
+      ],
+    },
+    releasedAt: '2026-03-04',
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 400_000,
+    description:
+      'GPT-5.3-Codex is the most capable agentic coding model to date, optimized for agentic coding tasks in Codex or similar environments.',
+    displayName: 'GPT-5.3 Codex',
+    id: 'gpt-5.3-codex',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput', rate: 1.75, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput_cacheRead', rate: 0.175, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 14, strategy: 'fixed', unit: 'millionTokens' },
+      ],
+    },
+    releasedAt: '2026-02-05',
+    settings: {
+      extendParams: ['codexMaxReasoningEffort'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
   {
     abilities: {
       functionCall: true,
@@ -30,7 +362,6 @@ export const openaiChatModels: AIChatModelCard[] = [
     description:
       'GPT-5.2 is a flagship model for coding and agentic workflows with stronger reasoning and long-context performance.',
     displayName: 'GPT-5.2',
-    enabled: true,
     id: 'gpt-5.2',
     maxOutput: 128_000,
     pricing: {
@@ -43,6 +374,34 @@ export const openaiChatModels: AIChatModelCard[] = [
     releasedAt: '2025-12-11',
     settings: {
       extendParams: ['gpt5_2ReasoningEffort', 'textVerbosity'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 400_000,
+    description:
+      'GPT-5.2-Codex is an upgraded GPT-5.2 variant optimized for long-horizon, agentic coding tasks.',
+    displayName: 'GPT-5.2 Codex',
+    id: 'gpt-5.2-codex',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput', rate: 1.75, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput_cacheRead', rate: 0.175, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 14, strategy: 'fixed', unit: 'millionTokens' },
+      ],
+    },
+    releasedAt: '2025-12-18',
+    settings: {
+      extendParams: ['codexMaxReasoningEffort'],
       searchImpl: 'params',
     },
     type: 'chat',
@@ -82,7 +441,6 @@ export const openaiChatModels: AIChatModelCard[] = [
     description:
       'GPT-5.2 Chat is the ChatGPT variant (chat-latest) for the latest conversation improvements.',
     displayName: 'GPT-5.2 Chat',
-    enabled: true,
     id: 'gpt-5.2-chat-latest',
     maxOutput: 16_384,
     pricing: {
@@ -151,6 +509,33 @@ export const openaiChatModels: AIChatModelCard[] = [
     },
     contextWindowTokens: 400_000,
     description:
+      "GPT-5.1 Codex Max: OpenAI's most intelligent coding model, optimized for long-horizon agentic coding tasks, supports reasoning tokens.",
+    displayName: 'GPT-5.1 Codex Max',
+    id: 'gpt-5.1-codex-max',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput', rate: 1.25, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput_cacheRead', rate: 0.125, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 10, strategy: 'fixed', unit: 'millionTokens' },
+      ],
+    },
+    releasedAt: '2025-12-04',
+    settings: {
+      extendParams: ['codexMaxReasoningEffort'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      vision: true,
+    },
+    contextWindowTokens: 400_000,
+    description:
       'GPT-5.1 Codex: a GPT-5.1 variant optimized for agentic coding tasks, for complex code/agent workflows in the Responses API.',
     displayName: 'GPT-5.1 Codex',
     id: 'gpt-5.1-codex',
@@ -164,7 +549,7 @@ export const openaiChatModels: AIChatModelCard[] = [
     },
     releasedAt: '2025-11-13',
     settings: {
-      extendParams: ['gpt5_1ReasoningEffort'],
+      extendParams: ['reasoningEffort'],
       searchImpl: 'params',
     },
     type: 'chat',
@@ -191,7 +576,7 @@ export const openaiChatModels: AIChatModelCard[] = [
     },
     releasedAt: '2025-11-13',
     settings: {
-      extendParams: ['gpt5_1ReasoningEffort'],
+      extendParams: ['reasoningEffort'],
       searchImpl: 'params',
     },
     type: 'chat',
@@ -289,7 +674,6 @@ export const openaiChatModels: AIChatModelCard[] = [
     description:
       'A faster, more cost-efficient GPT-5 variant for well-defined tasks, delivering quicker responses while maintaining quality.',
     displayName: 'GPT-5 mini',
-    enabled: true,
     id: 'gpt-5-mini',
     maxOutput: 128_000,
     pricing: {
@@ -840,24 +1224,6 @@ export const openaiChatModels: AIChatModelCard[] = [
   },
   {
     abilities: {
-      vision: true,
-    },
-    contextWindowTokens: 128_000,
-    description:
-      'ChatGPT-4o is a dynamic model updated in real time, combining strong understanding and generation for large-scale use cases like customer support, education, and technical support.',
-    displayName: 'ChatGPT-4o',
-    id: 'chatgpt-4o-latest',
-    pricing: {
-      units: [
-        { name: 'textInput', rate: 5, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 15, strategy: 'fixed', unit: 'millionTokens' },
-      ],
-    },
-    releasedAt: '2024-08-14',
-    type: 'chat',
-  },
-  {
-    abilities: {
       functionCall: true,
       vision: true,
     },
@@ -891,59 +1257,6 @@ export const openaiChatModels: AIChatModelCard[] = [
       ],
     },
     releasedAt: '2024-04-09',
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-    },
-    contextWindowTokens: 128_000,
-    description:
-      'The latest GPT-4 Turbo adds vision. Visual requests support JSON mode and function calling. It is a cost-effective multimodal model that balances accuracy and efficiency for real-time applications.',
-    displayName: 'GPT-4 Turbo Preview',
-    id: 'gpt-4-turbo-preview',
-    pricing: {
-      units: [
-        { name: 'textInput', rate: 10, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 30, strategy: 'fixed', unit: 'millionTokens' },
-      ],
-    },
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-    },
-    contextWindowTokens: 128_000,
-    description:
-      'The latest GPT-4 Turbo adds vision. Visual requests support JSON mode and function calling. It is a cost-effective multimodal model that balances accuracy and efficiency for real-time applications.',
-    displayName: 'GPT-4 Turbo Preview 0125',
-    id: 'gpt-4-0125-preview',
-    pricing: {
-      units: [
-        { name: 'textInput', rate: 10, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 30, strategy: 'fixed', unit: 'millionTokens' },
-      ],
-    },
-    releasedAt: '2024-01-25',
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-    },
-    contextWindowTokens: 128_000,
-    description:
-      'The latest GPT-4 Turbo adds vision. Visual requests support JSON mode and function calling. It is a cost-effective multimodal model that balances accuracy and efficiency for real-time applications.',
-    displayName: 'GPT-4 Turbo Preview 1106',
-    id: 'gpt-4-1106-preview',
-    pricing: {
-      units: [
-        { name: 'textInput', rate: 10, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 30, strategy: 'fixed', unit: 'millionTokens' },
-      ],
-    },
-    releasedAt: '2023-11-06',
     type: 'chat',
   },
   {
@@ -1045,31 +1358,6 @@ export const openaiChatModels: AIChatModelCard[] = [
         { name: 'textInput', rate: 1.5, strategy: 'fixed', unit: 'millionTokens' },
         { name: 'textOutput', rate: 2, strategy: 'fixed', unit: 'millionTokens' },
       ],
-    },
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-      reasoning: true,
-      vision: true,
-    },
-    contextWindowTokens: 200_000,
-    description:
-      'codex-mini-latest is a fine-tuned o4-mini model for the Codex CLI. For direct API use, we recommend starting with gpt-4.1.',
-    displayName: 'Codex mini',
-    id: 'codex-mini-latest',
-    maxOutput: 100_000,
-    pricing: {
-      units: [
-        { name: 'textInput_cacheRead', rate: 0.375, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textInput', rate: 1.5, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 6, strategy: 'fixed', unit: 'millionTokens' },
-      ],
-    },
-    releasedAt: '2025-06-01',
-    settings: {
-      extendParams: ['reasoningEffort'],
     },
     type: 'chat',
   },
@@ -1221,11 +1509,32 @@ export const openaiSTTModels: AISTTModelCard[] = [
 export const openaiImageModels: AIImageModelCard[] = [
   {
     description:
+      "OpenAI's next-generation multimodal image model with native reasoning, up to 4K resolution, near-perfect text rendering, and high-fidelity multilingual support.",
+    displayName: 'GPT Image 2',
+    enabled: true,
+    id: 'gpt-image-2',
+    parameters: gptImage2Schema,
+    pricing: {
+      // Medium quality at 1024x1024: ~1767 output tokens * $30/M = $0.053 per image.
+      // Source: https://developers.openai.com/api/docs/guides/image-generation#calculating-costs
+      approximatePricePerImage: 0.053,
+      units: [
+        { name: 'textInput', rate: 5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput_cacheRead', rate: 1.25, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'imageInput', rate: 8, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'imageInput_cacheRead', rate: 2, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'imageOutput', rate: 30, strategy: 'fixed', unit: 'millionTokens' },
+      ],
+    },
+    releasedAt: '2026-04-21',
+    type: 'image',
+  },
+  {
+    description:
       'An enhanced GPT Image 1 model with 4× faster generation, more precise editing, and improved text rendering.',
     displayName: 'GPT Image 1.5',
-    enabled: true,
     id: 'gpt-image-1.5',
-    parameters: gptImage1ParamsSchema,
+    parameters: gptImage1Schema,
     pricing: {
       approximatePricePerImage: 0.034,
       units: [
@@ -1243,9 +1552,8 @@ export const openaiImageModels: AIImageModelCard[] = [
   {
     description: 'ChatGPT native multimodal image generation model.',
     displayName: 'GPT Image 1',
-    enabled: true,
     id: 'gpt-image-1',
-    parameters: gptImage1ParamsSchema,
+    parameters: gptImage1Schema,
     pricing: {
       approximatePricePerImage: 0.042,
       units: [
@@ -1262,9 +1570,8 @@ export const openaiImageModels: AIImageModelCard[] = [
     description:
       'A lower-cost GPT Image 1 variant with native text and image input and image output.',
     displayName: 'GPT Image 1 Mini',
-    enabled: true,
     id: 'gpt-image-1-mini',
-    parameters: gptImage1ParamsSchema,
+    parameters: gptImage1Schema,
     pricing: {
       approximatePricePerImage: 0.011,
       units: [
@@ -1282,7 +1589,6 @@ export const openaiImageModels: AIImageModelCard[] = [
     description:
       'The latest DALL·E model, released in November 2023, supports more realistic, accurate image generation with stronger detail.',
     displayName: 'DALL·E 3',
-    enabled: true,
     id: 'dall-e-3',
     parameters: {
       prompt: { default: '' },
@@ -1459,6 +1765,55 @@ export const openaiRealtimeModels: AIRealtimeModelCard[] = [
   },
 ];
 
+export const openaiVideoModels: AIVideoModelCard[] = [
+  {
+    description:
+      'Sora 2 is our new powerful media generation model, generating videos with synced audio. It can create richly detailed, dynamic clips from natural language or images.',
+    displayName: 'Sora 2',
+    enabled: true,
+    id: 'sora-2',
+    parameters: {
+      duration: { default: 4, enum: [4, 8, 12] },
+      imageUrl: {
+        default: null,
+      },
+      prompt: { default: '' },
+      size: {
+        default: '720x1280',
+        enum: ['720x1280', '1280x720', '1024x1792', '1792x1024'],
+      },
+    },
+    pricing: {
+      units: [{ name: 'videoGeneration', rate: 0.1, strategy: 'fixed', unit: 'second' }],
+    },
+    releasedAt: '2025-12-08',
+    type: 'video',
+  },
+  {
+    description:
+      'Sora 2 Pro is our state-of-the-art, most advanced media generation model, generating videos with synced audio. It can create richly detailed, dynamic clips from natural language or images.',
+    displayName: 'Sora 2 Pro',
+    enabled: true,
+    id: 'sora-2-pro',
+    parameters: {
+      duration: { default: 4, enum: [4, 8, 12] },
+      imageUrl: {
+        default: null,
+      },
+      prompt: { default: '' },
+      size: {
+        default: '720x1280',
+        enum: ['720x1280', '1280x720', '1024x1792', '1792x1024'],
+      },
+    },
+    pricing: {
+      units: [{ name: 'videoGeneration', rate: 0.5, strategy: 'fixed', unit: 'second' }],
+    },
+    releasedAt: '2025-10-06',
+    type: 'video',
+  },
+];
+
 export const allModels = [
   ...openaiChatModels,
   ...openaiEmbeddingModels,
@@ -1466,6 +1821,7 @@ export const allModels = [
   ...openaiSTTModels,
   ...openaiImageModels,
   ...openaiRealtimeModels,
+  ...openaiVideoModels,
 ];
 
 export default allModels;

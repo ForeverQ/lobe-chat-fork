@@ -5,15 +5,16 @@ import {
 } from '@lobehub/market-sdk';
 
 import { lambdaClient } from '@/libs/trpc/client';
-import type {
-  AgentForkRequest,
-  AgentForkResponse,
-  AgentForkSourceResponse,
-  AgentForksResponse,
-  AgentGroupForkRequest,
-  AgentGroupForkResponse,
-  AgentGroupForkSourceResponse,
-  AgentGroupForksResponse,
+import { discoverService } from '@/services/discover';
+import {
+  type AgentForkBatchInput,
+  type AgentForkSourceResponse,
+  type AgentForksResponse,
+  type AgentGroupForkRequest,
+  type AgentGroupForkResponse,
+  type AgentGroupForkSourceResponse,
+  type AgentGroupForksResponse,
+  type SkillSorts,
 } from '@/types/discover';
 
 interface GetOwnAgentsParams {
@@ -26,7 +27,7 @@ export class MarketApiService {
    * @deprecated This method is no longer needed as authentication is now handled
    * automatically through tRPC middleware. Keeping for backward compatibility.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   setAccessToken(_token: string) {
     // No-op: Authentication is now handled through tRPC authedProcedure middleware
   }
@@ -45,7 +46,9 @@ export class MarketApiService {
   }
 
   // Get agent detail by identifier
-  async getAgentDetail(identifier: string): Promise<AgentItemDetail> {
+  async getAgentDetail(
+    identifier: string,
+  ): Promise<AgentItemDetail & { forkedFromAgentId?: string }> {
     return lambdaClient.market.agent.getAgentDetail.query({
       identifier,
     }) as Promise<AgentItemDetail>;
@@ -115,17 +118,14 @@ export class MarketApiService {
   // ==================== Fork Agent API ====================
 
   /**
-   * Fork an agent
-   * @param sourceIdentifier - Source agent identifier
-   * @param forkData - Fork request parameters
+   * Fork one or more agents in a single batch.
+   *
+   * Best-effort: each item is reported individually with `success` true or
+   * false. A failed item does not abort the rest of the batch.
    */
-  async forkAgent(
-    sourceIdentifier: string,
-    forkData: AgentForkRequest,
-  ): Promise<AgentForkResponse> {
+  async forkAgent(items: AgentForkBatchInput[]) {
     return lambdaClient.market.agent.forkAgent.mutate({
-      sourceIdentifier,
-      ...forkData,
+      items,
     });
   }
 
@@ -147,6 +147,13 @@ export class MarketApiService {
   }
 
   // ==================== Agent Group Status Management ====================
+
+  // Get agent group detail by identifier
+  async getAgentGroupDetail(identifier: string): Promise<any> {
+    return lambdaClient.market.agentGroup.getAgentGroupDetail.query({
+      identifier,
+    }) as Promise<any>;
+  }
 
   async publishAgentGroup(identifier: string): Promise<void> {
     await lambdaClient.market.agentGroup.publishAgentGroup.mutate({ identifier });
@@ -192,6 +199,33 @@ export class MarketApiService {
    */
   async getAgentGroupForkSource(identifier: string): Promise<AgentGroupForkSourceResponse> {
     return lambdaClient.market.agentGroup.getAgentGroupForkSource.query({ identifier });
+  }
+
+  // ==================== Skills API ====================
+
+  /**
+   * Search for skills in the LobeHub Market
+   */
+  async searchSkill(params: {
+    category?: string;
+    locale?: string;
+    order?: 'asc' | 'desc';
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    sort?: SkillSorts;
+  }) {
+    await discoverService.safeInjectMPToken();
+
+    return lambdaClient.market.skill.getSkillList.query(params);
+  }
+
+  /**
+   * Get skill download URL from market
+   */
+  getSkillDownloadUrl(identifier: string): string {
+    const marketBaseUrl = process.env.NEXT_PUBLIC_MARKET_BASE_URL || 'https://market.lobehub.com';
+    return `${marketBaseUrl}/api/v1/skills/${identifier}/download`;
   }
 }
 

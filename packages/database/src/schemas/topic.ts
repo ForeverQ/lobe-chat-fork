@@ -1,4 +1,3 @@
-/* eslint-disable sort-keys-fix/sort-keys-fix  */
 import type { ChatTopicMetadata, ThreadMetadata } from '@lobechat/types';
 import { sql } from 'drizzle-orm';
 import {
@@ -38,10 +37,15 @@ export const topics = pgTable(
       .references(() => users.id, { onDelete: 'cascade' })
       .notNull(),
     clientId: text('client_id'),
+    description: text('description'),
     historySummary: text('history_summary'),
     metadata: jsonb('metadata').$type<ChatTopicMetadata | undefined>(),
-    trigger: text('trigger'), // 'cron' | 'chat' | 'api' - topic creation trigger source
+    trigger: text('trigger'), // 'cron' | 'chat' | 'api' | 'eval' - topic creation trigger source
     mode: text('mode'), // 'temp' | 'test' | 'default' - topic usage scenario
+    status: text('status', {
+      enum: ['active', 'running', 'paused', 'waitingForHuman', 'failed', 'completed', 'archived'],
+    }),
+    completedAt: timestamptz('completed_at'),
     ...timestamps,
   },
   (t) => [
@@ -51,6 +55,9 @@ export const topics = pgTable(
     index('topics_session_id_idx').on(t.sessionId),
     index('topics_group_id_idx').on(t.groupId),
     index('topics_agent_id_idx').on(t.agentId),
+    index('topics_trigger_idx').on(t.trigger),
+    index('topics_status_idx').on(t.status),
+    index('topics_user_id_completed_at_idx').on(t.userId, t.completedAt),
     index('topics_extract_status_gin_idx').using(
       'gin',
       sql`(metadata->'userMemoryExtractStatus') jsonb_path_ops`,
@@ -72,7 +79,7 @@ export const threads = pgTable(
     title: text('title'),
     content: text('content'),
     editor_data: jsonb('editor_data'),
-    type: text('type', { enum: ['continuation', 'standalone', 'isolation'] }).notNull(),
+    type: text('type', { enum: ['continuation', 'standalone', 'isolation', 'eval'] }).notNull(),
     status: text('status', {
       enum: [
         'active',
@@ -107,9 +114,12 @@ export const threads = pgTable(
   },
   (t) => [
     uniqueIndex('threads_client_id_user_id_unique').on(t.clientId, t.userId),
+    index('threads_user_id_idx').on(t.userId),
     index('threads_topic_id_idx').on(t.topicId),
+    index('threads_type_idx').on(t.type),
     index('threads_agent_id_idx').on(t.agentId),
     index('threads_group_id_idx').on(t.groupId),
+    index('threads_parent_thread_id_idx').on(t.parentThreadId),
   ],
 );
 
@@ -137,7 +147,12 @@ export const topicDocuments = pgTable(
 
     createdAt: createdAt(),
   },
-  (t) => [primaryKey({ columns: [t.documentId, t.topicId] })],
+  (t) => [
+    primaryKey({ columns: [t.documentId, t.topicId] }),
+    index('topic_documents_user_id_idx').on(t.userId),
+    index('topic_documents_topic_id_idx').on(t.topicId),
+    index('topic_documents_document_id_idx').on(t.documentId),
+  ],
 );
 
 export type NewTopicDocument = typeof topicDocuments.$inferInsert;

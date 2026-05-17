@@ -1,9 +1,9 @@
-import type { GeneralAgentCallToolResultPayload } from '@lobechat/agent-runtime';
-import type { ChatToolPayload } from '@lobechat/types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Mock } from 'vitest';
+import { type GeneralAgentCallToolResultPayload } from '@lobechat/agent-runtime';
+import { type ChatToolPayload } from '@lobechat/types';
+import { type Mock } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import type { OperationCancelContext } from '@/store/chat/slices/operation/types';
+import { type OperationCancelContext } from '@/store/chat/slices/operation/types';
 
 import { createAssistantMessage, createCallToolInstruction, createMockStore } from './fixtures';
 import {
@@ -12,6 +12,20 @@ import {
   executeWithMockContext,
   simulateOperationCancellation,
 } from './helpers';
+
+vi.mock('@/utils/localStorage', () => {
+  class AsyncLocalStorage<State> {
+    async getFromLocalStorage(): Promise<State> {
+      return {} as State;
+    }
+
+    async saveToLocalStorage(): Promise<void> {
+      return undefined;
+    }
+  }
+
+  return { AsyncLocalStorage };
+});
 
 describe('call_tool executor', () => {
   describe('Basic Behavior', () => {
@@ -460,10 +474,11 @@ describe('call_tool executor', () => {
       // Then
       expect(mockStore.startOperation).toHaveBeenNthCalledWith(1, {
         type: 'toolCalling',
-        context: {
+        context: expect.objectContaining({
           agentId: 'sess_op',
+          sourceMessageId: 'msg_parent',
           topicId: 'topic_op',
-        },
+        }),
         parentOperationId: context.operationId,
         metadata: expect.objectContaining({
           identifier: 'lobe-web-browsing',
@@ -1445,7 +1460,7 @@ describe('call_tool executor', () => {
       expect(payload).toMatchObject({
         data: { data: 'search results', error: null },
         isSuccess: true,
-        toolCall: toolCall,
+        toolCall,
         toolCallId: 'tool_context_test',
         parentMessageId: createdMessage.id,
         executionTime: expect.any(Number),
@@ -1826,13 +1841,13 @@ describe('call_tool executor', () => {
         originalCompleteOperation(opId);
         // Check if this is the createToolMessage operation completing
         const op = mockStore.operations[opId];
-        if (op?.type === 'createToolMessage') {
-          // Abort parent toolCalling operation right after message creation completes
-          if (toolCallingOpId) {
-            const parentOp = mockStore.operations[toolCallingOpId];
-            if (parentOp) {
-              parentOp.abortController.abort();
-            }
+        if (
+          op?.type === 'createToolMessage' && // Abort parent toolCalling operation right after message creation completes
+          toolCallingOpId
+        ) {
+          const parentOp = mockStore.operations[toolCallingOpId];
+          if (parentOp) {
+            parentOp.abortController.abort();
           }
         }
       });
@@ -2338,6 +2353,7 @@ describe('call_tool executor', () => {
       const mockStore = createMockStore();
       const context = createTestContext({
         agentId: 'supervisor-agent',
+        scope: 'group_agent',
         subAgentId: 'worker-agent',
         topicId: 'group-topic',
       });

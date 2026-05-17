@@ -1,16 +1,18 @@
-import type { UIChatMessage } from '@lobechat/types';
+import { type UIChatMessage } from '@lobechat/types';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LOADING_FLAT } from '@/const/message';
 import { mutate } from '@/libs/swr';
 import { chatService } from '@/services/chat';
 import { messageService } from '@/services/message';
 import { topicService } from '@/services/topic';
+import { PortalViewType } from '@/store/chat/slices/portal/initialState';
 import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 import { topicMapKey } from '@/store/chat/utils/topicMapKey';
 import { useSessionStore } from '@/store/session';
-import { ChatTopic } from '@/types/topic';
+import { type ChatTopic } from '@/types/topic';
 
 import { useChatStore } from '../../store';
 
@@ -262,6 +264,196 @@ describe('topic action', () => {
       expect(updateFavoriteSpy).toHaveBeenCalledWith(topicId, { favorite: favState });
       expect(refreshTopicSpy).toHaveBeenCalled();
     });
+
+    // Regression tests for issue #12072
+    it('should handle non-array groups in SWR cache without throwing TypeError', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const topicId = 'topic-id';
+      const favState = true;
+      const activeAgentId = 'test-agent';
+
+      await act(async () => {
+        useChatStore.setState({ activeAgentId });
+      });
+
+      const updateFavoriteSpy = vi
+        .spyOn(topicService, 'updateTopic')
+        .mockResolvedValue(undefined as any);
+
+      // Mock mutate to receive a non-array value (malformed cache)
+      (mutate as Mock).mockImplementation(async (_key, updateFn) => {
+        if (typeof updateFn === 'function') {
+          // Pass non-array values to test defensive checks
+          const testCases = [
+            null,
+            undefined,
+            'string-instead-of-array',
+            { wrongStructure: true },
+            42,
+          ];
+
+          for (const malformedData of testCases) {
+            const result = updateFn(malformedData);
+            // Should return the malformed data as-is without throwing
+            expect(result).toBe(malformedData);
+          }
+        }
+      });
+
+      // Should not throw TypeError when cache has malformed data
+      await act(async () => {
+        await expect(result.current.favoriteTopic(topicId, favState)).resolves.not.toThrow();
+      });
+
+      expect(updateFavoriteSpy).toHaveBeenCalledWith(topicId, { favorite: favState });
+    });
+
+    it('should handle groups with non-array topics field without throwing TypeError', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const topicId = 'topic-id';
+      const favState = true;
+      const activeAgentId = 'test-agent';
+
+      await act(async () => {
+        useChatStore.setState({ activeAgentId });
+      });
+
+      const updateFavoriteSpy = vi
+        .spyOn(topicService, 'updateTopic')
+        .mockResolvedValue(undefined as any);
+
+      // Mock mutate to test groups with malformed topics field
+      (mutate as Mock).mockImplementation(async (_key, updateFn) => {
+        if (typeof updateFn === 'function') {
+          // Test groups where topics is not an array
+          const malformedGroups = [
+            {
+              cronJob: {},
+              cronJobId: 'job-1',
+              topics: null, // topics is null
+            },
+            {
+              cronJob: {},
+              cronJobId: 'job-2',
+              topics: undefined, // topics is undefined
+            },
+            {
+              cronJob: {},
+              cronJobId: 'job-3',
+              topics: 'not-an-array', // topics is a string
+            },
+            {
+              cronJob: {},
+              cronJobId: 'job-4',
+              topics: { id: 'malformed' }, // topics is an object
+            },
+          ];
+
+          const result = updateFn(malformedGroups);
+
+          // When no topic matches, the function returns original groups unchanged
+          // The important thing is it doesn't throw a TypeError on .map()
+          expect(result).toBe(malformedGroups);
+        }
+      });
+
+      // Should not throw TypeError when groups have malformed topics
+      await act(async () => {
+        await expect(result.current.favoriteTopic(topicId, favState)).resolves.not.toThrow();
+      });
+
+      expect(updateFavoriteSpy).toHaveBeenCalledWith(topicId, { favorite: favState });
+    });
+
+    it('should correctly update favorite state in well-formed cache data', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const topicId = 'topic-to-favorite';
+      const favState = true;
+      const activeAgentId = 'test-agent';
+
+      await act(async () => {
+        useChatStore.setState({ activeAgentId });
+      });
+
+      const updateFavoriteSpy = vi
+        .spyOn(topicService, 'updateTopic')
+        .mockResolvedValue(undefined as any);
+
+      // Mock mutate to test correct behavior with well-formed data
+      (mutate as Mock).mockImplementation(async (_key, updateFn) => {
+        if (typeof updateFn === 'function') {
+          const wellFormedGroups = [
+            {
+              cronJob: {},
+              cronJobId: 'job-1',
+              topics: [
+                { id: 'other-topic', favorite: false, title: 'Other' },
+                { id: topicId, favorite: false, title: 'Target' },
+              ],
+            },
+          ];
+
+          const result = updateFn(wellFormedGroups);
+
+          // Should return updated array with favorite state changed
+          expect(Array.isArray(result)).toBe(true);
+          const updatedTopic = result[0].topics.find((t: any) => t.id === topicId);
+          expect(updatedTopic).toBeDefined();
+          expect(updatedTopic.favorite).toBe(favState);
+
+          // Other topics should remain unchanged
+          const otherTopic = result[0].topics.find((t: any) => t.id === 'other-topic');
+          expect(otherTopic.favorite).toBe(false);
+        }
+      });
+
+      await act(async () => {
+        await result.current.favoriteTopic(topicId, favState);
+      });
+
+      expect(updateFavoriteSpy).toHaveBeenCalledWith(topicId, { favorite: favState });
+    });
+
+    it('should return original groups when no updates are needed', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const topicId = 'topic-already-favorited';
+      const favState = true;
+      const activeAgentId = 'test-agent';
+
+      await act(async () => {
+        useChatStore.setState({ activeAgentId });
+      });
+
+      const updateFavoriteSpy = vi
+        .spyOn(topicService, 'updateTopic')
+        .mockResolvedValue(undefined as any);
+
+      // Mock mutate to test no-op scenario
+      (mutate as Mock).mockImplementation(async (_key, updateFn) => {
+        if (typeof updateFn === 'function') {
+          const originalGroups = [
+            {
+              cronJob: {},
+              cronJobId: 'job-1',
+              topics: [
+                { id: topicId, favorite: true, title: 'Already Favorited' }, // Already has the target state
+              ],
+            },
+          ];
+
+          const result = updateFn(originalGroups);
+
+          // Should return the same reference when no updates are made
+          expect(result).toBe(originalGroups);
+        }
+      });
+
+      await act(async () => {
+        await result.current.favoriteTopic(topicId, favState);
+      });
+
+      expect(updateFavoriteSpy).toHaveBeenCalledWith(topicId, { favorite: favState });
+    });
   });
   describe('useFetchTopics', () => {
     it('should fetch topics for a given session id', async () => {
@@ -378,6 +570,8 @@ describe('topic action', () => {
           messagesMap: {
             [newKey]: [{ id: 'msg-1' }, { id: 'msg-2' }] as any,
           },
+          portalStack: [{ type: PortalViewType.Home }],
+          showPortal: true,
         });
       });
 
@@ -401,6 +595,8 @@ describe('topic action', () => {
 
       // Verify activeTopicId is now null
       expect(useChatStore.getState().activeTopicId).toBeNull();
+      expect(useChatStore.getState().portalStack).toEqual([]);
+      expect(useChatStore.getState().showPortal).toBe(false);
     });
 
     it('should clear new key data when switching to null (group scope)', async () => {
@@ -555,6 +751,23 @@ describe('topic action', () => {
 
       // Verify activeTopicId is set to the new topic
       expect(useChatStore.getState().activeTopicId).toBe('new-created-topic-id');
+    });
+
+    it('should skip refreshMessages for superseded overlapping switches', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const refreshSpy = vi.spyOn(result.current, 'refreshMessages').mockResolvedValue(undefined);
+
+      // Fire two overlapping switches: the sync body of both runs before
+      // either yields, so by the microtask boundary the second has already
+      // bumped the epoch and the first should bail out before fetching.
+      await act(async () => {
+        const p1 = result.current.switchTopic('topic-a');
+        const p2 = result.current.switchTopic('topic-b');
+        await Promise.all([p1, p2]);
+      });
+
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+      expect(useChatStore.getState().activeTopicId).toBe('topic-b');
     });
   });
   describe('removeSessionTopics', () => {
@@ -894,6 +1107,46 @@ describe('topic action', () => {
 
       expect(getMessagesSpy).toHaveBeenCalledWith({ agentId: activeAgentId, topicId });
       expect(summaryTopicTitleSpy).toHaveBeenCalledWith(topicId, messages);
+    });
+  });
+
+  describe('internal_updateTopics', () => {
+    it('should preserve excludeStatuses/excludeTriggers from existing topicDataMap entry', () => {
+      const agentId = 'agent-1';
+      const key = topicMapKey({ agentId });
+      const { result } = renderHook(() => useChatStore());
+
+      // Seed the entry as the SWR onData handler would, with filter fields.
+      act(() => {
+        useChatStore.setState({
+          topicDataMap: {
+            [key]: {
+              currentPage: 0,
+              excludeStatuses: ['completed'],
+              excludeTriggers: ['cron', 'eval'],
+              hasMore: false,
+              isExpandingPageSize: false,
+              items: [{ id: 'topic-1', title: 'old' } as ChatTopic],
+              pageSize: 20,
+              total: 1,
+            },
+          },
+        });
+      });
+
+      // Simulate the post-sendMessage write-back which previously dropped filters.
+      act(() => {
+        result.current.internal_updateTopics(agentId, {
+          items: [{ id: 'topic-2', title: 'new' } as ChatTopic],
+          pageSize: 20,
+          total: 2,
+        });
+      });
+
+      const next = useChatStore.getState().topicDataMap[key];
+      expect(next.excludeStatuses).toEqual(['completed']);
+      expect(next.excludeTriggers).toEqual(['cron', 'eval']);
+      expect(next.items.map((i) => i.id)).toEqual(['topic-2']);
     });
   });
 });

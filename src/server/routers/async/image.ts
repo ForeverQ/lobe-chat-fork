@@ -1,13 +1,24 @@
 import { ASYNC_TASK_TIMEOUT } from '@lobechat/business-config/server';
 import { ENABLE_BUSINESS_FEATURES } from '@lobechat/business-const';
+import {
+  buildMappedBusinessModelFields,
+  resolveBusinessModelMapping,
+} from '@lobechat/business-model-runtime';
 import { AgentRuntimeErrorType } from '@lobechat/model-runtime';
-import { AsyncTaskError, AsyncTaskErrorType, AsyncTaskStatus } from '@lobechat/types';
+import {
+  AsyncTaskError,
+  AsyncTaskErrorType,
+  AsyncTaskStatus,
+  RequestTrigger,
+} from '@lobechat/types';
 import { TRPCError } from '@trpc/server';
 import debug from 'debug';
 import { type RuntimeImageGenParams } from 'model-bank';
 import { z } from 'zod';
 
+import { getProviderContentPolicyErrorMessage } from '@/business/server/getProviderContentPolicyErrorMessage';
 import { chargeAfterGenerate } from '@/business/server/image-generation/chargeAfterGenerate';
+import { notifyImageCompleted } from '@/business/server/image-generation/notifyImageCompleted';
 import { createImageBusinessMiddleware } from '@/business/server/trpc-middlewares/async';
 import { AsyncTaskModel } from '@/database/models/asyncTask';
 import { FileModel } from '@/database/models/file';
@@ -16,11 +27,12 @@ import { GenerationBatchModel } from '@/database/models/generationBatch';
 import { asyncAuthedProcedure, asyncRouter as router } from '@/libs/trpc/async';
 import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
 import { GenerationService } from '@/server/services/generation';
+import { sanitizeFileName } from '@/utils/sanitizeFileName';
+
+import { getContentPolicyErrorMessage } from './contentPolicyError';
 
 const log = debug('lobe-image:async');
 
-// Constants for better maintainability
-const FILENAME_MAX_LENGTH = 50;
 const IMAGE_URL_PREVIEW_LENGTH = 100;
 
 const imageProcedure = asyncAuthedProcedure.use(async (opts) => {
@@ -75,6 +87,7 @@ const categorizeError = (
   error: any,
   isAborted: boolean,
   isEditingImage: boolean,
+  providerContentPolicyMessage?: string,
 ): { errorMessage: string; errorType: AsyncTaskErrorType } => {
   log('🔥🔥🔥 [ASYNC] categorizeError called:', {
     errorMessage: error?.message,
@@ -153,6 +166,21 @@ const categorizeError = (
       errorMessage:
         error.error?.message || error.message || AgentRuntimeErrorType.InvalidProviderAPIKey,
       errorType: AsyncTaskErrorType.InvalidProviderAPIKey,
+    };
+  }
+
+  if (providerContentPolicyMessage) {
+    return {
+      errorMessage: providerContentPolicyMessage,
+      errorType: AsyncTaskErrorType.ProviderContentModeration,
+    };
+  }
+
+  const fallbackContentPolicyMessage = getContentPolicyErrorMessage(error);
+  if (fallbackContentPolicyMessage) {
+    return {
+      errorMessage: fallbackContentPolicyMessage,
+      errorType: AsyncTaskErrorType.ProviderContentModeration,
     };
   }
 
@@ -240,6 +268,10 @@ export const imageRouter = router({
       try {
         const imageGenerationPromise = async (signal: AbortSignal) => {
           log('Initializing agent runtime for provider: %s', provider);
+          const { requestedModelId, resolvedModelId } = await resolveBusinessModelMapping(
+            provider,
+            model,
+          );
 
           // Read user's provider config from database
           const modelRuntime = await initModelRuntimeFromDB(ctx.serverDB, ctx.userId, provider);
@@ -247,10 +279,20 @@ export const imageRouter = router({
           // Check if operation has been cancelled
           checkAbortSignal(signal);
           log('Agent runtime initialized, calling createImage');
-          const response = await modelRuntime.createImage!({
-            model,
-            params: params as unknown as RuntimeImageGenParams,
-          });
+          const response = await modelRuntime.createImage!(
+            {
+              model: resolvedModelId,
+              params: params as unknown as RuntimeImageGenParams,
+            },
+            {
+              metadata: {
+                generationBatchId,
+                generationId,
+                taskId,
+                trigger: RequestTrigger.Image,
+              },
+            },
+          );
 
           if (!response) {
             log('Create image response is empty');
@@ -265,20 +307,6 @@ export const imageRouter = router({
           });
 
           const { modelUsage } = response;
-
-          if (ENABLE_BUSINESS_FEATURES) {
-            await chargeAfterGenerate({
-              metadata: {
-                asyncTaskId: taskId,
-                generationBatchId: generationBatchId,
-                modelId: model,
-                topicId: generationTopicId,
-              },
-              modelUsage,
-              provider,
-              userId: ctx.userId,
-            });
-          }
 
           // Check if operation has been cancelled
           checkAbortSignal(signal);
@@ -343,17 +371,51 @@ export const imageRouter = router({
                 path: uploadedImageUrl,
                 width: image.width,
               },
-              name: `${params.prompt.slice(0, FILENAME_MAX_LENGTH)}.${image.extension}`,
-              // Use first 50 characters of prompt as filename
+              name: `${sanitizeFileName(params.prompt, generationId)}.${image.extension}`,
               size: image.size,
               url: uploadedImageUrl,
             },
           );
 
-          log('Updating task status to Success: %s', taskId);
+          const duration = Date.now() - generationBatch.createdAt.getTime();
+
+          log('Updating task status to Success: %s, duration: %dms', taskId, duration);
           await ctx.asyncTaskModel.update(taskId, {
+            duration,
             status: AsyncTaskStatus.Success,
           });
+
+          try {
+            await notifyImageCompleted({
+              duration,
+              generationBatchId,
+              model,
+              prompt: params.prompt,
+              topicId: generationTopicId,
+              userId: ctx.userId,
+            });
+          } catch (err) {
+            console.error('[image-async] notification failed:', err);
+          }
+
+          if (ENABLE_BUSINESS_FEATURES) {
+            await chargeAfterGenerate({
+              metrics: { latency: duration },
+              metadata: {
+                asyncTaskId: taskId,
+                generationBatchId,
+                topicId: generationTopicId,
+                ...buildMappedBusinessModelFields({
+                  provider,
+                  requestedModelId,
+                  resolvedModelId,
+                }),
+              },
+              modelUsage,
+              provider,
+              userId: ctx.userId,
+            });
+          }
 
           log('Async image generation completed successfully: %s', taskId);
           return { success: true };
@@ -378,7 +440,6 @@ export const imageRouter = router({
         // Clean up timeout timer
         if (timeoutId) {
           clearTimeout(timeoutId);
-          timeoutId = null;
         }
 
         log('Async image generation failed: %O', {
@@ -388,10 +449,17 @@ export const imageRouter = router({
         });
 
         // Improved error categorization logic
+        const providerContentPolicyMessage = await getProviderContentPolicyErrorMessage({
+          error,
+          provider,
+          trigger: RequestTrigger.Image,
+          userId: ctx.userId,
+        });
         const { errorType, errorMessage } = categorizeError(
           error,
           abortController.signal.aborted,
           isEditingImage,
+          providerContentPolicyMessage,
         );
 
         await ctx.asyncTaskModel.update(taskId, {

@@ -1,12 +1,11 @@
 import { SOCIAL_URL } from '@lobechat/business-const';
-import { DiscordIcon } from '@lobehub/ui/icons';
+import { DiscordIcon, GithubIcon } from '@lobehub/ui/icons';
 import { Command } from 'cmdk';
 import {
   Bot,
+  FeatherIcon,
   FilePen,
-  Github,
   LibraryBig,
-  MailIcon,
   MessageSquarePlusIcon,
   Monitor,
   Star,
@@ -19,8 +18,8 @@ import { FEEDBACK } from '@/const/url';
 import { useFeedbackModal } from '@/hooks/useFeedbackModal';
 
 import { useCommandMenuContext } from './CommandMenuContext';
-import ContextCommands from './ContextCommands';
 import { CommandItem } from './components';
+import ContextCommands from './ContextCommands';
 import { useCommandMenu } from './useCommandMenu';
 
 const MainMenu = memo(() => {
@@ -45,18 +44,18 @@ const MainMenu = memo(() => {
       <Command.Group>
         <CommandItem
           icon={<Bot />}
-          onSelect={handleCreateSession}
           unpinned={menuContext === 'agent' || menuContext === 'page'}
           value="create new agent assistant"
+          onSelect={handleCreateSession}
         >
           {t('cmdk.newAgent')}
         </CommandItem>
 
         <CommandItem
           icon={<Bot />}
-          onSelect={handleCreateAgentTeam}
           unpinned={menuContext === 'agent' || menuContext === 'page'}
           value="create new agent team"
+          onSelect={handleCreateAgentTeam}
         >
           {t('cmdk.newAgentTeam')}
         </CommandItem>
@@ -64,46 +63,50 @@ const MainMenu = memo(() => {
         {menuContext === 'agent' && (
           <CommandItem
             icon={<MessageSquarePlusIcon />}
-            onSelect={handleCreateTopic}
             unpinned={menuContext !== 'agent'}
             value="create new topic"
+            onSelect={handleCreateTopic}
           >
             {t('cmdk.newTopic')}
           </CommandItem>
         )}
 
-        <CommandItem icon={<FilePen />} onSelect={handleCreatePage} value="create new page">
+        <CommandItem icon={<FilePen />} value="create new page" onSelect={handleCreatePage}>
           {t('cmdk.newPage')}
         </CommandItem>
 
         <CommandItem
           icon={<LibraryBig />}
-          onSelect={handleCreateLibrary}
           unpinned={menuContext !== 'resource'}
           value="create new library"
+          onSelect={handleCreateLibrary}
         >
           {t('cmdk.newLibrary')}
         </CommandItem>
 
-        {menuContext !== 'settings' && (() => {
-          const settingsRoute = getRouteById('settings');
-          const SettingsIcon = settingsRoute?.icon;
-          return (
-            <CommandItem
-              icon={SettingsIcon && <SettingsIcon />}
-              keywords={settingsRoute?.keywords}
-              onSelect={() => handleNavigate(settingsRoute?.path || '/settings')}
-              value="settings"
-            >
-              {t('cmdk.settings')}
-            </CommandItem>
-          );
-        })()}
+        {menuContext !== 'settings' &&
+          (() => {
+            const settingsRoute = getRouteById('settings');
+            const SettingsIcon = settingsRoute?.icon;
+            const keywords = settingsRoute?.keywordsKey
+              ? t(settingsRoute.keywordsKey as any).split(' ')
+              : settingsRoute?.keywords;
+            return (
+              <CommandItem
+                icon={SettingsIcon && <SettingsIcon />}
+                keywords={keywords}
+                value="settings"
+                onSelect={() => handleNavigate(settingsRoute?.path || '/settings')}
+              >
+                {t('cmdk.settings')}
+              </CommandItem>
+            );
+          })()}
 
         <CommandItem
           icon={<Monitor />}
-          onSelect={() => setPages([...pages, 'theme'])}
           value="theme"
+          onSelect={() => setPages([...pages, 'theme'])}
         >
           {t('cmdk.theme')}
         </CommandItem>
@@ -112,14 +115,17 @@ const MainMenu = memo(() => {
       <Command.Group heading={t('cmdk.navigate')}>
         {getNavigableRoutes().map((route) => {
           const RouteIcon = route.icon;
+          const keywords = route.keywordsKey
+            ? t(route.keywordsKey as any).split(' ')
+            : route.keywords;
           return (
             !pathname?.startsWith(route.pathPrefix) && (
               <CommandItem
                 icon={<RouteIcon />}
                 key={route.id}
-                keywords={route.keywords}
-                onSelect={() => handleNavigate(route.path)}
+                keywords={keywords}
                 value={route.id}
+                onSelect={() => handleNavigate(route.path)}
               >
                 {t(route.cmdkKey as any)}
               </CommandItem>
@@ -130,34 +136,34 @@ const MainMenu = memo(() => {
 
       <Command.Group heading={t('cmdk.about')}>
         <CommandItem
-          icon={<MailIcon />}
-          keywords={['feedback', 'issue', 'bug', 'problem']}
-          onSelect={openFeedbackModal}
+          icon={<FeatherIcon />}
+          keywords={t('cmdk.keywords.contactUs').split(' ')}
           value="contact-via-email"
+          onSelect={() => openFeedbackModal()}
         >
-          {t('cmdk.contactViaEmail')}
+          {t('cmdk.contactUs')}
         </CommandItem>
         <CommandItem
-          icon={<Github />}
-          keywords={['issue', 'bug', 'problem', 'feedback']}
-          onSelect={() => handleExternalLink(FEEDBACK)}
+          icon={<GithubIcon />}
+          keywords={t('cmdk.keywords.submitIssue').split(' ')}
           value="submit-issue"
+          onSelect={() => handleExternalLink(FEEDBACK)}
         >
           {t('cmdk.submitIssue')}
         </CommandItem>
         <CommandItem
           icon={<Star />}
-          keywords={['github', 'star', 'favorite', 'like']}
-          onSelect={() => handleExternalLink(SOCIAL_URL.github)}
+          keywords={t('cmdk.keywords.starGitHub').split(' ')}
           value="star-github"
+          onSelect={() => handleExternalLink(SOCIAL_URL.github)}
         >
           {t('cmdk.starOnGitHub')}
         </CommandItem>
         <CommandItem
           icon={<DiscordIcon />}
-          keywords={['discord', 'help', 'support', 'customer service']}
-          onSelect={() => handleExternalLink(SOCIAL_URL.discord)}
+          keywords={t('cmdk.keywords.discord').split(' ')}
           value="discord"
+          onSelect={() => handleExternalLink(SOCIAL_URL.discord)}
         >
           {t('cmdk.communitySupport')}
         </CommandItem>

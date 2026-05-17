@@ -1,5 +1,5 @@
 import debug from 'debug';
-import { SignJWT, importJWK, jwtVerify } from 'jose';
+import { importJWK, jwtVerify, SignJWT } from 'jose';
 
 import { authEnv } from '@/envs/auth';
 
@@ -76,6 +76,38 @@ export const signInternalJWT = async (): Promise<string> => {
     .setProtectedHeader({ alg: 'RS256', kid })
     .setIssuedAt()
     .setExpirationTime(authEnv.INTERNAL_JWT_EXPIRATION)
+    .sign(key);
+};
+
+/**
+ * Sign a short-lived OIDC-compatible JWT for a given user.
+ * Used by server-side sandbox execution to authenticate CLI commands.
+ * The token contains `sub: userId` and passes standard OIDC JWT validation.
+ */
+export const signUserJWT = async (userId: string): Promise<string> => {
+  const { key, kid } = await getSigningKey();
+
+  return new SignJWT({ purpose: 'cli-sandbox' })
+    .setProtectedHeader({ alg: 'RS256', kid })
+    .setSubject(userId)
+    .setIssuedAt()
+    .setExpirationTime('5m')
+    .sign(key);
+};
+
+/**
+ * Sign a long-lived OIDC-compatible JWT for hetero-agent operations.
+ * Claude Code / Codex tasks can run for hours; this 4-hour token prevents
+ * heteroIngest / heteroFinish from returning 401 mid-execution.
+ */
+export const signOperationJwt = async (userId: string): Promise<string> => {
+  const { key, kid } = await getSigningKey();
+
+  return new SignJWT({ purpose: 'hetero-operation' })
+    .setProtectedHeader({ alg: 'RS256', kid })
+    .setSubject(userId)
+    .setIssuedAt()
+    .setExpirationTime('4h')
     .sign(key);
 };
 

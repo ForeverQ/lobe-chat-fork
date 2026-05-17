@@ -3,13 +3,14 @@
 import { ActionIcon, Flexbox } from '@lobehub/ui';
 import { App } from 'antd';
 import { cssVar } from 'antd-style';
-import { BookMinusIcon, FileBoxIcon, SearchIcon, Trash2Icon } from 'lucide-react';
+import { BookMinusIcon, FileBoxIcon, Trash2Icon } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { useResourceManagerStore } from '@/app/[variants]/(main)/resource/features/store';
 import NavHeader from '@/features/NavHeader';
-import { useGlobalStore } from '@/store/global';
+import { useResourceManagerStore } from '@/routes/(main)/resource/features/store';
+import { getExplorerSelectedCount } from '@/routes/(main)/resource/features/store/selectors';
+import { useFileStore } from '@/store/file';
 import { FilesTabs } from '@/types/files';
 
 import AddButton from '../../Header/AddButton';
@@ -17,29 +18,39 @@ import BatchActionsDropdown from '../ToolBar/BatchActionsDropdown';
 import SortDropdown from '../ToolBar/SortDropdown';
 import ViewSwitcher from '../ToolBar/ViewSwitcher';
 import Breadcrumb from './Breadcrumb';
+import SearchInput from './SearchInput';
 
+/**
+ * Toolbar for the resource explorer
+ */
 const Header = memo(() => {
   const { t } = useTranslation(['components', 'common', 'file', 'knowledgeBase']);
   const { modal, message } = App.useApp();
 
   // Get state and actions from store
-  const [libraryId, category, onActionClick, selectFileIds] = useResourceManagerStore((s) => [
-    s.libraryId,
-    s.category,
-    s.onActionClick,
-    s.selectedFileIds,
-  ]);
-  const toggleCommandMenu = useGlobalStore((s) => s.toggleCommandMenu);
-
-  const selectCount = selectFileIds.length;
-  const isMultiSelected = selectCount > 1;
+  const [libraryId, category, onActionClick, selectAllState, selectFileIds] =
+    useResourceManagerStore((s) => [
+      s.libraryId,
+      s.category,
+      s.onActionClick,
+      s.selectAllState,
+      s.selectedFileIds,
+    ]);
+  const total = useFileStore((s) => s.total);
+  const selectCount = getExplorerSelectedCount({
+    selectAllState,
+    selectedIds: selectFileIds,
+    total,
+  });
+  const hasSelected = selectAllState === 'all' || selectCount > 0;
 
   // If no libraryId, show category name or "Resource" for All
-  const leftContent = isMultiSelected ? (
-    <Flexbox align={'center'} gap={8} horizontal style={{ marginLeft: 0 }}>
+  const leftContent = hasSelected ? (
+    <Flexbox horizontal align={'center'} gap={8} style={{ marginLeft: 0 }}>
       {libraryId ? (
         <ActionIcon
           icon={BookMinusIcon}
+          title={t('FileManager.actions.removeFromLibrary')}
           onClick={() => {
             modal.confirm({
               okButtonProps: {
@@ -47,27 +58,27 @@ const Header = memo(() => {
               },
               onOk: async () => {
                 await onActionClick('removeFromKnowledgeBase');
-                message.success(t('FileManager.actions.removeFromKnowledgeBaseSuccess'));
+                message.success(t('FileManager.actions.removeFromLibrarySuccess'));
               },
-              title: t('FileManager.actions.confirmRemoveFromKnowledgeBase', {
+              title: t('FileManager.actions.confirmRemoveFromLibrary', {
                 count: selectCount,
               }),
             });
           }}
-          title={t('FileManager.actions.removeFromKnowledgeBase')}
         />
       ) : null}
 
       <ActionIcon
         icon={FileBoxIcon}
+        title={t('FileManager.actions.batchChunking')}
         onClick={async () => {
           await onActionClick('batchChunking');
         }}
-        title={t('FileManager.actions.batchChunking')}
       />
 
       <ActionIcon
         icon={Trash2Icon}
+        title={t('delete', { ns: 'common' })}
         onClick={() => {
           modal.confirm({
             okButtonProps: {
@@ -77,17 +88,21 @@ const Header = memo(() => {
               await onActionClick('delete');
               message.success(t('FileManager.actions.deleteSuccess'));
             },
-            title: t('FileManager.actions.confirmDeleteMultiFiles', { count: selectCount }),
+            title: t(
+              selectAllState === 'all'
+                ? 'FileManager.actions.confirmDeleteAllFiles'
+                : 'FileManager.actions.confirmDeleteMultiFiles',
+              { count: selectCount },
+            ),
           });
         }}
-        title={t('delete', { ns: 'common' })}
       />
     </Flexbox>
   ) : !libraryId ? (
     <Flexbox style={{ marginLeft: 8 }}>
       {category === FilesTabs.All
         ? t('resource', { defaultValue: 'Resource' })
-        : t(`tab.${category as FilesTabs}` as any)}
+        : t(`tab.${category as FilesTabs}` as any, { ns: 'file' })}
     </Flexbox>
   ) : (
     <Flexbox style={{ marginLeft: 8 }}>
@@ -100,9 +115,9 @@ const Header = memo(() => {
       left={leftContent}
       right={
         <>
-          <ActionIcon icon={SearchIcon} onClick={() => toggleCommandMenu(true)} />
+          <SearchInput />
           <SortDropdown />
-          <BatchActionsDropdown onActionClick={onActionClick} selectCount={selectCount} />
+          <BatchActionsDropdown selectCount={selectCount} onActionClick={onActionClick} />
           <ViewSwitcher />
           <Flexbox style={{ marginLeft: 8 }}>
             <AddButton />

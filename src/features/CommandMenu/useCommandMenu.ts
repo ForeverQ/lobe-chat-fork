@@ -1,14 +1,16 @@
 import { useDebounce } from 'ahooks';
 import { useTheme as useNextThemesTheme } from 'next-themes';
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import useSWR from 'swr';
 
-import { useCreateMenuItems } from '@/app/[variants]/(main)/home/_layout/hooks';
-import type { SearchResult } from '@/database/repositories/search';
+import { isDesktop } from '@/const/version';
+import { type SearchResult } from '@/database/repositories/search';
 import { useCreateNewModal } from '@/features/LibraryModal';
 import { useGroupWizard } from '@/layout/GlobalProvider/GroupWizardProvider';
 import { lambdaClient } from '@/libs/trpc/client';
+import { useCreateMenuItems } from '@/routes/(main)/home/_layout/hooks';
+import { electronSystemService } from '@/services/electron/system';
 import { useAgentStore } from '@/store/agent';
 import { builtinAgentSelectors } from '@/store/agent/selectors/builtinAgentSelectors';
 import { useChatStore } from '@/store/chat';
@@ -17,15 +19,16 @@ import { globalHelpers } from '@/store/global/helpers';
 import { useHomeStore } from '@/store/home';
 
 import { useCommandMenuContext } from './CommandMenuContext';
-import type { ThemeMode } from './types';
+import { type ThemeMode } from './types';
 
 /**
  * Shared methods for CommandMenu
  */
 export const useCommandMenu = () => {
-  const [open, setOpen] = useGlobalStore((s) => [s.status.showCommandMenu, s.updateSystemStatus]);
+  const [open] = useGlobalStore((s) => [s.status.showCommandMenu]);
   const {
     mounted,
+    onClose,
     search,
     setSearch,
     pages,
@@ -33,10 +36,10 @@ export const useCommandMenu = () => {
     typeFilter,
     setTypeFilter,
     page,
-    menuContext: context,
     pathname,
     selectedAgent,
     setSelectedAgent,
+    activeAgentId: agentId,
   } = useCommandMenuContext();
 
   const navigate = useNavigate();
@@ -47,15 +50,6 @@ export const useCommandMenu = () => {
   const { openGroupWizard } = useGroupWizard();
   const { createGroupWithMembers, createGroupFromTemplate, createPage } = useCreateMenuItems();
   const { open: openCreateLibraryModal } = useCreateNewModal();
-
-  // Extract agentId from pathname when in agent context
-  const agentId = useMemo(() => {
-    if (context === 'agent') {
-      const match = pathname?.match(/^\/agent\/([^/?]+)/);
-      return match?.[1] || undefined;
-    }
-    return undefined;
-  }, [context, pathname]);
 
   // Debounce search input to reduce API calls
   const debouncedSearch = useDebounce(search, { wait: 600 });
@@ -95,31 +89,35 @@ export const useCommandMenu = () => {
   }, [open]);
 
   const closeCommandMenu = useCallback(() => {
-    setOpen({ showCommandMenu: false });
-  }, [setOpen]);
+    onClose();
+  }, [onClose]);
 
   const handleNavigate = useCallback(
     (path: string) => {
       navigate(path);
-      setOpen({ showCommandMenu: false });
+      onClose();
     },
-    [navigate, setOpen],
+    [navigate, onClose],
   );
 
   const handleExternalLink = useCallback(
-    (url: string) => {
-      window.open(url, '_blank', 'noopener,noreferrer');
-      setOpen({ showCommandMenu: false });
+    async (url: string) => {
+      if (isDesktop) {
+        await electronSystemService.openExternalLink(url);
+      } else {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
+      onClose();
     },
-    [setOpen],
+    [onClose],
   );
 
   const handleThemeChange = useCallback(
     (theme: ThemeMode) => {
       setTheme(theme);
-      setOpen({ showCommandMenu: false });
+      onClose();
     },
-    [setTheme, setOpen],
+    [setTheme, onClose],
   );
 
   const handleAskLobeAI = useCallback(() => {
@@ -127,18 +125,18 @@ export const useCommandMenu = () => {
     if (inboxAgentId && search.trim()) {
       const message = encodeURIComponent(search.trim());
       navigate(`/agent/${inboxAgentId}?message=${message}`);
-      setOpen({ showCommandMenu: false });
+      onClose();
     }
-  }, [inboxAgentId, search, navigate, setOpen]);
+  }, [inboxAgentId, search, navigate, onClose]);
 
   const handleAIPainting = useCallback(() => {
     // Navigate to painting page with search as prompt
     if (search.trim()) {
       const prompt = encodeURIComponent(search.trim());
       navigate(`/image?prompt=${prompt}`);
-      setOpen({ showCommandMenu: false });
+      onClose();
     }
-  }, [search, navigate, setOpen]);
+  }, [search, navigate, onClose]);
 
   const handleBack = useCallback(() => {
     setPages((prev) => prev.slice(0, -1));
@@ -149,9 +147,9 @@ export const useCommandMenu = () => {
       const message = encodeURIComponent(search.trim());
       navigate(`/agent/${selectedAgent.id}?message=${message}`);
       setSelectedAgent(undefined);
-      setOpen({ showCommandMenu: false });
+      onClose();
     }
-  }, [selectedAgent, search, navigate, setSelectedAgent, setOpen]);
+  }, [selectedAgent, search, navigate, setSelectedAgent, onClose]);
 
   const handleCreateSession = useCallback(async () => {
     const result = await createAgent({});
@@ -162,32 +160,32 @@ export const useCommandMenu = () => {
       navigate(`/agent/${result.agentId}`);
     }
 
-    setOpen({ showCommandMenu: false });
-  }, [createAgent, refreshAgentList, navigate, setOpen]);
+    onClose();
+  }, [createAgent, refreshAgentList, navigate, onClose]);
 
   const openNewTopicOrSaveTopic = useChatStore((s) => s.openNewTopicOrSaveTopic);
 
   const handleCreateTopic = useCallback(() => {
     openNewTopicOrSaveTopic();
-    setOpen({ showCommandMenu: false });
-  }, [openNewTopicOrSaveTopic, setOpen]);
+    onClose();
+  }, [openNewTopicOrSaveTopic, onClose]);
 
   const handleCreateLibrary = useCallback(() => {
-    setOpen({ showCommandMenu: false });
+    onClose();
     openCreateLibraryModal({
       onSuccess: (id) => {
         navigate(`/resource/library/${id}`);
       },
     });
-  }, [setOpen, openCreateLibraryModal, navigate]);
+  }, [onClose, openCreateLibraryModal, navigate]);
 
   const handleCreatePage = useCallback(async () => {
     await createPage();
-    setOpen({ showCommandMenu: false });
-  }, [createPage, setOpen]);
+    onClose();
+  }, [createPage, onClose]);
 
   const handleCreateAgentTeam = useCallback(() => {
-    setOpen({ showCommandMenu: false });
+    onClose();
     openGroupWizard({
       onCreateCustom: async (selectedAgents) => {
         await createGroupWithMembers(selectedAgents);
@@ -196,7 +194,7 @@ export const useCommandMenu = () => {
         await createGroupFromTemplate(templateId, selectedMemberTitles);
       },
     });
-  }, [setOpen, openGroupWizard, createGroupWithMembers, createGroupFromTemplate]);
+  }, [onClose, openGroupWizard, createGroupWithMembers, createGroupFromTemplate]);
 
   return {
     closeCommandMenu,

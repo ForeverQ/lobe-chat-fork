@@ -1,4 +1,4 @@
-import { Icon, copyToClipboard, createRawModal } from '@lobehub/ui';
+import { copyToClipboard, createRawModal, Icon } from '@lobehub/ui';
 import { App } from 'antd';
 import { type ItemType } from 'antd/es/menu/interface';
 import {
@@ -15,20 +15,21 @@ import { useTranslation } from 'react-i18next';
 import { shallow } from 'zustand/shallow';
 
 import RepoIcon from '@/components/LibIcon';
-import { clearTreeFolderCache } from '@/features/ResourceManager/components/LibraryHierarchy';
+import { useKnowledgeBaseListContext } from '@/features/ResourceManager/components/KnowledgeBaseListProvider';
 import { PAGE_FILE_TYPE } from '@/features/ResourceManager/constants';
 import { useAppOrigin } from '@/hooks/useAppOrigin';
 import { documentService } from '@/services/document';
 import { useFileStore } from '@/store/file';
 import { useKnowledgeBaseStore } from '@/store/library';
+import { useTreeStore } from '@/store/tree';
 import { downloadFile } from '@/utils/client/downloadFile';
 
 import MoveToFolderModal from '../MoveToFolderModal';
 
 interface UseFileItemDropdownParams {
   enabled?: boolean;
-  fileType: string;
   filename: string;
+  fileType: string;
   id: string;
   libraryId?: string;
   onRenameStart?: () => void;
@@ -56,36 +57,44 @@ export const useFileItemDropdown = ({
   const { message, modal } = App.useApp();
   const appOrigin = useAppOrigin();
 
-  const { deleteResource, refreshFileList } = useFileStore(
+  const { deleteResource, moveResource, refreshFileList } = useFileStore(
     (s) => ({
       deleteResource: s.deleteResource,
+      moveResource: s.moveResource,
       refreshFileList: s.refreshFileList,
     }),
     shallow,
   );
-  const [removeFilesFromKnowledgeBase, addFilesToKnowledgeBase, useFetchKnowledgeBaseList] =
-    useKnowledgeBaseStore((s) => [
-      s.removeFilesFromKnowledgeBase,
-      s.addFilesToKnowledgeBase,
-      s.useFetchKnowledgeBaseList,
-    ]);
-
-  // Fetch knowledge bases - SWR caches this across all dropdown instances
-  // Only the first call fetches from server, subsequent calls use cache
-  // The expensive menu computation is deferred until dropdown opens (menuItems is a function)
-  const { data: libraries } = useFetchKnowledgeBaseList();
+  const [removeFilesFromKnowledgeBase, addFilesToKnowledgeBase] = useKnowledgeBaseStore((s) => [
+    s.removeFilesFromKnowledgeBase,
+    s.addFilesToKnowledgeBase,
+  ]);
+  const libraries = useKnowledgeBaseListContext();
 
   const isInLibrary = !!libraryId;
   const isFolder = fileType === 'custom/folder';
-  const isPage = sourceType === 'document' || fileType === PAGE_FILE_TYPE;
+  // PDF and Office files should not be treated as pages
+  const lowerFilename = filename?.toLowerCase();
+  const isPDF = fileType?.toLowerCase() === 'pdf' || lowerFilename?.endsWith('.pdf');
+  const isOfficeFile =
+    lowerFilename?.endsWith('.xls') ||
+    lowerFilename?.endsWith('.xlsx') ||
+    lowerFilename?.endsWith('.doc') ||
+    lowerFilename?.endsWith('.docx') ||
+    lowerFilename?.endsWith('.ppt') ||
+    lowerFilename?.endsWith('.pptx') ||
+    lowerFilename?.endsWith('.odt');
+  const isPage =
+    !isPDF && !isOfficeFile && (sourceType === 'document' || fileType === PAGE_FILE_TYPE);
 
   const menuItems = useCallback(() => {
     // Filter out current knowledge base and create submenu items
-    const availableKnowledgeBases = (libraries || []).filter((kb) => kb.id !== libraryId);
+    const availableKnowledgeBases = libraries.filter((kb) => kb.id !== libraryId);
 
+    // Submenu for adding files to a library (used when NOT in a library)
     const addToKnowledgeBaseSubmenu: ItemType[] = availableKnowledgeBases.map((kb) => ({
       icon: <RepoIcon />,
-      key: `add-to-kb-${kb.id}`,
+      key: `add-to-library-${kb.id}`,
       label: <span style={{ marginLeft: 8 }}>{kb.name}</span>,
       onClick: async ({ domEvent }) => {
         domEvent.stopPropagation();
@@ -97,9 +106,48 @@ export const useFileItemDropdown = ({
               ns: 'knowledgeBase',
             }),
           );
-        } catch (e) {
+        } catch (e: any) {
           console.error(e);
-          message.error(t('addToKnowledgeBase.error', { ns: 'knowledgeBase' }));
+          // Check for duplicate key error (file already exists in the library)
+          // Server throws CONFLICT error code for duplicate entries
+          const isDuplicateError =
+            e?.data?.code === 'CONFLICT' || e?.message === 'FILE_ALREADY_IN_KNOWLEDGE_BASE';
+          if (isDuplicateError) {
+            message.warning(t('addToKnowledgeBase.alreadyExists', { ns: 'knowledgeBase' }));
+          } else {
+            message.error(t('addToKnowledgeBase.error', { ns: 'knowledgeBase' }));
+          }
+        }
+      },
+    }));
+
+    // Submenu for moving files to another library (used when IN a library)
+    // Move = remove from current library + clear folder relationship + add to target library
+    const moveToKnowledgeBaseSubmenu: ItemType[] = availableKnowledgeBases.map((kb) => ({
+      icon: <RepoIcon />,
+      key: `move-to-library-${kb.id}`,
+      label: <span style={{ marginLeft: 8 }}>{kb.name}</span>,
+      onClick: async ({ domEvent }) => {
+        domEvent.stopPropagation();
+        try {
+          // First remove from current library
+          if (libraryId) {
+            await removeFilesFromKnowledgeBase(libraryId, [id]);
+          }
+          // Clear folder relationship (parentId) since folders are library-specific
+          await moveResource(id, null);
+          // Then add to target library
+          await addFilesToKnowledgeBase(kb.id, [id]);
+          message.success(t('moveToKnowledgeBase.success', { ns: 'knowledgeBase' }));
+        } catch (e: any) {
+          console.error(e);
+          const isDuplicateError =
+            e?.data?.code === 'CONFLICT' || e?.message === 'FILE_ALREADY_IN_KNOWLEDGE_BASE';
+          if (isDuplicateError) {
+            message.warning(t('addToKnowledgeBase.alreadyExists', { ns: 'knowledgeBase' }));
+          } else {
+            message.error(t('moveToKnowledgeBase.error', { ns: 'knowledgeBase' }));
+          }
         }
       },
     }));
@@ -108,15 +156,15 @@ export const useFileItemDropdown = ({
       isInLibrary
         ? [
             availableKnowledgeBases.length > 0 && {
-              children: addToKnowledgeBaseSubmenu,
+              children: moveToKnowledgeBaseSubmenu,
               icon: <Icon icon={BookPlusIcon} />,
-              key: 'addToOtherKnowledgeBase',
-              label: t('FileManager.actions.addToOtherKnowledgeBase'),
+              key: 'moveToOtherLibrary',
+              label: t('FileManager.actions.moveToOtherLibrary'),
             },
             {
               icon: <Icon icon={BookMinusIcon} />,
-              key: 'removeFromKnowledgeBase',
-              label: t('FileManager.actions.removeFromKnowledgeBase'),
+              key: 'removeFromLibrary',
+              label: t('FileManager.actions.removeFromLibrary'),
               onClick: async ({ domEvent }) => {
                 domEvent.stopPropagation();
 
@@ -127,9 +175,9 @@ export const useFileItemDropdown = ({
                   onOk: async () => {
                     await removeFilesFromKnowledgeBase(libraryId, [id]);
 
-                    message.success(t('FileManager.actions.removeFromKnowledgeBaseSuccess'));
+                    message.success(t('FileManager.actions.removeFromLibrarySuccess'));
                   },
-                  title: t('FileManager.actions.confirmRemoveFromKnowledgeBase', {
+                  title: t('FileManager.actions.confirmRemoveFromLibrary', {
                     count: 1,
                   }),
                 });
@@ -140,8 +188,8 @@ export const useFileItemDropdown = ({
             availableKnowledgeBases.length > 0 && {
               children: addToKnowledgeBaseSubmenu,
               icon: <Icon icon={BookPlusIcon} />,
-              key: 'addToKnowledgeBase',
-              label: t('FileManager.actions.addToKnowledgeBase'),
+              key: 'addToLibrary',
+              label: t('FileManager.actions.addToLibrary'),
             },
           ]
     ) as ItemType[];
@@ -262,11 +310,11 @@ export const useFileItemDropdown = ({
                 // Use optimistic delete - instant UI update, sync in background
                 await deleteResource(id);
 
-                // Ensure tree caches stay in sync with explorer
-                if (libraryId) {
-                  await clearTreeFolderCache(libraryId);
-                }
-                await refreshFileList();
+                // Revalidate tree for the parent folder
+                const { queryParams } = useFileStore.getState();
+                const parentId = queryParams?.parentId ?? '';
+                void useTreeStore.getState().revalidate(parentId);
+                await refreshFileList({ revalidateResources: false });
 
                 message.success(t('FileManager.actions.deleteSuccess'));
               },
@@ -277,7 +325,7 @@ export const useFileItemDropdown = ({
     ).filter(Boolean);
   }, [
     addFilesToKnowledgeBase,
-    clearTreeFolderCache,
+    appOrigin,
     deleteResource,
     filename,
     id,
@@ -288,6 +336,7 @@ export const useFileItemDropdown = ({
     libraryId,
     message,
     modal,
+    moveResource,
     onRenameStart,
     refreshFileList,
     removeFilesFromKnowledgeBase,

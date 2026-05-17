@@ -1,14 +1,31 @@
 import { type LobeChatDatabase } from '@lobechat/database';
-import { type DocumentItem, documents, files } from '@lobechat/database/schemas';
+import { type DocumentItem } from '@lobechat/database/schemas';
+import { documents, files } from '@lobechat/database/schemas';
 import { loadFile } from '@lobechat/file-loaders';
 import debug from 'debug';
 import { and, eq } from 'drizzle-orm';
+import isEqual from 'fast-deep-equal';
 
 import { DocumentModel } from '@/database/models/document';
 import { FileModel } from '@/database/models/file';
+import { isValidEditorData } from '@/libs/editor/isValidEditorData';
+import { normalizeEditorDataDiffNodes } from '@/libs/editor/normalizeDiffNodes';
 import { type LobeDocument } from '@/types/document';
 
 import { FileService } from '../file';
+import { DocumentHistoryService } from './history';
+import type {
+  CompareDocumentHistoryItemsParams,
+  CompareDocumentHistoryItemsResult,
+  DocumentHistoryAccessOptions,
+  DocumentHistorySaveSource,
+  GetDocumentHistoryItemParams,
+  ListDocumentHistoryParams,
+  ListDocumentHistoryResult,
+  SaveDocumentHistoryResult,
+  UpdateDocumentParams,
+  UpdateDocumentResult,
+} from './types';
 
 const log = debug('lobe-chat:service:document');
 
@@ -16,15 +33,34 @@ export class DocumentService {
   userId: string;
   private fileModel: FileModel;
   private documentModel: DocumentModel;
-  private fileService: FileService;
+  private documentHistoryServiceInstance?: DocumentHistoryService;
+  private fileServiceInstance?: FileService;
   private db: LobeChatDatabase;
 
   constructor(db: LobeChatDatabase, userId: string) {
     this.userId = userId;
     this.db = db;
     this.fileModel = new FileModel(db, userId);
-    this.fileService = new FileService(db, userId);
     this.documentModel = new DocumentModel(db, userId);
+  }
+
+  private get fileService() {
+    this.fileServiceInstance ??= new FileService(this.db, this.userId);
+
+    return this.fileServiceInstance;
+  }
+
+  private get documentHistoryService() {
+    this.documentHistoryServiceInstance ??= new DocumentHistoryService(this.db, this.userId);
+
+    return this.documentHistoryServiceInstance;
+  }
+
+  private async deleteFileRecordAndStorage(fileId: string) {
+    const file = await this.fileModel.delete(fileId);
+    if (!file?.url || file.url.startsWith('internal://')) return;
+
+    await this.fileService.deleteFile(file.url);
   }
 
   /**
@@ -142,6 +178,80 @@ export class DocumentService {
     return this.documentModel.findById(id);
   }
 
+  async listDocumentHistory(
+    params: ListDocumentHistoryParams,
+    options?: DocumentHistoryAccessOptions,
+  ): Promise<ListDocumentHistoryResult> {
+    return this.documentHistoryService.listDocumentHistory(params, options);
+  }
+
+  async getDocumentHistoryItem(
+    params: GetDocumentHistoryItemParams,
+    options?: DocumentHistoryAccessOptions,
+  ) {
+    return this.documentHistoryService.getDocumentHistoryItem(params, options);
+  }
+
+  async compareDocumentHistoryItems(
+    params: CompareDocumentHistoryItemsParams,
+    options?: DocumentHistoryAccessOptions,
+  ): Promise<CompareDocumentHistoryItemsResult> {
+    return this.documentHistoryService.compareDocumentHistoryItems(params, options);
+  }
+
+  /**
+   * Save a document history snapshot explicitly.
+   */
+  async saveDocumentHistory(
+    documentId: string,
+    editorData: Record<string, any>,
+    saveSource: DocumentHistorySaveSource,
+  ): Promise<SaveDocumentHistoryResult> {
+    const currentDocument = await this.documentModel.findById(documentId);
+    if (!currentDocument) {
+      throw new Error(`Document not found: ${documentId}`);
+    }
+
+    const normalizedEditorData = normalizeEditorDataDiffNodes(editorData);
+    const savedAt = new Date();
+    await this.documentHistoryService.createHistory({
+      documentId,
+      editorData: normalizedEditorData,
+      saveSource,
+      savedAt,
+    });
+
+    return { savedAt };
+  }
+
+  /**
+   * Best-effort snapshot of the current document editor state before an automated mutation.
+   */
+  async trySaveCurrentDocumentHistory(
+    documentId: string,
+    saveSource: DocumentHistorySaveSource,
+  ): Promise<SaveDocumentHistoryResult | undefined> {
+    try {
+      const currentDocument = await this.documentModel.findById(documentId);
+      const editorData = currentDocument?.editorData;
+      if (!isValidEditorData(editorData)) return undefined;
+
+      const normalizedEditorData = normalizeEditorDataDiffNodes(editorData);
+      const savedAt = new Date();
+      await this.documentHistoryService.createHistory({
+        documentId,
+        editorData: normalizedEditorData,
+        saveSource,
+        savedAt,
+      });
+
+      return { savedAt };
+    } catch (error) {
+      console.error('[DocumentService] Failed to save current document history:', error);
+      return undefined;
+    }
+  }
+
   /**
    * Delete document (recursively deletes children if it's a folder)
    */
@@ -166,13 +276,13 @@ export class DocumentService {
       });
 
       for (const file of childFiles) {
-        await this.fileModel.delete(file.id);
+        await this.deleteFileRecordAndStorage(file.id);
       }
     }
 
     // Delete the associated file record if it exists
     if (document.fileId) {
-      await this.fileModel.delete(document.fileId);
+      await this.deleteFileRecordAndStorage(document.fileId);
     }
 
     // Finally delete the document itself
@@ -190,60 +300,91 @@ export class DocumentService {
   /**
    * Update document
    */
-  async updateDocument(
-    id: string,
-    params: {
-      content?: string;
-      editorData?: Record<string, any>;
-      fileType?: string;
-      metadata?: Record<string, any>;
-      parentId?: string | null;
-      title?: string;
-    },
-  ) {
-    const updates: any = {};
+  async updateDocument(id: string, params: UpdateDocumentParams): Promise<UpdateDocumentResult> {
+    return this.db.transaction(async (tx) => {
+      const transactionDb = tx as unknown as LobeChatDatabase;
+      const documentModel = new DocumentModel(transactionDb, this.userId);
+      const fileModel = new FileModel(transactionDb, this.userId);
+      const documentHistoryService = new DocumentHistoryService(transactionDb, this.userId);
 
-    if (params.content !== undefined) {
-      updates.content = params.content;
-      updates.totalCharCount = params.content.length;
-      updates.totalLineCount = params.content.split('\n').length;
-    }
+      const currentDocument = await documentModel.findById(id);
+      if (!currentDocument) {
+        throw new Error(`Document not found: ${id}`);
+      }
 
-    if (params.editorData !== undefined) {
-      updates.editorData = params.editorData;
-    }
+      // Accepted-view projections used only for historyAppended comparison and
+      // for the "before" snapshot written into history. The persisted editorData
+      // keeps any pending diff nodes — they're only normalized when the user
+      // explicitly accepts/rejects via DiffAllToolbar.
+      const currentEditorDataAccepted = normalizeEditorDataDiffNodes(
+        (currentDocument.editorData ?? {}) as Record<string, any>,
+      );
+      const nextEditorDataAccepted =
+        params.editorData === undefined
+          ? undefined
+          : normalizeEditorDataDiffNodes(params.editorData);
+      const historyAppended =
+        nextEditorDataAccepted !== undefined &&
+        !isEqual(nextEditorDataAccepted, currentEditorDataAccepted);
 
-    if (params.fileType !== undefined) {
-      updates.fileType = params.fileType;
-    }
+      const updates: Record<string, unknown> = {};
 
-    if (params.title !== undefined) {
-      updates.title = params.title;
-      updates.filename = params.title;
-    }
+      if (params.content !== undefined) {
+        updates.content = params.content;
+        updates.totalCharCount = params.content.length;
+        updates.totalLineCount = params.content.split('\n').length;
+      }
 
-    if (params.metadata !== undefined) {
-      updates.metadata = params.metadata;
-    }
+      if (params.editorData !== undefined) {
+        updates.editorData = params.editorData;
+      }
 
-    if (params.parentId !== undefined) {
-      updates.parentId = params.parentId;
-    }
+      if (params.fileType !== undefined) {
+        updates.fileType = params.fileType;
+      }
 
-    const result = await this.documentModel.update(id, updates);
+      if (params.title !== undefined) {
+        updates.title = params.title;
+        updates.filename = params.title;
+      }
 
-    // If title was updated and this document has an associated file, update the file name too
-    if (params.title !== undefined || params.parentId !== undefined) {
-      const document = await this.documentModel.findById(id);
-      if (document?.fileId) {
-        const fileUpdates: any = {};
+      if (params.metadata !== undefined) {
+        updates.metadata = params.metadata;
+      }
+
+      if (params.parentId !== undefined) {
+        updates.parentId = params.parentId;
+      }
+
+      let savedAt: Date | undefined;
+
+      if (historyAppended) {
+        savedAt = new Date();
+        await documentHistoryService.createHistory({
+          documentId: id,
+          editorData: currentEditorDataAccepted,
+          saveSource: params.saveSource ?? 'autosave',
+          savedAt,
+        });
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await documentModel.update(id, updates as Partial<DocumentItem>);
+      }
+
+      if ((params.title !== undefined || params.parentId !== undefined) && currentDocument.fileId) {
+        const fileUpdates: Record<string, string | null> = {};
         if (params.title !== undefined) fileUpdates.name = params.title;
         if (params.parentId !== undefined) fileUpdates.parentId = params.parentId;
-        await this.fileModel.update(document.fileId, fileUpdates);
+        await fileModel.update(currentDocument.fileId, fileUpdates);
       }
-    }
 
-    return result;
+      return {
+        historyAppended,
+        id,
+        savedAt,
+      };
+    });
   }
 
   /**
@@ -253,13 +394,13 @@ export class DocumentService {
     const { filePath, file, cleanup } = await this.fileService.downloadFileToLocal(fileId);
 
     const logPrefix = `[${file.name}]`;
-    log(`${logPrefix} 开始解析文件为文档, 路径: ${filePath}`);
+    log(`${logPrefix} Starting to parse file as document, path: ${filePath}`);
 
     try {
-      // 使用loadFile加载文件内容
+      // Use loadFile to load file content
       const fileDocument = await loadFile(filePath);
 
-      log(`${logPrefix} 文件解析成功 %O`, {
+      log(`${logPrefix} File parsed successfully %O`, {
         fileType: fileDocument.fileType,
         size: fileDocument.content.length,
       });
@@ -292,7 +433,7 @@ export class DocumentService {
 
       return document as LobeDocument;
     } catch (error) {
-      console.error(`${logPrefix} 文件解析失败:`, error);
+      console.error(`${logPrefix} File parsing failed:`, error);
       throw error;
     } finally {
       cleanup();
@@ -300,20 +441,24 @@ export class DocumentService {
   }
 
   /**
-   * 解析文件内容
+   * Parse file content
    *
    */
   async parseFile(fileId: string): Promise<LobeDocument> {
+    // Idempotent: return existing document if already parsed
+    const existingDoc = await this.documentModel.findByFileId(fileId);
+    if (existingDoc) return existingDoc as LobeDocument;
+
     const { filePath, file, cleanup } = await this.fileService.downloadFileToLocal(fileId);
 
     const logPrefix = `[${file.name}]`;
-    log(`${logPrefix} 开始解析文件, 路径: ${filePath}`);
+    log(`${logPrefix} Starting to parse file, path: ${filePath}`);
 
     try {
-      // 使用loadFile加载文件内容
+      // Use loadFile to load file content
       const fileDocument = await loadFile(filePath);
 
-      log(`${logPrefix} 文件解析成功 %O`, {
+      log(`${logPrefix} File parsed successfully %O`, {
         fileType: fileDocument.fileType,
         size: fileDocument.content.length,
       });
@@ -341,7 +486,7 @@ export class DocumentService {
 
       return document as LobeDocument;
     } catch (error) {
-      console.error(`${logPrefix} 文件解析失败:`, error);
+      console.error(`${logPrefix} File parsing failed:`, error);
       throw error;
     } finally {
       cleanup();

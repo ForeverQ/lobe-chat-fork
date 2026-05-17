@@ -1,12 +1,16 @@
-import type {
-  AddIdentityActionSchema,
-  ContextMemoryItemSchema,
-  ExperienceMemoryItemSchema,
-  PreferenceMemoryItemSchema,
-  RemoveIdentityActionSchema,
-  UpdateIdentityActionSchema,
+import {
+  type ActivityMemoryItemSchema,
+  type AddIdentityActionSchema,
+  type ContextMemoryItemSchema,
+  type ExperienceMemoryItemSchema,
+  type PreferenceMemoryItemSchema,
+  type RemoveIdentityActionSchema,
+  type UpdateIdentityActionSchema,
 } from '@lobechat/memory-user-memory/schemas';
 import {
+  type ActivityListParams,
+  type ActivityListResult,
+  type AddActivityMemoryResult,
   type AddContextMemoryResult,
   type AddExperienceMemoryResult,
   type AddIdentityMemoryResult,
@@ -16,6 +20,8 @@ import {
   type IdentityListParams,
   type IdentityListResult,
   type LayersEnum,
+  type QueryTaxonomyOptionsParams,
+  type QueryTaxonomyOptionsResult,
   type RemoveIdentityMemoryResult,
   type SearchMemoryParams,
   type SearchMemoryResult,
@@ -27,6 +33,12 @@ import { type z } from 'zod';
 import { lambdaClient } from '@/libs/trpc/client';
 
 class UserMemoryService {
+  addActivityMemory = async (
+    params: z.infer<typeof ActivityMemoryItemSchema>,
+  ): Promise<AddActivityMemoryResult> => {
+    return lambdaClient.userMemories.toolAddActivityMemory.mutate(params);
+  };
+
   addContextMemory = async (
     params: z.infer<typeof ContextMemoryItemSchema>,
   ): Promise<AddContextMemoryResult> => {
@@ -74,6 +86,14 @@ class UserMemoryService {
   };
 
   /**
+   * Query activities with pagination, search, and sorting
+   * Returns flat structure optimized for frontend display
+   */
+  queryActivities = async (params?: ActivityListParams): Promise<ActivityListResult> => {
+    return lambdaClient.userMemories.queryActivities.query(params);
+  };
+
+  /**
    * Query identities with pagination, search, and sorting
    * Returns flat structure optimized for frontend display
    */
@@ -105,6 +125,12 @@ class UserMemoryService {
     return lambdaClient.userMemories.queryIdentityRoles.query(params);
   };
 
+  queryTaxonomyOptions = async (
+    params?: QueryTaxonomyOptionsParams,
+  ): Promise<QueryTaxonomyOptionsResult> => {
+    return lambdaClient.userMemories.queryTaxonomyOptions.query(params);
+  };
+
   /**
    * Query identities for chat context injection
    * Only returns user's own identities (relationship === 'self' or null)
@@ -120,7 +146,14 @@ class UserMemoryService {
     page?: number;
     pageSize?: number;
     q?: string;
-    sort?: 'capturedAt' | 'scoreConfidence' | 'scoreImpact' | 'scorePriority' | 'scoreUrgency';
+    sort?:
+      | 'capturedAt'
+      | 'scoreConfidence'
+      | 'scoreImpact'
+      | 'scorePriority'
+      | 'scoreUrgency'
+      | 'startsAt';
+    status?: string[];
     tags?: string[];
     types?: TypesEnum[];
   }) => {
@@ -136,3 +169,4 @@ class UserMemoryService {
 
 export const userMemoryService = new UserMemoryService();
 export { memoryCRUDService } from './crud';
+export { memoryExtractionService } from './extraction';

@@ -4,6 +4,8 @@ import debug from 'debug';
 import { sha256 } from 'js-sha256';
 import { z } from 'zod';
 
+import { AgentSkillModel } from '@/database/models/agentSkill';
+import { FileModel } from '@/database/models/file';
 import { type ToolCallContent } from '@/libs/mcp';
 import { authedProcedure, router } from '@/libs/trpc/lambda';
 import { marketUserInfo, serverDatabase, telemetry } from '@/libs/trpc/lambda/middleware';
@@ -82,12 +84,12 @@ const metaSchema = z
   })
   .optional();
 
-// Schema for code interpreter tool call request
-const callCodeInterpreterToolSchema = z.object({
+// Schema for sandbox tool execution request
+const execInSandboxSchema = z.object({
   params: z.record(z.any()),
   toolName: z.string(),
   topicId: z.string(),
-  userId: z.string(),
+  userId: z.string().optional(), // Optional: fallback to ctx.userId if not provided
 });
 
 // Schema for export and upload file (combined operation)
@@ -106,7 +108,9 @@ const callCloudMcpEndpointSchema = z.object({
 });
 
 // ============================== Type Exports ==============================
-export type CallCodeInterpreterToolInput = z.infer<typeof callCodeInterpreterToolSchema>;
+export type ExecInSandboxInput = z.infer<typeof execInSandboxSchema>;
+/** @deprecated Use ExecInSandboxInput */
+export type CallCodeInterpreterToolInput = ExecInSandboxInput;
 export type ExportAndUploadFileInput = z.infer<typeof exportAndUploadFileSchema>;
 
 export interface CallToolResult {
@@ -130,6 +134,156 @@ export interface ExportAndUploadFileResult {
   success: boolean;
   url?: string;
 }
+
+// ============================== Sandbox Handler ==============================
+const execInSandboxHandler = async ({
+  input,
+  ctx,
+}: {
+  ctx: { fileService: FileService; marketService: MarketService; serverDB: any; userId: string };
+  input: ExecInSandboxInput;
+}): Promise<CallToolResult> => {
+  const { toolName, params, topicId } = input;
+  const userId = input?.userId || ctx.userId;
+
+  log('execInSandbox: tool=%s, topicId=%s', toolName, topicId);
+
+  try {
+    let enhancedParams = params;
+
+    // Preprocess lh commands: rewrite to npx @lobehub/cli + inject auth env vars
+    if ((toolName === 'execScript' || toolName === 'runCommand') && params.command) {
+      const { preprocessLhCommand } =
+        await import('@/server/services/toolExecution/preprocessLhCommand');
+      const lhResult = await preprocessLhCommand(params.command, userId);
+
+      if (lhResult.error) {
+        return {
+          error: { message: lhResult.error, name: 'AuthError' },
+          result: null,
+          sessionExpiredAndRecreated: false,
+          success: false,
+        };
+      }
+
+      if (lhResult.skipSkillLookup) {
+        enhancedParams = { ...params, command: lhResult.command };
+      }
+    }
+
+    // For execScript tool, look up skill zipUrls from activatedSkills
+    if (toolName === 'execScript' && enhancedParams.activatedSkills?.length) {
+      const agentSkillModel = new AgentSkillModel(ctx.serverDB, userId);
+      const fileModel = new FileModel(ctx.serverDB, userId);
+
+      // Resolve zipUrls for all activated skills
+      const skillZipUrls: Record<string, string> = {};
+
+      for (const activatedSkill of enhancedParams.activatedSkills) {
+        if (!activatedSkill.name) continue;
+
+        const skill = await agentSkillModel.findByName(activatedSkill.name);
+        if (!skill?.zipFileHash) continue;
+
+        const fileInfo = await fileModel.checkHash(skill.zipFileHash);
+        if (!fileInfo.isExist || !fileInfo.url) continue;
+
+        const fullUrl = await ctx.fileService.getFullFileUrl(fileInfo.url);
+        if (fullUrl) {
+          skillZipUrls[activatedSkill.name] = fullUrl;
+          log('Resolved zipUrl for skill %s: %s', activatedSkill.name, fullUrl);
+        }
+      }
+
+      // Add skillZipUrls to params if any were resolved
+      if (Object.keys(skillZipUrls).length > 0) {
+        enhancedParams = {
+          ...enhancedParams,
+          skillZipUrls,
+        };
+        log('Added skillZipUrls to execScript params: %O', Object.keys(skillZipUrls));
+      }
+    }
+
+    const market = ctx.marketService.market;
+
+    const response = await market.plugins.runBuildInTool(
+      toolName as CodeInterpreterToolName,
+      enhancedParams as any,
+      { topicId, userId },
+    );
+
+    log('execInSandbox response for %s: %O', toolName, response);
+
+    if (!response.success) {
+      const errorCode = response.error?.code;
+      const errorMessage = response.error?.message || 'Unknown error';
+
+      // Check for authentication errors and throw UNAUTHORIZED to trigger market auth flow
+      if (
+        errorCode === 'invalid_token' ||
+        errorCode === 'token_expired' ||
+        errorCode === 'unauthorized' ||
+        errorMessage.toLowerCase().includes('invalid_token') ||
+        errorMessage.toLowerCase().includes('token expired')
+      ) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message:
+            'Market authorization expired. An authorization dialog has been shown to the user. Please wait for the user to complete authorization and then retry the current task.',
+        });
+      }
+
+      return {
+        error: {
+          message: errorMessage,
+          name: errorCode,
+        },
+        result: null,
+        sessionExpiredAndRecreated: false,
+        success: false,
+      };
+    }
+
+    return {
+      result: response.data?.result,
+      sessionExpiredAndRecreated: response.data?.sessionExpiredAndRecreated || false,
+      success: true,
+    };
+  } catch (error) {
+    log('execInSandbox error for %s: %O', toolName, error);
+
+    // Re-throw TRPCError as-is (e.g., UNAUTHORIZED from above)
+    if (error instanceof TRPCError) {
+      throw error;
+    }
+
+    const errorMessage = (error as Error).message;
+
+    // Check for authentication errors thrown as exceptions
+    if (
+      errorMessage.toLowerCase().includes('invalid_token') ||
+      errorMessage.toLowerCase().includes('token expired') ||
+      errorMessage.toLowerCase().includes('unauthorized')
+    ) {
+      throw new TRPCError({
+        code: 'UNAUTHORIZED',
+        message:
+          'Market authorization expired. An authorization dialog has been shown to the user. Please wait for the user to complete authorization and then retry the current task.',
+      });
+    }
+
+    return {
+      error: {
+        message: errorMessage,
+        name: (error as Error).name,
+      },
+      result: null,
+      sessionExpiredAndRecreated: false,
+      success: false,
+    };
+  }
+};
 
 // ============================== Router ==============================
 export const marketRouter = router({
@@ -224,62 +378,15 @@ export const marketRouter = router({
       }
     }),
 
-  // ============================== Code Interpreter ==============================
+  /** @deprecated Use execInSandbox instead. Will be removed in a future version. */
   callCodeInterpreterTool: marketToolProcedure
-    .input(callCodeInterpreterToolSchema)
-    .mutation(async ({ input, ctx }) => {
-      const { toolName, params, userId, topicId } = input;
+    .input(execInSandboxSchema)
+    .mutation(({ input, ctx }) => execInSandboxHandler({ ctx, input })),
 
-      log('Calling cloud code interpreter tool: %s with params: %O', toolName, {
-        params,
-        topicId,
-        userId,
-      });
-
-      try {
-        // Use marketService from ctx
-        const market = ctx.marketService.market;
-
-        // Call market-sdk's runBuildInTool
-        const response = await market.plugins.runBuildInTool(
-          toolName as CodeInterpreterToolName,
-          params as any,
-          { topicId, userId },
-        );
-
-        log('Cloud code interpreter tool %s response: %O', toolName, response);
-
-        if (!response.success) {
-          return {
-            error: {
-              message: response.error?.message || 'Unknown error',
-              name: response.error?.code,
-            },
-            result: null,
-            sessionExpiredAndRecreated: false,
-            success: false,
-          } as CallToolResult;
-        }
-
-        return {
-          result: response.data?.result,
-          sessionExpiredAndRecreated: response.data?.sessionExpiredAndRecreated || false,
-          success: true,
-        } as CallToolResult;
-      } catch (error) {
-        log('Error calling cloud code interpreter tool %s: %O', toolName, error);
-
-        return {
-          error: {
-            message: (error as Error).message,
-            name: (error as Error).name,
-          },
-          result: null,
-          sessionExpiredAndRecreated: false,
-          success: false,
-        } as CallToolResult;
-      }
-    }),
+  // ============================== Sandbox Execution ==============================
+  execInSandbox: marketToolProcedure
+    .input(execInSandboxSchema)
+    .mutation(({ input, ctx }) => execInSandboxHandler({ ctx, input })),
 
   // ============================== LobeHub Skill ==============================
   /**
@@ -291,16 +398,18 @@ export const marketRouter = router({
         args: z.record(z.any()).optional(),
         provider: z.string(),
         toolName: z.string(),
+        topicId: z.string().optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      const { provider, toolName, args } = input;
-      log('connectCallTool: provider=%s, tool=%s', provider, toolName);
-
+      const { provider, toolName, args, topicId } = input;
+      log('connectCallTool: provider=%s, tool=%s, topicId=%s', provider, toolName, topicId);
       try {
         const response = await ctx.marketSDK.skills.callTool(provider, {
           args: args || {},
           tool: toolName,
+          // @ts-ignore
+          topicId,
         });
 
         log('connectCallTool response: %O', response);
@@ -418,7 +527,7 @@ export const marketRouter = router({
   /**
    * List all user connections
    */
-  connectListConnections: lobehubSkillAuthProcedure.query(async ({ ctx }) => {
+  connectListConnections: lobehubSkillBaseProcedure.query(async ({ ctx }) => {
     log('connectListConnections');
 
     try {
@@ -526,7 +635,7 @@ export const marketRouter = router({
 
   /**
    * Export a file from sandbox and upload to S3, then create a persistent file record
-   * This combines the previous getExportFileUploadUrl + callCodeInterpreterTool + createFileRecord flow
+   * This combines the previous getExportFileUploadUrl + execInSandbox + createFileRecord flow
    * Returns a permanent /f/:id URL instead of a temporary pre-signed URL
    */
   exportAndUploadFile: marketToolProcedure
@@ -562,8 +671,26 @@ export const marketRouter = router({
         log('Sandbox exportFile response: %O', response);
 
         if (!response.success) {
+          const errorCode = response.error?.code;
+          const errorMessage = response.error?.message || 'Failed to export file from sandbox';
+
+          // Check for authentication errors and throw UNAUTHORIZED
+          if (
+            errorCode === 'invalid_token' ||
+            errorCode === 'token_expired' ||
+            errorCode === 'unauthorized' ||
+            errorMessage.toLowerCase().includes('invalid_token') ||
+            errorMessage.toLowerCase().includes('token expired')
+          ) {
+            throw new TRPCError({
+              code: 'UNAUTHORIZED',
+              message:
+                'Market authorization expired. An authorization dialog has been shown to the user. Please wait for the user to complete authorization and then retry the current task.',
+            });
+          }
+
           return {
-            error: { message: response.error?.message || 'Failed to export file from sandbox' },
+            error: { message: errorMessage },
             filename,
             success: false,
           } as ExportAndUploadFileResult;
@@ -610,8 +737,28 @@ export const marketRouter = router({
       } catch (error) {
         log('Error in exportAndUploadFile: %O', error);
 
+        // Re-throw TRPCError as-is
+        if (error instanceof TRPCError) {
+          throw error;
+        }
+
+        const errorMessage = (error as Error).message;
+
+        // Check for authentication errors
+        if (
+          errorMessage.toLowerCase().includes('invalid_token') ||
+          errorMessage.toLowerCase().includes('token expired') ||
+          errorMessage.toLowerCase().includes('unauthorized')
+        ) {
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message:
+              'Market authorization expired. An authorization dialog has been shown to the user. Please wait for the user to complete authorization and then retry the current task.',
+          });
+        }
+
         return {
-          error: { message: (error as Error).message },
+          error: { message: errorMessage },
           filename,
           success: false,
         } as ExportAndUploadFileResult;

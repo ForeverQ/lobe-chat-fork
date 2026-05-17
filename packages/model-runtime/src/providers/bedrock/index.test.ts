@@ -4,11 +4,12 @@ import {
   InvokeModelWithResponseStreamCommand,
 } from '@aws-sdk/client-bedrock-runtime';
 import { ModelProvider } from 'model-bank';
-import { Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentRuntimeErrorType } from '../../types/error';
 import * as debugStreamModule from '../../utils/debugStream';
-import { LobeBedrockAI, experimental_buildLlama2Prompt } from './index';
+import { experimental_buildLlama2Prompt, LobeBedrockAI } from './index';
 
 // Mock the console.error to avoid polluting test output
 vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -190,6 +191,115 @@ describe('LobeBedrockAI', () => {
           modelId: 'anthropic.claude-v2:1',
         });
         expect(result).toBeInstanceOf(Response);
+      });
+
+      it('should drop assistant prefill for Claude Opus 4.7', async () => {
+        const mockStream = new ReadableStream({
+          start(controller) {
+            controller.enqueue('Hello, world!');
+            controller.close();
+          },
+        });
+        (instance['client'].send as Mock).mockResolvedValue(Promise.resolve(mockStream));
+
+        await instance.chat({
+          messages: [
+            { content: 'Continue this answer', role: 'user' },
+            { content: 'Partial assistant draft', role: 'assistant' },
+          ],
+          model: 'global.anthropic.claude-opus-4-7',
+        });
+
+        const commandInput = (InvokeModelWithResponseStreamCommand as unknown as Mock).mock
+          .calls[0][0];
+        const body = JSON.parse(commandInput.body);
+
+        expect(body.messages).toEqual([
+          {
+            content: 'Continue this answer',
+            role: 'user',
+          },
+        ]);
+      });
+
+      it('should convert Claude assistant reasoning signatures to thinking content', async () => {
+        const mockStream = new ReadableStream({
+          start(controller) {
+            controller.enqueue('Hello, world!');
+            controller.close();
+          },
+        });
+        (instance['client'].send as Mock).mockResolvedValue(Promise.resolve(mockStream));
+
+        await instance.chat({
+          messages: [
+            { content: 'Hello', role: 'user' },
+            {
+              content: 'Here is my response.',
+              model: 'claude-opus-4-7',
+              reasoning: {
+                content: 'Let me think about this...',
+                signature: 'EuYBCkQYAiJAHnHRJG4nPBrdTlo6CmXoyE8WYoQ=',
+              },
+              role: 'assistant',
+            } as any,
+            { content: 'Continue', role: 'user' },
+          ],
+          model: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        });
+
+        const commandInput = (InvokeModelWithResponseStreamCommand as unknown as Mock).mock
+          .calls[0][0];
+        const body = JSON.parse(commandInput.body);
+
+        expect(body.messages[1]).toEqual({
+          content: [
+            {
+              signature: 'EuYBCkQYAiJAHnHRJG4nPBrdTlo6CmXoyE8WYoQ=',
+              thinking: 'Let me think about this...',
+              type: 'thinking',
+            },
+            { text: 'Here is my response.', type: 'text' },
+          ],
+          role: 'assistant',
+        });
+      });
+
+      it('should not convert non-Claude reasoning signatures to thinking content', async () => {
+        const mockStream = new ReadableStream({
+          start(controller) {
+            controller.enqueue('Hello, world!');
+            controller.close();
+          },
+        });
+        (instance['client'].send as Mock).mockResolvedValue(Promise.resolve(mockStream));
+
+        await instance.chat({
+          messages: [
+            { content: 'Hello', role: 'user' },
+            {
+              content: 'Here is my response.',
+              model: 'deepseek-v4-pro',
+              provider: 'lobehub',
+              reasoning: {
+                content: 'DeepSeek reasoning',
+                signature: '340acffe-0000-4000-8000-000000000000',
+              },
+              role: 'assistant',
+            } as any,
+            { content: 'Continue', role: 'user' },
+          ],
+          model: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        });
+
+        const commandInput = (InvokeModelWithResponseStreamCommand as unknown as Mock).mock
+          .calls[0][0];
+        const body = JSON.parse(commandInput.body);
+
+        expect(body.messages[1]).toEqual({
+          content: 'Here is my response.',
+          role: 'assistant',
+        });
       });
 
       it('should handle system prompt correctly', async () => {
@@ -476,7 +586,7 @@ describe('LobeBedrockAI', () => {
             accept: 'application/json',
             body: JSON.stringify({
               anthropic_version: 'bedrock-2023-05-31',
-              max_tokens: 8192,
+              max_tokens: 64_000,
               messages: [
                 {
                   content: [
@@ -519,7 +629,7 @@ describe('LobeBedrockAI', () => {
             accept: 'application/json',
             body: JSON.stringify({
               anthropic_version: 'bedrock-2023-05-31',
-              max_tokens: 8192,
+              max_tokens: 64_000,
               messages: [
                 {
                   content: [
@@ -652,7 +762,7 @@ describe('LobeBedrockAI', () => {
             accept: 'application/json',
             body: JSON.stringify({
               anthropic_version: 'bedrock-2023-05-31',
-              max_tokens: 8192,
+              max_tokens: 64_000,
               messages: [
                 {
                   content: [
@@ -699,6 +809,29 @@ describe('LobeBedrockAI', () => {
             errorType: AgentRuntimeErrorType.ProviderBizError,
             provider: ModelProvider.Bedrock,
             region: 'us-west-2',
+          }),
+        );
+      });
+
+      it('should throw ExceededContextWindow when error message indicates context window exceeded', async () => {
+        const errorMessage =
+          'Too many input tokens. Max input tokens for this model is 200000, but 250000 were provided.';
+        const errorMetadata = { statusCode: 400 };
+        const mockError = new Error(errorMessage);
+        (mockError as any).$metadata = errorMetadata;
+        (instance['client'].send as Mock).mockRejectedValue(mockError);
+
+        await expect(
+          instance.chat({
+            max_tokens: 100,
+            messages: [{ content: 'Hello', role: 'user' }],
+            model: 'anthropic.claude-v2:1',
+            temperature: 0,
+          }),
+        ).rejects.toThrow(
+          expect.objectContaining({
+            errorType: AgentRuntimeErrorType.ExceededContextWindow,
+            provider: ModelProvider.Bedrock,
           }),
         );
       });

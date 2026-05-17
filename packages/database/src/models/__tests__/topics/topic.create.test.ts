@@ -3,8 +3,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { getTestDB } from '../../../core/getTestDB';
 import { agents, messagePlugins, messages, sessions, topics, users } from '../../../schemas';
-import { LobeChatDatabase } from '../../../type';
-import { CreateTopicParams, TopicModel } from '../../topic';
+import type { LobeChatDatabase } from '../../../type';
+import type { CreateTopicParams } from '../../topic';
+import { TopicModel } from '../../topic';
 
 const userId = 'topic-create-user';
 const userId2 = 'topic-create-user-2';
@@ -50,6 +51,7 @@ describe('TopicModel - Create', () => {
         favorite: true,
         sessionId,
         userId,
+        description: null,
         historySummary: null,
         metadata: null,
         groupId: null,
@@ -59,6 +61,8 @@ describe('TopicModel - Create', () => {
         editorData: null,
         trigger: null,
         mode: null,
+        status: null,
+        completedAt: null,
         createdAt: expect.any(Date),
         updatedAt: expect.any(Date),
         accessedAt: expect.any(Date),
@@ -100,12 +104,15 @@ describe('TopicModel - Create', () => {
         clientId: null,
         agentId: null,
         content: null,
+        description: null,
         editorData: null,
         groupId: null,
         historySummary: null,
         metadata: null,
         trigger: null,
         mode: null,
+        status: null,
+        completedAt: null,
         sessionId,
         userId,
         createdAt: expect.any(Date),
@@ -408,6 +415,23 @@ describe('TopicModel - Create', () => {
       await expect(topicModel.duplicate(topicId)).rejects.toThrow(
         `Topic with id ${topicId} not found`,
       );
+    });
+
+    it('should duplicate a topic with no messages (empty messageIds)', async () => {
+      const topicId = 'topic-no-messages';
+
+      await serverDB
+        .insert(topics)
+        .values({ id: topicId, sessionId, userId, title: 'Empty Topic' });
+
+      const { topic: duplicated, messages: duplicatedMessages } = await topicModel.duplicate(
+        topicId,
+        'Duplicated Empty',
+      );
+
+      expect(duplicated.id).not.toBe(topicId);
+      expect(duplicated.title).toBe('Duplicated Empty');
+      expect(duplicatedMessages).toHaveLength(0);
     });
   });
 });

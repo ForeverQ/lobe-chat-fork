@@ -1,14 +1,10 @@
 'use client';
 
-import {
-  type PropsWithChildren,
-  type ReactNode,
-  memo,
-  useLayoutEffect,
-  useSyncExternalStore,
-} from 'react';
+import { type PropsWithChildren, type ReactNode } from 'react';
+import { memo, useLayoutEffect, useSyncExternalStore } from 'react';
 
-import Sidebar from '../../app/[variants]/(main)/home/_layout/Sidebar';
+import Sidebar from '@/routes/(main)/home/_layout/Sidebar';
+
 import { NavPanelDraggable } from './components/NavPanelDraggable';
 
 export const NAV_PANEL_RIGHT_DRAWER_ID = 'nav-panel-drawer';
@@ -32,6 +28,13 @@ const setNavPanelSnapshot = (snapshot: NavPanelSnapshot) => {
   listeners.forEach((listener) => listener());
 };
 
+const FALLBACK_NAV_KEY = 'home';
+
+const getActiveNavKey = () => currentSnapshot?.key ?? FALLBACK_NAV_KEY;
+
+export const useActiveNavKey = () =>
+  useSyncExternalStore(subscribeNavPanel, getActiveNavKey, getActiveNavKey);
+
 const NavPanel = memo(() => {
   const panelContent = useSyncExternalStore(
     subscribeNavPanel,
@@ -40,7 +43,7 @@ const NavPanel = memo(() => {
   );
 
   // Use home Content as fallback when no portal content is provided
-  const activeContent = panelContent || { key: 'home', node: <Sidebar /> };
+  const activeContent = panelContent || { key: FALLBACK_NAV_KEY, node: <Sidebar /> };
 
   return (
     <>

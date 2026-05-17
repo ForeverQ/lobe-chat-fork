@@ -1,24 +1,21 @@
-import analyzer from '@next/bundle-analyzer';
-import withSerwistInit from '@serwist/next';
 import { codeInspectorPlugin } from 'code-inspector-plugin';
-import type { NextConfig } from 'next';
-import type { Header, Redirect } from 'next/dist/lib/load-custom-routes';
-import ReactComponentName from 'react-scan/react-component-name/webpack';
+import { type NextConfig } from 'next';
+import { type Header, type Redirect } from 'next/dist/lib/load-custom-routes';
 
 interface CustomNextConfig {
   experimental?: NextConfig['experimental'];
   headers?: Header[];
+  outputFileTracingExcludes?: NextConfig['outputFileTracingExcludes'];
+  outputFileTracingIncludes?: NextConfig['outputFileTracingIncludes'];
   redirects?: Redirect[];
   serverExternalPackages?: NextConfig['serverExternalPackages'];
   turbopack?: NextConfig['turbopack'];
-  webpack?: NextConfig['webpack'];
 }
 
 export function defineConfig(config: CustomNextConfig) {
   const isProd = process.env.NODE_ENV === 'production';
   const buildWithDocker = process.env.DOCKER === 'true';
 
-  const enableReactScan = !!process.env.REACT_SCAN_MONITOR_API_KEY;
   const shouldUseCSP = process.env.ENABLED_CSP === '1';
 
   const isTest =
@@ -28,17 +25,33 @@ export function defineConfig(config: CustomNextConfig) {
 
   const standaloneConfig: NextConfig = {
     output: 'standalone',
-    outputFileTracingIncludes: { '*': ['public/**/*', '.next/static/**/*'] },
-  };
 
-  // Vercel serverless optimization: exclude musl binaries
-  // Vercel uses Amazon Linux (glibc), not Alpine Linux (musl)
-  // This saves ~45MB (29MB canvas-musl + 16MB sharp-musl)
-  const vercelConfig: NextConfig = {
-    outputFileTracingExcludes: {
+    outputFileTracingIncludes: {
       '*': [
-        'node_modules/.pnpm/@napi-rs+canvas-*-musl*',
-        'node_modules/.pnpm/@img+sharp-libvips-*musl*',
+        'public/**/*',
+        '.next/static/**/*',
+
+        // Only needed for Docker standalone builds.
+        // On Vercel (serverless), including native bindings can easily exceed function size limits.
+        ...(buildWithDocker
+          ? [
+              // Exclude SPA/desktop/mobile build artifacts from serverless functions
+              'public/_spa/**',
+              'dist/desktop/**',
+              'dist/mobile/**',
+
+              'packages/database/migrations/**',
+
+              // Ensure native bindings are included in standalone output.
+              // `@napi-rs/canvas` is loaded via dynamic `require()` (see packages/file-loaders),
+              // which may not be picked up by Next.js output tracing.
+              'node_modules/@napi-rs/canvas/**/*',
+              'node_modules/@napi-rs/canvas-*/**/*',
+              // pnpm real package locations (including platform-specific bindings with `.node`)
+              'node_modules/.pnpm/@napi-rs+canvas*/**/*',
+              'node_modules/.pnpm/@napi-rs+canvas-*/**/*',
+            ]
+          : []),
       ],
     },
   };
@@ -46,7 +59,7 @@ export function defineConfig(config: CustomNextConfig) {
   const assetPrefix = process.env.NEXT_PUBLIC_ASSET_PREFIX;
 
   const nextConfig: NextConfig = {
-    ...(isStandaloneMode ? standaloneConfig : vercelConfig),
+    ...(isStandaloneMode ? standaloneConfig : {}),
     assetPrefix,
 
     compiler: {
@@ -68,8 +81,6 @@ export function defineConfig(config: CustomNextConfig) {
       // refs: https://github.com/lobehub/lobe-chat/pull/7430
       serverMinification: false,
       webVitalsAttribution: ['CLS', 'LCP'],
-      webpackBuildWorker: true,
-      webpackMemoryOptimizations: true,
       ...config.experimental,
     },
     async headers() {
@@ -250,6 +261,12 @@ export function defineConfig(config: CustomNextConfig) {
         hmrRefreshes: true,
       },
     },
+    ...(config.outputFileTracingExcludes && {
+      outputFileTracingExcludes: config.outputFileTracingExcludes,
+    }),
+    ...(config.outputFileTracingIncludes && {
+      outputFileTracingIncludes: config.outputFileTracingIncludes,
+    }),
     reactStrictMode: true,
     redirects: async () => [
       {
@@ -335,96 +352,38 @@ export function defineConfig(config: CustomNextConfig) {
     // when external packages in dev mode with turbopack, this config will lead to bundle error
     // @napi-rs/canvas is a native module that can't be bundled by Turbopack
     // pdfjs-dist uses @napi-rs/canvas for DOMMatrix polyfill in Node.js environment
-    serverExternalPackages: config.serverExternalPackages
-      ? config.serverExternalPackages
-      : ['pdfkit', '@napi-rs/canvas', 'pdfjs-dist'],
+    serverExternalPackages: config.serverExternalPackages ?? [
+      'pdfkit',
+      '@napi-rs/canvas',
+      '@lobehub/editor',
+      'discord.js',
+      'ffmpeg-static',
+      'pdfjs-dist',
+      'ajv',
+      'oidc-provider',
+    ],
 
     transpilePackages: ['mermaid', 'better-auth-harmony'],
     turbopack: {
-      rules: isTest
-        ? void 0
-        : codeInspectorPlugin({
-            bundler: 'turbopack',
-            hotKeys: ['altKey', 'ctrlKey'],
-          }),
+      rules: {
+        ...(isTest
+          ? void 0
+          : codeInspectorPlugin({
+              bundler: 'turbopack',
+              hotKeys: ['altKey', 'ctrlKey'],
+            })),
+        '*.md': {
+          as: '*.js',
+          loaders: ['raw-loader'],
+        },
+      },
       ...config.turbopack,
     },
 
     typescript: {
       ignoreBuildErrors: true,
     },
-
-    webpack(baseWebpackConfig, options) {
-      baseWebpackConfig.experiments = {
-        asyncWebAssembly: true,
-        layers: true,
-      };
-
-      // 开启该插件会导致 pglite 的 fs bundler 被改表
-      if (enableReactScan) {
-        baseWebpackConfig.plugins.push(ReactComponentName({}));
-      }
-
-      // to fix shikiji compile error
-      // refs: https://github.com/antfu/shikiji/issues/23
-      baseWebpackConfig.module.rules.push({
-        resolve: {
-          fullySpecified: false,
-        },
-        test: /\.m?js$/,
-        type: 'javascript/auto',
-      });
-
-      // https://github.com/pinojs/pino/issues/688#issuecomment-637763276
-      baseWebpackConfig.externals.push('pino-pretty');
-
-      baseWebpackConfig.resolve.alias.canvas = false;
-
-      // to ignore epub2 compile error
-      // refs: https://github.com/lobehub/lobe-chat/discussions/6769
-      baseWebpackConfig.resolve.fallback = {
-        ...baseWebpackConfig.resolve.fallback,
-        zipfile: false,
-      };
-
-      if (
-        assetPrefix &&
-        (assetPrefix.startsWith('http://') || assetPrefix.startsWith('https://'))
-      ) {
-        // fix the Worker URL cross-origin issue
-        // refs: https://github.com/lobehub/lobe-chat/pull/9624
-        baseWebpackConfig.module.rules.push({
-          generator: {
-            // @see https://webpack.js.org/configuration/module/#rulegeneratorpublicpath
-            publicPath: '/_next/',
-          },
-          test: /worker\.ts$/,
-          // @see https://webpack.js.org/guides/asset-modules/
-          type: 'asset/resource',
-        });
-      }
-
-      const updatedConfig = baseWebpackConfig;
-
-      if (config.webpack) {
-        return config.webpack(updatedConfig, options);
-      }
-
-      return updatedConfig;
-    },
   };
 
-  const noWrapper = (config: NextConfig) => config;
-
-  const withBundleAnalyzer = process.env.ANALYZE === 'true' ? analyzer() : noWrapper;
-
-  const withPWA = isProd
-    ? withSerwistInit({
-        register: false,
-        swDest: 'public/sw.js',
-        swSrc: 'src/app/sw.ts',
-      })
-    : noWrapper;
-
-  return withBundleAnalyzer(withPWA(nextConfig as NextConfig));
+  return nextConfig;
 }

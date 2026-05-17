@@ -1,4 +1,4 @@
-import { Pool as NeonPool, neonConfig } from '@neondatabase/serverless';
+import { neonConfig, Pool as NeonPool } from '@neondatabase/serverless';
 import { drizzle as neonDrizzle } from 'drizzle-orm/neon-serverless';
 import { drizzle as nodeDrizzle } from 'drizzle-orm/node-postgres';
 import { Pool as NodePool } from 'pg';
@@ -7,7 +7,7 @@ import ws from 'ws';
 import { serverDBEnv } from '@/config/db';
 
 import * as schema from '../schemas';
-import { LobeChatDatabase } from '../type';
+import type { LobeChatDatabase } from '../type';
 
 export const getDBInstance = (): LobeChatDatabase => {
   // In test environment, return a mock instance to avoid initialization errors
@@ -22,7 +22,7 @@ If you don't have it, please run \`openssl rand -base64 32\` to create one.
     );
   }
 
-  let connectionString = serverDBEnv.DATABASE_URL;
+  const connectionString = serverDBEnv.DATABASE_URL;
 
   if (!connectionString) {
     throw new Error(`You are try to use database, but "DATABASE_URL" is not set correctly`);
@@ -30,6 +30,16 @@ If you don't have it, please run \`openssl rand -base64 32\` to create one.
 
   if (serverDBEnv.DATABASE_DRIVER === 'node') {
     const client = new NodePool({ connectionString });
+    // pg.Pool emits 'error' on idle clients when the backend connection drops.
+    // Without a listener Node escalates it to uncaughtException and exits the process.
+    // See: https://node-postgres.com/apis/pool#error
+    client.on('error', (err) => {
+      console.error('[NodePool] idle client error (swallowed to prevent process crash):', {
+        code: (err as NodeJS.ErrnoException).code,
+        message: err.message,
+        stack: err.stack,
+      });
+    });
     return nodeDrizzle(client, { schema });
   }
 
@@ -39,5 +49,15 @@ If you don't have it, please run \`openssl rand -base64 32\` to create one.
   }
 
   const client = new NeonPool({ connectionString });
+  // NeonPool runs over WebSocket; transient drops surface as 'error' on the pool.
+  // Without a listener Node escalates it to uncaughtException — on Vercel this killed
+  // the entire Lambda 1800+ times in 5 minutes (see LOBE-8704).
+  client.on('error', (err: Error) => {
+    console.error('[NeonPool] idle client error (swallowed to prevent process crash):', {
+      code: (err as NodeJS.ErrnoException).code,
+      message: err.message,
+      stack: err.stack,
+    });
+  });
   return neonDrizzle(client, { schema });
 };

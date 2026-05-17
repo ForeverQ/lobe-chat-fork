@@ -1,3 +1,4 @@
+import { HotkeyEnum } from '@lobechat/const/hotkeys';
 import { Popconfirm } from 'antd';
 import { Eraser } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
@@ -8,7 +9,6 @@ import { useChatStore } from '@/store/chat';
 import { useFileStore } from '@/store/file';
 import { useUserStore } from '@/store/user';
 import { settingsSelectors } from '@/store/user/selectors';
-import { HotkeyEnum } from '@/types/hotkey';
 
 import Action from '../components/Action';
 
@@ -38,8 +38,6 @@ const Clear = memo(() => {
     <Popconfirm
       arrow={false}
       okButtonProps={{ danger: true, type: 'primary' }}
-      onConfirm={clearCurrentMessages}
-      onOpenChange={updateConfirmOpened}
       open={confirmOpened}
       placement={popconfirmPlacement}
       title={
@@ -47,6 +45,8 @@ const Clear = memo(() => {
           {t('confirmClearCurrentMessages', { ns: 'chat' })}
         </div>
       }
+      onConfirm={clearCurrentMessages}
+      onOpenChange={updateConfirmOpened}
     >
       <Action
         icon={Eraser}

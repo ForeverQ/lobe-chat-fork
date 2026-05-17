@@ -1,5 +1,7 @@
-import { Flexbox, type FlexboxProps, TooltipGroup } from '@lobehub/ui';
-import { type CSSProperties, type ReactNode, memo } from 'react';
+import { type FlexboxProps } from '@lobehub/ui';
+import { Flexbox, TooltipGroup } from '@lobehub/ui';
+import { type CSSProperties, type ReactNode } from 'react';
+import { memo } from 'react';
 
 import ToggleLeftPanelButton from '@/features/NavPanel/ToggleLeftPanelButton';
 import { useGlobalStore } from '@/store/global';
@@ -10,6 +12,11 @@ export interface NavHeaderProps extends Omit<FlexboxProps, 'children'> {
   left?: ReactNode;
   right?: ReactNode;
   showTogglePanelButton?: boolean;
+  slotClassNames?: {
+    center?: string;
+    left?: string;
+    right?: string;
+  };
   styles?: {
     center?: CSSProperties;
     left?: CSSProperties;
@@ -18,7 +25,16 @@ export interface NavHeaderProps extends Omit<FlexboxProps, 'children'> {
 }
 
 const NavHeader = memo<NavHeaderProps>(
-  ({ showTogglePanelButton = true, style, children, left, right, styles, ...rest }) => {
+  ({
+    showTogglePanelButton = true,
+    style,
+    children,
+    left,
+    right,
+    slotClassNames,
+    styles,
+    ...rest
+  }) => {
     const expand = useGlobalStore(systemStatusSelectors.showLeftPanel);
 
     const noContent = !left && !right;
@@ -27,27 +43,43 @@ const NavHeader = memo<NavHeaderProps>(
 
     return (
       <Flexbox
+        allowShrink
+        horizontal
         align={'center'}
         flex={'none'}
         gap={4}
         height={44}
-        horizontal
         justify={'space-between'}
         padding={8}
         style={style}
         {...rest}
       >
         <TooltipGroup>
-          <Flexbox align={'center'} gap={2} horizontal justify={'flex-start'} style={styles?.left}>
+          <Flexbox
+            allowShrink
+            horizontal
+            align={'center'}
+            className={slotClassNames?.left}
+            gap={2}
+            justify={'flex-start'}
+            style={styles?.left}
+          >
             {showTogglePanelButton && !expand && <ToggleLeftPanelButton />}
             {left}
           </Flexbox>
           {children && (
-            <Flexbox flex={1} style={styles?.center}>
+            <Flexbox className={slotClassNames?.center} flex={1} style={styles?.center}>
               {children}
             </Flexbox>
           )}
-          <Flexbox align={'center'} gap={2} horizontal justify={'flex-end'} style={styles?.right}>
+          <Flexbox
+            horizontal
+            align={'center'}
+            className={slotClassNames?.right}
+            gap={2}
+            justify={'flex-end'}
+            style={styles?.right}
+          >
             {right}
           </Flexbox>
         </TooltipGroup>

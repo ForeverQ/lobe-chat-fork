@@ -1,17 +1,14 @@
-import type { LobeToolManifest } from '@lobechat/context-engine';
+import { type LobeToolManifest } from '@lobechat/context-engine';
 import { MarketSDK } from '@lobehub/market-sdk';
 import debug from 'debug';
 import { type NextRequest } from 'next/server';
 
-import {
-  type TrustedClientUserInfo,
-  generateTrustedClientToken,
-  getTrustedClientTokenForSession,
-} from '@/libs/trusted-client';
+import { type TrustedClientUserInfo } from '@/libs/trusted-client';
+import { generateTrustedClientToken, getTrustedClientTokenForSession } from '@/libs/trusted-client';
 
 const log = debug('lobe-server:market-service');
 
-const MARKET_BASE_URL = process.env.NEXT_PUBLIC_MARKET_BASE_URL || 'https://market.lobehub.com';
+const MARKET_BASE_URL = process.env.MARKET_BASE_URL || 'https://market.lobehub.com';
 
 // ============================== Helper Functions ==============================
 
@@ -28,6 +25,9 @@ export function extractAccessToken(req: NextRequest): string | undefined {
 
 export interface LobehubSkillExecuteParams {
   args: Record<string, any>;
+  context?: {
+    topicId?: string;
+  };
   provider: string;
   toolName: string;
 }
@@ -388,7 +388,74 @@ export class MarketService {
     await this.market.user.register(params);
   }
 
-  // ============================== Skills Methods ==============================
+  // ============================== Skills Methods (using SDK) ==============================
+
+  /**
+   * Search for skills in the LobeHub Market
+   */
+  async searchSkill(params: {
+    category?: string;
+    locale?: string;
+    order?: 'asc' | 'desc';
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    sort?:
+      | 'createdAt'
+      | 'forks'
+      | 'installCount'
+      | 'name'
+      | 'relevance'
+      | 'stars'
+      | 'updatedAt'
+      | 'watchers';
+  }) {
+    log('searchSkill: %O', params);
+
+    const result = await this.market.marketSkills.getSkillList(params);
+
+    log('searchSkill response: %O', result);
+
+    return result;
+  }
+
+  /**
+   * Get skill detail from market
+   */
+  async getSkillDetail(identifier: string, options?: { locale?: string; version?: string }) {
+    log('getSkillDetail: %s, options: %O', identifier, options);
+
+    const result = await this.market.marketSkills.getSkillDetail(identifier, options);
+
+    log('getSkillDetail response: %O', result);
+
+    return result;
+  }
+
+  /**
+   * Get skill download URL from market
+   */
+  getSkillDownloadUrl(identifier: string, version?: string): string {
+    return this.market.marketSkills.getDownloadUrl(identifier, version);
+  }
+
+  /**
+   * Download skill ZIP directly
+   */
+  async downloadSkill(identifier: string, version?: string) {
+    log('downloadSkill: %s, version: %s', identifier, version);
+
+    return this.market.marketSkills.downloadSkill(identifier, version);
+  }
+
+  /**
+   * Get skill categories
+   */
+  async getSkillCategories() {
+    log('getSkillCategories');
+
+    return this.market.marketSkills.getCategories();
+  }
 
   /**
    * Execute a LobeHub Skill tool
@@ -396,13 +463,15 @@ export class MarketService {
    * @returns Execution result with content and success status
    */
   async executeLobehubSkill(params: LobehubSkillExecuteParams): Promise<LobehubSkillExecuteResult> {
-    const { provider, toolName, args } = params;
+    const { provider, toolName, args, context } = params;
 
-    log('executeLobehubSkill: %s/%s with args: %O', provider, toolName, args);
+    log('executeLobehubSkill: %s/%s with args: %O, context: %O', provider, toolName, args, context);
 
     try {
       const response = await this.market.skills.callTool(provider, {
         args,
+        // @ts-ignore
+        topicId: context?.topicId,
         tool: toolName,
       });
 
@@ -416,9 +485,19 @@ export class MarketService {
       const err = error as Error;
       console.error('MarketService.executeLobehubSkill error %s/%s: %O', provider, toolName, err);
 
+      // MarketAPIError carries the full error response body from the API,
+      // including structured details (command, exitCode, stdout, stderr).
+      // Extract it so the content is not empty on failure.
+      const errorBody = (err as any).errorBody;
+      const skillError = errorBody?.error;
+      const content = skillError ? JSON.stringify(skillError) : err.message;
+
       return {
-        content: err.message,
-        error: { code: 'LOBEHUB_SKILL_ERROR', message: err.message },
+        content,
+        error: {
+          code: skillError?.code || 'LOBEHUB_SKILL_ERROR',
+          message: skillError?.message || err.message,
+        },
         success: false,
       };
     }
@@ -452,11 +531,24 @@ export class MarketService {
             log('getLobehubSkillManifests: connection missing providerId: %O', connection);
             continue;
           }
-          const providerName =
-            (connection as any).providerName || (connection as any).name || providerId;
           const icon = (connection as any).icon;
 
-          const { tools } = await this.market.skills.listTools(providerId);
+          // Look up the provider's display name from the static registry.
+          // connection.providerName is the *user's* display name on that provider,
+          // NOT the provider's own name (e.g., "LiJian" instead of "Linear").
+          // Static label map — avoids importing LOBEHUB_SKILL_PROVIDERS which
+          // pulls in react-icons (client-side only). Keep in sync with lobehubSkill.ts.
+          const PROVIDER_LABELS: Record<string, string> = {
+            github: 'GitHub',
+            linear: 'Linear',
+            microsoft: 'Outlook Calendar',
+            notion: 'Notion',
+            twitter: 'X (Twitter)',
+            vercel: 'Vercel',
+          };
+          const providerLabel = PROVIDER_LABELS[providerId] || providerId;
+
+          const { tools, instruction } = await this.market.skills.listTools(providerId);
           if (!tools || tools.length === 0) continue;
 
           const manifest: LobeToolManifest = {
@@ -468,10 +560,11 @@ export class MarketService {
             identifier: providerId,
             meta: {
               avatar: icon || '🔗',
-              description: `LobeHub Skill: ${providerName}`,
+              description: `LobeHub Skill: ${providerLabel}`,
               tags: ['lobehub-skill', providerId],
-              title: providerName,
+              title: providerLabel,
             },
+            systemRole: instruction || undefined,
             type: 'builtin',
           };
 
@@ -491,6 +584,68 @@ export class MarketService {
       log('getLobehubSkillManifests: error fetching skills: %O', error);
       return [];
     }
+  }
+
+  // ============================== Creds Methods ==============================
+
+  /**
+   * Upload credential file to Market API
+   * This method directly calls the Market API since SDK doesn't support file upload yet
+   *
+   * @param file - File content as base64 string
+   * @param fileName - Original file name
+   * @param fileType - MIME type of the file
+   * @returns Upload result with fileHashId
+   */
+  async uploadCredFile(params: {
+    file: string; // base64 encoded file content
+    fileName: string;
+    fileType: string;
+  }): Promise<{ fileHashId: string; fileName: string; fileSize: number; fileType: string }> {
+    const { file, fileName, fileType } = params;
+
+    log('uploadCredFile: fileName=%s, fileType=%s', fileName, fileType);
+
+    // Convert base64 to Blob
+    const binaryString = atob(file);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    const blob = new Blob([bytes], { type: fileType });
+
+    // Create FormData
+    const formData = new FormData();
+    formData.append('file', blob, fileName);
+
+    // Extract only auth headers (not Content-Type, which would break multipart/form-data)
+    // @ts-ignore - market.headers contains auth headers
+    const sdkHeaders = this.market.headers as Record<string, string>;
+    const authHeaders: Record<string, string> = {};
+    for (const [key, value] of Object.entries(sdkHeaders)) {
+      // Only include authorization-related headers, skip Content-Type
+      if (key.toLowerCase() !== 'content-type') {
+        authHeaders[key] = value;
+      }
+    }
+
+    // Call Market API directly
+    const uploadUrl = `${MARKET_BASE_URL}/api/v1/user/creds/upload`;
+    const response = await fetch(uploadUrl, {
+      body: formData,
+      headers: authHeaders,
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      log('uploadCredFile error: %O', errorData);
+      throw new Error(errorData.message || `Upload failed with status ${response.status}`);
+    }
+
+    const result = await response.json();
+    log('uploadCredFile success: fileHashId=%s', result.fileHashId);
+    return result;
   }
 
   // ============================== Direct SDK Access ==============================

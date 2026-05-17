@@ -1,12 +1,12 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { major, minor } from 'semver';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { withSWR } from '~test-utils';
 
 import { CURRENT_VERSION } from '@/const/version';
 import { globalService } from '@/services/global';
 import { useGlobalStore } from '@/store/global/index';
 import { initialState } from '@/store/global/initialState';
+import { withSWR } from '~test-utils';
 
 vi.mock('zustand/traditional');
 
@@ -269,7 +269,7 @@ describe('createPreferenceSlice', () => {
       const navigate = vi.fn();
 
       act(() => {
-        useGlobalStore.setState({ navigate });
+        useGlobalStore.setState({ navigationRef: { current: navigate } });
         result.current.switchBackToChat(sessionId);
       });
 
@@ -406,6 +406,69 @@ describe('createPreferenceSlice', () => {
       });
 
       expect(result.current.status.noWideScreen).toEqual(false);
+    });
+  });
+
+  describe('revealInFilesTab', () => {
+    it('should set workingSidebarTab to files', () => {
+      const { result } = renderHook(() => useGlobalStore());
+
+      act(() => {
+        useGlobalStore.setState({ isStatusInit: true });
+        result.current.updateSystemStatus({ workingSidebarTab: 'review' });
+        result.current.revealInFilesTab('src/foo/bar.ts');
+      });
+
+      expect(result.current.status.workingSidebarTab).toBe('files');
+    });
+
+    it('should set workingSidebarRevealRequest with the given path and a positive nonce', () => {
+      const { result } = renderHook(() => useGlobalStore());
+
+      act(() => {
+        useGlobalStore.setState({ isStatusInit: true });
+        result.current.revealInFilesTab('src/foo/bar.ts');
+      });
+
+      expect(result.current.status.workingSidebarRevealRequest?.path).toBe('src/foo/bar.ts');
+      expect(result.current.status.workingSidebarRevealRequest?.nonce).toBeGreaterThan(0);
+    });
+
+    it('should produce a different nonce when called twice with the same path', async () => {
+      const { result } = renderHook(() => useGlobalStore());
+
+      let firstNonce: number | undefined;
+
+      act(() => {
+        useGlobalStore.setState({ isStatusInit: true });
+        result.current.revealInFilesTab('src/foo/bar.ts');
+        firstNonce = useGlobalStore.getState().status.workingSidebarRevealRequest?.nonce;
+      });
+
+      await new Promise((r) => setTimeout(r, 2));
+
+      act(() => {
+        result.current.revealInFilesTab('src/foo/bar.ts');
+      });
+
+      const secondNonce = result.current.status.workingSidebarRevealRequest?.nonce;
+      expect(secondNonce).not.toBe(firstNonce);
+    });
+
+    it('should reset workingSidebarRevealRequest to undefined on initSystemStatus', async () => {
+      vi.spyOn(useGlobalStore.getState().statusStorage, 'getFromLocalStorage').mockReturnValueOnce({
+        workingSidebarRevealRequest: { nonce: 12345, path: 'src/old.ts' },
+      } as any);
+
+      const { result } = renderHook(() => useGlobalStore().useInitSystemStatus(), {
+        wrapper: withSWR,
+      });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(useGlobalStore.getState().status.workingSidebarRevealRequest).toBeUndefined();
     });
   });
 });

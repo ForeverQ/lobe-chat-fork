@@ -1,7 +1,7 @@
 import { Center, Checkbox, Flexbox, Skeleton } from '@lobehub/ui';
 import { cssVar } from 'antd-style';
 
-import { FILE_DATE_WIDTH, FILE_SIZE_WIDTH } from './ListItem';
+import { FILE_DATE_WIDTH, FILE_SIZE_WIDTH } from './ListItem/constants';
 
 interface ListViewSkeletonProps {
   columnWidths?: {
@@ -23,9 +23,9 @@ const ListViewSkeleton = ({
     <Flexbox>
       {Array.from({ length: count }).map((_, index) => (
         <Flexbox
+          horizontal
           align={'center'}
           height={48}
-          horizontal
           key={index}
           paddingInline={8}
           style={{
@@ -38,8 +38,8 @@ const ListViewSkeleton = ({
             <Checkbox disabled />
           </Center>
           <Flexbox
-            align={'center'}
             horizontal
+            align={'center'}
             style={{
               flexShrink: 0,
               maxWidth: columnWidths.name,

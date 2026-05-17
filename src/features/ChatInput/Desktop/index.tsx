@@ -1,25 +1,32 @@
 'use client';
 
-import { ChatInput, ChatInputActionBar, type ChatInputProps } from '@lobehub/editor/react';
-import { Center, Flexbox, Text } from '@lobehub/ui';
+import { type ChatInputProps } from '@lobehub/editor/react';
+import { ChatInput, ChatInputActionBar } from '@lobehub/editor/react';
+import { Center, Flexbox, Skeleton, Text } from '@lobehub/ui';
 import { createStaticStyles, cx } from 'antd-style';
-import { type ReactNode, memo, useEffect } from 'react';
+import { type ReactNode, use } from 'react';
+import { memo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
 import { useChatInputStore } from '@/features/ChatInput/store';
+import { LayoutContainerContext } from '@/routes/(main)/_layout/DesktopLayoutContainer/LayoutContainerContext';
 import { useChatStore } from '@/store/chat';
 import { chatSelectors } from '@/store/chat/selectors';
 import { fileChatSelectors, useFileStore } from '@/store/file';
 import { useGlobalStore } from '@/store/global';
 import { systemStatusSelectors } from '@/store/global/selectors';
 
-import ActionBar, { type ActionToolbarProps } from '../ActionBar';
+import { type ActionToolbarProps } from '../ActionBar';
+import ActionBar from '../ActionBar';
 import InputEditor from '../InputEditor';
+import { type PlaceholderVariant } from '../InputEditor/Placeholder';
+import RuntimeConfig from '../RuntimeConfig';
 import SendArea from '../SendArea';
 import TypoBar from '../TypoBar';
 import ContextContainer from './ContextContainer';
 
-const styles = createStaticStyles(({ css }) => ({
+const styles = createStaticStyles(({ css, cssVar }) => ({
   container: css`
     .show-on-hover {
       opacity: 0;
@@ -42,6 +49,8 @@ const styles = createStaticStyles(({ css }) => ({
     width: 100%;
     height: 100%;
     margin-block-start: 0;
+
+    background: ${cssVar.colorBgContainer};
   `,
   inputFullscreen: css`
     border: none;
@@ -50,14 +59,49 @@ const styles = createStaticStyles(({ css }) => ({
 }));
 
 interface DesktopChatInputProps extends ActionToolbarProps {
-  extenHeaderContent?: ReactNode;
+  actionBarStyle?: React.CSSProperties;
+  extentHeaderContent?: ReactNode;
   inputContainerProps?: ChatInputProps;
+  /**
+   * Swap the action bar and send area for skeleton placeholders while
+   * the underlying agent / group / session config is still hydrating.
+   * The editor itself stays usable. Wins over `leftContent` / `rightContent`.
+   */
+  isConfigLoading?: boolean;
+  leftContent?: ReactNode;
+  placeholder?: ReactNode;
+  placeholderVariant?: PlaceholderVariant;
+  rightContent?: ReactNode;
+  /**
+   * Custom node to render in place of the default RuntimeConfig bar.
+   * When provided, used instead of `<RuntimeConfig />` (ignores `showRuntimeConfig`).
+   */
+  runtimeConfigSlot?: ReactNode;
+  sendAreaPrefix?: ReactNode;
   showFootnote?: boolean;
+  showRuntimeConfig?: boolean;
 }
 
 const DesktopChatInput = memo<DesktopChatInputProps>(
-  ({ showFootnote, inputContainerProps, extenHeaderContent, dropdownPlacement }) => {
+  ({
+    showFootnote,
+    showRuntimeConfig = true,
+    runtimeConfigSlot,
+    inputContainerProps,
+    extentHeaderContent,
+    actionBarStyle,
+    borderRadius,
+    extraActionItems,
+    dropdownPlacement,
+    isConfigLoading = false,
+    leftContent,
+    placeholder,
+    placeholderVariant,
+    rightContent,
+    sendAreaPrefix,
+  }) => {
     const { t } = useTranslation('chat');
+    const layoutContainerRef = use(LayoutContainerContext);
     const [chatInputHeight, updateSystemStatus] = useGlobalStore((s) => [
       systemStatusSelectors.chatInputHeight(s),
       s.updateSystemStatus,
@@ -74,50 +118,89 @@ const DesktopChatInput = memo<DesktopChatInputProps>(
 
     const chatKey = useChatStore(chatSelectors.currentChatKey);
 
+    const setExpand = useChatInputStore((s) => s.setExpand);
+
     useEffect(() => {
       if (editor) editor.focus();
-    }, [chatKey, editor]);
+      setExpand(false);
+    }, [chatKey, editor, setExpand]);
 
     const shouldShowContextContainer =
       leftActions.flat().includes('fileUpload') || hasContextSelections || hasFiles;
     const contextContainerNode = shouldShowContextContainer && <ContextContainer />;
 
-    return (
+    const loadingLeftSlot = isConfigLoading ? (
+      <Flexbox horizontal align="center" gap={6} paddingInline={4}>
+        <Skeleton.Button active shape="circle" size="small" style={{ height: 28, width: 28 }} />
+        <Skeleton.Button active shape="circle" size="small" style={{ height: 28, width: 28 }} />
+      </Flexbox>
+    ) : null;
+    const loadingRightSlot = isConfigLoading ? (
+      <Skeleton.Button
+        active
+        shape="round"
+        size="small"
+        style={{ height: 32, minWidth: 64, width: 64 }}
+      />
+    ) : null;
+
+    const content = (
       <Flexbox
         className={cx(styles.container, expand && styles.fullscreen)}
         gap={8}
-        paddingBlock={expand ? 0 : showFootnote ? '0 12px' : '0 16px'}
+        paddingBlock={expand ? 0 : showFootnote ? '0 12px' : '0 8px'}
       >
         <ChatInput
           data-testid="chat-input"
           defaultHeight={chatInputHeight || 32}
+          fullscreen={expand}
+          maxHeight={320}
+          minHeight={36}
+          resize={true}
+          slashMenuRef={slashMenuRef}
           footer={
             <ChatInputActionBar
-              left={<ActionBar dropdownPlacement={dropdownPlacement} />}
-              right={<SendArea />}
-              style={{ paddingRight: 8 }}
+              style={actionBarStyle ?? { paddingRight: 8 }}
+              left={
+                loadingLeftSlot ??
+                leftContent ?? (
+                  <ActionBar
+                    borderRadius={borderRadius}
+                    dropdownPlacement={dropdownPlacement}
+                    extraActionItems={extraActionItems}
+                  />
+                )
+              }
+              right={
+                loadingRightSlot ??
+                rightContent ??
+                (sendAreaPrefix ? (
+                  <Flexbox horizontal align={'center'} gap={6}>
+                    {sendAreaPrefix}
+                    <SendArea />
+                  </Flexbox>
+                ) : (
+                  <SendArea />
+                ))
+              }
             />
           }
-          fullscreen={expand}
           header={
             <Flexbox gap={0}>
-              {extenHeaderContent}
+              {extentHeaderContent}
               {showTypoBar && <TypoBar />}
               {contextContainerNode}
             </Flexbox>
           }
-          maxHeight={320}
-          minHeight={36}
           onSizeChange={(height) => {
             updateSystemStatus({ chatInputHeight: height });
           }}
-          resize={true}
-          slashMenuRef={slashMenuRef}
           {...inputContainerProps}
           className={cx(expand && styles.inputFullscreen, inputContainerProps?.className)}
         >
-          <InputEditor />
+          <InputEditor placeholder={placeholder} placeholderVariant={placeholderVariant} />
         </ChatInput>
+        {runtimeConfigSlot ?? (showRuntimeConfig && <RuntimeConfig />)}
         {showFootnote && !expand && (
           <Center style={{ pointerEvents: 'none', zIndex: 100 }}>
             <Text className={styles.footnote} type={'secondary'}>
@@ -127,6 +210,11 @@ const DesktopChatInput = memo<DesktopChatInputProps>(
         )}
       </Flexbox>
     );
+
+    if (expand && layoutContainerRef.current)
+      return createPortal(content, layoutContainerRef.current);
+
+    return content;
   },
 );
 

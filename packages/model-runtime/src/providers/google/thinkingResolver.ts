@@ -1,4 +1,3 @@
-/* eslint-disable sort-keys-fix/sort-keys-fix*/
 /**
  * Google Gemini Thinking Resolver
  *
@@ -19,7 +18,7 @@ export type GoogleThinkingModelCategory = 'pro' | 'flash' | 'flashLite' | 'robot
 /**
  * Thinking level for Gemini 3.0+ models
  */
-export type GoogleThinkingLevel = 'low' | 'high';
+export type GoogleThinkingLevel = 'minimal' | 'low' | 'medium' | 'high';
 
 /**
  * Options for resolving Google thinking configuration
@@ -90,10 +89,13 @@ const THINKING_ENABLED_PATTERNS: RegExp[] = [
 ];
 
 /**
- * Patterns to detect Gemini 3.0+ models (which support thinkingLevel)
+ * Patterns to detect models that support thinkingLevel
+ * - Gemini 3.0+
+ * - Gemma 4
  */
 const GEMINI_3_PATTERNS: RegExp[] = [
   /gemini-3(?:\.\d+)?-/i, // gemini-3-pro, gemini-3.0-flash
+  /gemma-4(?:-|$)/i, // gemma-4-31b-it
 ];
 
 // ============================================================================
@@ -219,7 +221,10 @@ export const resolveGoogleThinkingBudget = (
 };
 
 /**
- * Determines if includeThoughts should be enabled
+ * Determines if includeThoughts should be enabled.
+ *
+ * Vertex AI rejects includeThoughts:true when thinking is not actually
+ * enabled, so we must only return true when thinking is genuinely active.
  */
 const shouldIncludeThoughts = (
   model: string,
@@ -228,19 +233,15 @@ const shouldIncludeThoughts = (
 ): boolean | undefined => {
   const { thinkingBudget, thinkingLevel } = options;
 
-  // Conditions that enable thinking:
-  // 1. thinkingBudget is explicitly set (and not 0)
-  // 2. thinkingLevel is explicitly set
-  // 3. Model is in the thinking-enabled list
-  const hasExplicitThinking = !!thinkingBudget || !!thinkingLevel;
-  const isThinkingModel = isThinkingEnabledModel(model);
+  // 1. No thinking signal at all → not applicable
+  if (!thinkingBudget && !thinkingLevel && !isThinkingEnabledModel(model)) return undefined;
 
-  // If thinking is requested AND budget is not 0, enable includeThoughts
-  if ((hasExplicitThinking || isThinkingModel) && resolvedBudget !== 0) {
-    return true;
-  }
+  // 2. Budget resolved to a number → active only when non-zero
+  if (typeof resolvedBudget === 'number') return resolvedBudget !== 0 ? true : undefined;
 
-  return undefined;
+  // 3. Budget is undefined (Gemini 3 default / "other" category) →
+  //    only thinkingLevel can activate thinking without a numeric budget
+  return thinkingLevel ? true : undefined;
 };
 
 /**

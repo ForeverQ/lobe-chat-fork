@@ -4,11 +4,15 @@ import debug from 'debug';
 
 import { type CloudMCPParams, type ToolCallContent } from '@/libs/mcp';
 import { contentBlocksToString } from '@/server/services/mcp/contentProcessor';
+import {
+  DEFAULT_TOOL_RESULT_MAX_LENGTH,
+  truncateToolResult,
+} from '@/server/utils/truncateToolResult';
 
 import { DiscoverService } from '../discover';
 import { type MCPService } from '../mcp';
-import { type PluginGatewayService } from '../pluginGateway';
 import { type BuiltinToolsExecutor } from './builtin';
+import { classifyToolError } from './errorClassification';
 import {
   type ToolExecutionContext,
   type ToolExecutionResult,
@@ -20,22 +24,46 @@ const log = debug('lobe-server:tool-execution-service');
 interface ToolExecutionServiceDeps {
   builtinToolsExecutor: BuiltinToolsExecutor;
   mcpService: MCPService;
-  pluginGatewayService: PluginGatewayService;
 }
+
+const normalizeExecutionError = (error: unknown, fallbackMessage: string) => {
+  const normalized = classifyToolError(error || fallbackMessage);
+  const message = fallbackMessage || normalized.message;
+
+  if (error && typeof error === 'object') {
+    if (error instanceof Error) {
+      return {
+        code: normalized.code,
+        kind: normalized.kind,
+        message: error.message || message,
+        name: error.name,
+      };
+    }
+
+    const plainError = error as Record<string, unknown>;
+
+    return {
+      ...plainError,
+      code: (plainError.code as string | undefined) || normalized.code,
+      kind: normalized.kind,
+      message: (plainError.message as string | undefined) || message,
+    };
+  }
+
+  if (typeof error === 'string') {
+    return { code: normalized.code, kind: normalized.kind, message: error };
+  }
+
+  return { code: normalized.code, kind: normalized.kind, message };
+};
 
 export class ToolExecutionService {
   private builtinToolsExecutor: BuiltinToolsExecutor;
   private mcpService: MCPService;
-  private pluginGatewayService: PluginGatewayService;
 
-  constructor({
-    mcpService,
-    pluginGatewayService,
-    builtinToolsExecutor,
-  }: ToolExecutionServiceDeps) {
+  constructor({ mcpService, builtinToolsExecutor }: ToolExecutionServiceDeps) {
     this.builtinToolsExecutor = builtinToolsExecutor;
     this.mcpService = mcpService;
-    this.pluginGatewayService = pluginGatewayService;
   }
 
   async executeTool(
@@ -51,27 +79,49 @@ export class ToolExecutionService {
       const typeStr = type as string;
       let data: ToolExecutionResult;
       switch (typeStr) {
-        case 'builtin': {
-          data = await this.builtinToolsExecutor.execute(payload, context);
-          break;
-        }
-
         case 'mcp': {
           data = await this.executeMCPTool(payload, context);
           break;
         }
 
+        case 'builtin':
         default: {
-          data = await this.pluginGatewayService.execute(payload, context);
-
+          data = await this.builtinToolsExecutor.execute(payload, context);
           break;
         }
       }
 
       const executionTime = Date.now() - startTime;
 
+      // Truncate result content to prevent context overflow
+      // Use agent-specific config if provided, otherwise use default
+      const truncatedContent = truncateToolResult(data.content, context.toolResultMaxLength);
+
+      // Log if content was truncated
+      if (truncatedContent !== data.content) {
+        const maxLength = context.toolResultMaxLength ?? DEFAULT_TOOL_RESULT_MAX_LENGTH;
+        log(
+          'Tool result truncated for %s:%s - original: %d chars, truncated: %d chars (limit: %d)',
+          identifier,
+          apiName,
+          data.content.length,
+          truncatedContent.length,
+          maxLength,
+        );
+      }
+
+      if (!data.success) {
+        return {
+          ...data,
+          content: truncatedContent,
+          error: normalizeExecutionError(data.error, data.content),
+          executionTime,
+        };
+      }
+
       return {
         ...data,
+        content: truncatedContent,
         executionTime,
       };
 
@@ -79,11 +129,11 @@ export class ToolExecutionService {
     } catch (error) {
       const executionTime = Date.now() - startTime;
       log('Error executing tool %s:%s: %O', identifier, apiName, error);
+      const errorMessage = (error as Error).message;
+
       return {
-        content: (error as Error).message,
-        error: {
-          message: (error as Error).message,
-        },
+        content: truncateToolResult(errorMessage),
+        error: normalizeExecutionError(error, errorMessage),
         executionTime,
         success: false,
       };
@@ -169,7 +219,7 @@ export class ToolExecutionService {
   private async executeCloudMCPTool(
     payload: ChatToolPayload,
     context: ToolExecutionContext,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
     _mcpParams: CloudMCPParams,
   ): Promise<ToolExecutionResult> {
     const { identifier, apiName, arguments: args } = payload;

@@ -8,12 +8,15 @@
  *
  * This module automatically resolves the full dependency tree.
  */
-import fs from 'node:fs';
 import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import {
+  copyModulesToDirectory,
+  copyModulesToSource,
+  getDependenciesForModules,
+  getModuleFilesConfig,
+  getModuleFilesPatterns,
+} from './module-deps.config.mjs';
 
 /**
  * Get the current target platform
@@ -24,6 +27,7 @@ function getTargetPlatform() {
   return process.env.npm_config_platform || os.platform();
 }
 const isDarwin = getTargetPlatform() === 'darwin';
+
 /**
  * List of native modules that need special handling
  * Only add the top-level native modules here - dependencies are resolved automatically
@@ -33,72 +37,34 @@ const isDarwin = getTargetPlatform() === 'darwin';
 export const nativeModules = [
   // macOS-only native modules
   ...(isDarwin ? ['node-mac-permissions'] : []),
-  // Add more native modules here as needed
-  // e.g., 'better-sqlite3', 'sharp', etc.
+  '@napi-rs/canvas',
+  'get-windows',
+  'node-screenshots',
 ];
-
-/**
- * Recursively resolve all dependencies of a module
- * @param {string} moduleName - The module to resolve
- * @param {Set<string>} visited - Set of already visited modules (to avoid cycles)
- * @param {string} nodeModulesPath - Path to node_modules directory
- * @returns {Set<string>} Set of all dependencies
- */
-function resolveDependencies(
-  moduleName,
-  visited = new Set(),
-  nodeModulesPath = path.join(__dirname, 'node_modules'),
-) {
-  if (visited.has(moduleName)) {
-    return visited;
-  }
-
-  const packageJsonPath = path.join(nodeModulesPath, moduleName, 'package.json');
-
-  // Check if module exists
-  if (!fs.existsSync(packageJsonPath)) {
-    return visited;
-  }
-
-  visited.add(moduleName);
-
-  try {
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-    const dependencies = packageJson.dependencies || {};
-
-    for (const dep of Object.keys(dependencies)) {
-      resolveDependencies(dep, visited, nodeModulesPath);
-    }
-  } catch {
-    // Ignore errors reading package.json
-  }
-
-  return visited;
-}
 
 /**
  * Get all dependencies for all native modules (including transitive dependencies)
  * @returns {string[]} Array of all dependency names
  */
-export function getAllDependencies() {
-  const allDeps = new Set();
-
-  for (const nativeModule of nativeModules) {
-    const deps = resolveDependencies(nativeModule);
-    for (const dep of deps) {
-      allDeps.add(dep);
-    }
-  }
-
-  return [...allDeps];
+export function getAllNativeDependencies() {
+  return getDependenciesForModules(nativeModules);
 }
 
 /**
  * Generate glob patterns for electron-builder files config
  * @returns {string[]} Array of glob patterns
  */
-export function getFilesPatterns() {
-  return getAllDependencies().map((dep) => `node_modules/${dep}/**/*`);
+export function getNativeModuleFilesPatterns() {
+  return getModuleFilesPatterns(nativeModules);
+}
+
+/**
+ * Generate files config objects for electron-builder to explicitly copy native modules.
+ * This uses object form to ensure scoped packages with pnpm symlinks are properly copied.
+ * @returns {Array<{from: string, to: string, filter: string[]}>}
+ */
+export function getNativeModulesFilesConfig() {
+  return getModuleFilesConfig(nativeModules);
 }
 
 /**
@@ -106,13 +72,31 @@ export function getFilesPatterns() {
  * @returns {string[]} Array of glob patterns
  */
 export function getAsarUnpackPatterns() {
-  return getAllDependencies().map((dep) => `node_modules/${dep}/**/*`);
+  return getNativeModuleFilesPatterns();
 }
 
 /**
  * Get the list of native dependencies for Vite external config
  * @returns {string[]} Array of dependency names
  */
-export function getExternalDependencies() {
-  return getAllDependencies();
+export function getNativeExternalDependencies() {
+  return getAllNativeDependencies();
+}
+
+/**
+ * Copy native modules to source node_modules, resolving pnpm symlinks.
+ * This is used in beforePack hook to ensure native modules are properly
+ * included in the asar archive (electron-builder glob doesn't follow symlinks).
+ */
+export async function copyNativeModulesToSource() {
+  await copyModulesToSource(nativeModules, 'native module');
+}
+
+/**
+ * Copy native modules to destination, resolving symlinks
+ * This is used in afterPack hook to handle pnpm symlinks correctly
+ * @param {string} destNodeModules - Destination node_modules path
+ */
+export async function copyNativeModules(destNodeModules) {
+  await copyModulesToDirectory(nativeModules, destNodeModules, 'native modules');
 }

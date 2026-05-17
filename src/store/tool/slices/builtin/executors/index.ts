@@ -5,18 +5,30 @@
  * Executors are registered as class instances by identifier.
  */
 import { agentBuilderExecutor } from '@lobechat/builtin-tool-agent-builder/executor';
+import { agentManagementExecutor } from '@lobechat/builtin-tool-agent-management/executor';
+import { calculatorExecutor } from '@lobechat/builtin-tool-calculator/executor';
 import { cloudSandboxExecutor } from '@lobechat/builtin-tool-cloud-sandbox/executor';
+import { credsExecutor } from '@lobechat/builtin-tool-creds/executor';
 import { groupAgentBuilderExecutor } from '@lobechat/builtin-tool-group-agent-builder/executor';
 import { groupManagementExecutor } from '@lobechat/builtin-tool-group-management/executor';
-import { gtdExecutor } from '@lobechat/builtin-tool-gtd/executor';
-import { knowledgeBaseExecutor } from '@lobechat/builtin-tool-knowledge-base/executor';
+import { knowledgeBaseExecutor } from '@lobechat/builtin-tool-knowledge-base/client';
+import { lobeAgentExecutor } from '@lobechat/builtin-tool-lobe-agent/client';
 import { localSystemExecutor } from '@lobechat/builtin-tool-local-system/executor';
 import { memoryExecutor } from '@lobechat/builtin-tool-memory/executor';
-import { notebookExecutor } from '@lobechat/builtin-tool-notebook/executor';
+import { taskExecutor } from '@lobechat/builtin-tool-task/client';
 
-import type { IBuiltinToolExecutor } from '../types';
+import type { BuiltinToolContext, BuiltinToolResult, IBuiltinToolExecutor } from '../types';
+import { activatorExecutor } from './lobe-activator';
+import { agentDocumentsExecutor } from './lobe-agent-documents';
+import { messageExecutor } from './lobe-message';
+import { notebookExecutor } from './lobe-notebook';
 import { pageAgentExecutor } from './lobe-page-agent';
+import { skillStoreExecutor } from './lobe-skill-store';
+import { skillsExecutor } from './lobe-skills';
+import { topicReferenceExecutor } from './lobe-topic-reference';
+import { userInteractionExecutor } from './lobe-user-interaction';
 import { webBrowsing } from './lobe-web-browsing';
+import { webOnboardingExecutor } from './lobe-web-onboarding';
 
 // ==================== Import and register all executors ====================
 
@@ -80,8 +92,8 @@ export const invokeExecutor = async (
   identifier: string,
   apiName: string,
   params: any,
-  ctx: import('../types').BuiltinToolContext,
-): Promise<import('../types').BuiltinToolResult> => {
+  ctx: BuiltinToolContext,
+): Promise<BuiltinToolResult> => {
   const executor = executorRegistry.get(identifier);
 
   if (!executor) {
@@ -121,14 +133,26 @@ const registerExecutors = (executors: IBuiltinToolExecutor[]): void => {
 // Register all executor instances
 registerExecutors([
   agentBuilderExecutor,
+  agentDocumentsExecutor,
+  agentManagementExecutor,
+  calculatorExecutor,
   cloudSandboxExecutor,
+  credsExecutor,
   groupAgentBuilderExecutor,
   groupManagementExecutor,
-  gtdExecutor,
   knowledgeBaseExecutor,
   localSystemExecutor,
   memoryExecutor,
+  messageExecutor,
   notebookExecutor,
   pageAgentExecutor,
+  skillStoreExecutor,
+  skillsExecutor,
+  taskExecutor,
+  activatorExecutor,
+  topicReferenceExecutor,
+  userInteractionExecutor,
+  lobeAgentExecutor,
+  webOnboardingExecutor,
   webBrowsing,
 ]);

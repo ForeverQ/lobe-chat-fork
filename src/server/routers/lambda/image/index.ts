@@ -1,18 +1,18 @@
+import { BRANDING_PROVIDER } from '@lobechat/business-const';
+import { resolveBusinessModelMapping } from '@lobechat/business-model-runtime';
+import { ChatErrorType } from '@lobechat/types';
+import { TRPCError } from '@trpc/server';
 import debug from 'debug';
 import { and, eq } from 'drizzle-orm';
+import { isLobeHubModelAvailable } from 'model-bank/lobehub';
 import { z } from 'zod';
 
 import { chargeBeforeGenerate } from '@/business/server/image-generation/chargeBeforeGenerate';
 import { AsyncTaskModel } from '@/database/models/asyncTask';
-import {
-  type NewGeneration,
-  type NewGenerationBatch,
-  asyncTasks,
-  generationBatches,
-  generations,
-} from '@/database/schemas';
+import { type NewGeneration, type NewGenerationBatch } from '@/database/schemas';
+import { asyncTasks, generationBatches, generations } from '@/database/schemas';
 import { authedProcedure, router } from '@/libs/trpc/lambda';
-import { keyVaults, serverDatabase } from '@/libs/trpc/lambda/middleware';
+import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { createAsyncCaller } from '@/server/routers/async/caller';
 import { FileService } from '@/server/services/file';
 import {
@@ -27,26 +27,16 @@ import { validateNoUrlsInConfig } from './utils';
 
 const log = debug('lobe-image:lambda');
 
-const imageProcedure = authedProcedure
-  .use(keyVaults)
-  .use(serverDatabase)
-  .use(async (opts) => {
-    const { ctx } = opts;
+const imageProcedure = authedProcedure.use(serverDatabase).use(async (opts) => {
+  const { ctx } = opts;
 
-    const { apiKey } = ctx.jwtPayload;
-    if (apiKey) {
-      log('API key found in jwtPayload: %s', apiKey);
-    } else {
-      log('No API key found in jwtPayload');
-    }
-
-    return opts.next({
-      ctx: {
-        asyncTaskModel: new AsyncTaskModel(ctx.serverDB, ctx.userId),
-        fileService: new FileService(ctx.serverDB, ctx.userId),
-      },
-    });
+  return opts.next({
+    ctx: {
+      asyncTaskModel: new AsyncTaskModel(ctx.serverDB, ctx.userId),
+      fileService: new FileService(ctx.serverDB, ctx.userId),
+    },
   });
+});
 
 const createImageInputSchema = z.object({
   generationTopicId: z.string(),
@@ -73,6 +63,19 @@ export const imageRouter = router({
     const { generationTopicId, provider, model, imageNum, params } = input;
 
     log('Starting image creation process, input: %O', input);
+
+    const { resolvedModelId } = await resolveBusinessModelMapping(provider, model);
+
+    // Reject lobehub model ids that are no longer in the model bank so callers get a
+    // clear error instead of an opaque downstream failure when the underlying channel
+    // can't serve the requested id.
+    if (provider === BRANDING_PROVIDER && !isLobeHubModelAvailable(resolvedModelId, 'image')) {
+      throw new TRPCError({
+        cause: { data: { modelType: 'image', requestedModel: model } },
+        code: 'BAD_REQUEST',
+        message: ChatErrorType.LobeHubModelDeprecated,
+      });
+    }
 
     // Normalize reference image addresses, store S3 keys uniformly (avoid storing expiring presigned URLs in database)
     let configForDatabase = { ...params };
@@ -293,7 +296,10 @@ export const imageRouter = router({
       }
     }
 
-    const createdGenerations = generationsWithTasks.map((item) => item.generation);
+    const createdGenerations = generationsWithTasks.map((item) => ({
+      ...item.generation,
+      asyncTaskId: item.asyncTaskId,
+    }));
     log('Image creation process completed successfully: %O', {
       batchId: createdBatch.id,
       generationCount: createdGenerations.length,

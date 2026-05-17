@@ -1,12 +1,14 @@
+import { type OpenAIChatMessage } from '@lobechat/types';
 import { type IEditor, type SlashOptions } from '@lobehub/editor';
-import type { ChatInputProps } from '@lobehub/editor/react';
-import type { MenuProps } from '@lobehub/ui';
+import { type ChatInputProps } from '@lobehub/editor/react';
+import { type MenuProps } from '@lobehub/ui';
 
 import { type ActionKeys } from '@/features/ChatInput';
 
 export type SendButtonHandler = (params: {
   clearContent: () => void;
   editor: IEditor;
+  getEditorData: () => Record<string, any> | undefined;
   getMarkdownContent: () => string;
 }) => Promise<void> | void;
 
@@ -15,6 +17,7 @@ export interface SendButtonProps {
   generating: boolean;
   onStop: (params: { editor: IEditor }) => void;
   shape?: 'round' | 'default';
+  size?: number;
 }
 
 export const initialSendButtonState: SendButtonProps = {
@@ -23,10 +26,26 @@ export const initialSendButtonState: SendButtonProps = {
   onStop: () => {},
 };
 
+export type SlashPlacement = 'top' | 'bottom';
+
+export interface ContextWindowMessage {
+  content: string;
+}
+
 export interface PublicState {
   agentId?: string;
   allowExpand?: boolean;
+  contextWindowMessages?: ContextWindowMessage[];
+  /**
+   * Disable @ mention trigger (no menu, no agent-assignment hint in placeholder)
+   */
+  disableMention?: boolean;
+  /**
+   * Disable / slash command trigger
+   */
+  disableSlash?: boolean;
   expand?: boolean;
+  getMessages?: () => OpenAIChatMessage[];
   leftActions: ActionKeys[];
   mentionItems?: SlashOptions['items'];
   mobile?: boolean;
@@ -36,9 +55,14 @@ export interface PublicState {
   sendButtonProps?: SendButtonProps;
   sendMenu?: MenuProps;
   showTypoBar?: boolean;
+  /**
+   * Slash menu placement: 'bottom' for home page (input in center), 'top' for page input (at bottom)
+   */
+  slashPlacement?: SlashPlacement;
 }
 
 export interface State extends PublicState {
+  _savedEditorState?: Record<string, any>;
   editor?: IEditor;
   isContentEmpty: boolean;
   markdownContent: string;
@@ -53,4 +77,5 @@ export const initialState: State = {
   markdownContent: '',
   rightActions: [],
   slashMenuRef: { current: null },
+  slashPlacement: 'top',
 };

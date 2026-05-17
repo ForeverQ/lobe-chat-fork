@@ -4,15 +4,23 @@ import type { SearchMemoryResult } from '@lobechat/types';
  * Search result item interfaces matching the SearchMemoryResult type
  */
 type ContextResult = SearchMemoryResult['contexts'][number];
+type ActivityResult = SearchMemoryResult['activities'][number];
 type ExperienceResult = SearchMemoryResult['experiences'][number];
+type IdentityResult = NonNullable<SearchMemoryResult['identities']>[number];
 type PreferenceResult = SearchMemoryResult['preferences'][number];
+
+const formatDate = (value?: string | Date | null) => {
+  if (!value) return value;
+
+  return value instanceof Date ? value.toISOString() : value;
+};
 
 /**
  * Format a single context memory item for search results
  * Format: attributes for metadata, description as text content
  */
 const formatContextResult = (item: ContextResult): string => {
-  const attrs: string[] = [`id="${item.id}"`];
+  const attrs: string[] = [`id="${item.id || ''}"`];
 
   if (item.title) {
     attrs.push(`title="${item.title}"`);
@@ -65,11 +73,53 @@ const formatContextResult = (item: ContextResult): string => {
 };
 
 /**
+ * Format a single activity memory item for search results
+ * Includes scheduling attributes and feedback
+ */
+const formatActivityResult = (item: ActivityResult): string => {
+  const attrs: string[] = [`id="${item.id || ''}"`];
+
+  if (item.type) {
+    attrs.push(`type="${item.type}"`);
+  }
+  if (item.status) {
+    attrs.push(`status="${item.status}"`);
+  }
+  const startsAt = formatDate(item.startsAt);
+  if (startsAt) {
+    attrs.push(`startsAt="${startsAt}"`);
+  }
+  const endsAt = formatDate(item.endsAt);
+  if (endsAt) {
+    attrs.push(`endsAt="${endsAt}"`);
+  }
+  if (item.timezone) {
+    attrs.push(`timezone="${item.timezone}"`);
+  }
+
+  const children: string[] = [];
+
+  if (item.feedback) {
+    children.push(`    <feedback>${item.feedback}</feedback>`);
+  }
+  if (item.narrative) {
+    children.push(`    <narrative>${item.narrative}</narrative>`);
+  }
+  if (item.notes) {
+    children.push(`    <notes>${item.notes}</notes>`);
+  }
+
+  const content = children.length > 0 ? `\n${children.join('\n')}\n  ` : '';
+
+  return `  <activity ${attrs.join(' ')}>${content}</activity>`;
+};
+
+/**
  * Format a single experience memory item for search results
  * Format: attributes for metadata, situation and keyLearning as child elements
  */
 const formatExperienceResult = (item: ExperienceResult): string => {
-  const attrs: string[] = [`id="${item.id}"`];
+  const attrs: string[] = [`id="${item.id || ''}"`];
 
   if (item.type) {
     attrs.push(`type="${item.type}"`);
@@ -97,7 +147,7 @@ const formatExperienceResult = (item: ExperienceResult): string => {
  * Format: attributes for metadata, directives as text content
  */
 const formatPreferenceResult = (item: PreferenceResult): string => {
-  const attrs: string[] = [`id="${item.id}"`];
+  const attrs: string[] = [`id="${item.id || ''}"`];
 
   if (item.type) {
     attrs.push(`type="${item.type}"`);
@@ -109,6 +159,18 @@ const formatPreferenceResult = (item: PreferenceResult): string => {
   const content = item.conclusionDirectives || '';
 
   return `  <preference ${attrs.join(' ')}>${content}</preference>`;
+};
+
+const formatIdentityResult = (item: IdentityResult): string => {
+  const attrs: string[] = [`id="${item.id || ''}"`];
+
+  if (item.type) attrs.push(`type="${item.type}"`);
+  if (item.relationship) attrs.push(`relationship="${item.relationship}"`);
+  if (item.role) attrs.push(`role="${item.role}"`);
+
+  const content = item.description || '';
+
+  return `  <identity ${attrs.join(' ')}>${content}</identity>`;
 };
 
 export interface FormatSearchResultsOptions {
@@ -129,8 +191,14 @@ export const formatMemorySearchResults = ({
   query,
   results,
 }: FormatSearchResultsOptions): string => {
-  const { contexts, experiences, preferences } = results;
-  const total = contexts.length + experiences.length + preferences.length;
+  const { activities, contexts, experiences, preferences } = results;
+  const identities = results.identities ?? [];
+  const total =
+    activities.length +
+    contexts.length +
+    experiences.length +
+    identities.length +
+    preferences.length;
 
   if (total === 0) {
     return `<memories query="${query}">
@@ -146,10 +214,20 @@ export const formatMemorySearchResults = ({
     sections.push(`<contexts count="${contexts.length}">\n${contextsXml}\n</contexts>`);
   }
 
+  if (activities.length > 0) {
+    const activitiesXml = activities.map(formatActivityResult).join('\n');
+    sections.push(`<activities count="${activities.length}">\n${activitiesXml}\n</activities>`);
+  }
+
   // Add experiences section
   if (experiences.length > 0) {
     const experiencesXml = experiences.map(formatExperienceResult).join('\n');
     sections.push(`<experiences count="${experiences.length}">\n${experiencesXml}\n</experiences>`);
+  }
+
+  if (identities.length > 0) {
+    const identitiesXml = identities.map(formatIdentityResult).join('\n');
+    sections.push(`<identities count="${identities.length}">\n${identitiesXml}\n</identities>`);
   }
 
   // Add preferences section

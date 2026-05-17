@@ -8,7 +8,6 @@ import { useTranslation } from 'react-i18next';
 
 import { ChatItem } from '@/features/Conversation/ChatItem';
 import TaskAvatar from '@/features/Conversation/Messages/Tasks/shared/TaskAvatar';
-import { useNewScreen } from '@/features/Conversation/Messages/components/useNewScreen';
 import { useOpenChatSettings } from '@/hooks/useInterceptingRoutes';
 import { useAgentStore } from '@/store/agent';
 import { builtinAgentSelectors } from '@/store/agent/selectors';
@@ -29,22 +28,20 @@ interface TaskMessageProps {
   isLatestItem?: boolean;
 }
 
-const TaskMessage = memo<TaskMessageProps>(({ id, index, disableEditing, isLatestItem }) => {
+const TaskMessage = memo<TaskMessageProps>(({ id, index, disableEditing }) => {
   const { t } = useTranslation('chat');
 
   // Get message and actionsConfig from ConversationStore
   const item = useConversationStore(dataSelectors.getDisplayMessageById(id), isEqual)!;
   const actionsConfig = useConversationStore((s) => s.actionsBar?.assistant);
 
-  const { agentId, error, role, content, createdAt, metadata, taskDetail } = item;
+  const { agentId, groupId, error, role, content, createdAt, metadata, taskDetail } = item;
 
   const avatar = useAgentMeta(agentId);
 
   // Get editing and generating state from ConversationStore
   const editing = useConversationStore(messageStateSelectors.isMessageEditing(id));
   const generating = useConversationStore(messageStateSelectors.isMessageGenerating(id));
-  const creating = useConversationStore(messageStateSelectors.isMessageCreating(id));
-  const newScreen = useNewScreen({ creating: generating || creating, isLatestItem });
 
   const errorContent = useErrorContent(error);
 
@@ -70,30 +67,32 @@ const TaskMessage = memo<TaskMessageProps>(({ id, index, disableEditing, isLates
 
   return (
     <ChatItem
+      showTitle
       aboveMessage={null}
-      actions={
-        <AssistantActionsBar actionsConfig={actionsConfig} data={item} id={id} index={index} />
-      }
+      actions={<AssistantActionsBar actionsConfig={actionsConfig} data={item} id={id} />}
       avatar={{ ...avatar, title }}
       customAvatarRender={(_, node) => <TaskAvatar>{node}</TaskAvatar>}
       customErrorRender={(error) => <ErrorMessageExtra data={item} error={error} />}
       editing={editing}
-      error={
-        errorContent && error && (message === LOADING_FLAT || !message) ? errorContent : undefined
-      }
       id={id}
       loading={generating}
       message={message}
-      newScreen={newScreen}
-      onAvatarClick={onAvatarClick}
-      onDoubleClick={onDoubleClick}
       placement={'left'}
-      showTitle
       time={createdAt}
       titleAddon={<Tag>{t('task.subtask')}</Tag>}
+      error={
+        errorContent && error && (message === LOADING_FLAT || !message) ? errorContent : undefined
+      }
+      onAvatarClick={onAvatarClick}
+      onDoubleClick={onDoubleClick}
     >
       {taskDetail?.clientMode ? (
-        <ClientTaskDetail messageId={id} taskDetail={taskDetail} />
+        <ClientTaskDetail
+          agentId={agentId !== 'supervisor' ? agentId : undefined}
+          groupId={groupId}
+          messageId={id}
+          taskDetail={taskDetail}
+        />
       ) : (
         <TaskDetailPanel
           content={content}

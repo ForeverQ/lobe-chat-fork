@@ -9,20 +9,25 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Install pnpm
-      uses: pnpm/action-setup@v4
-      with:
-        run_install: false
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v6
+    - name: Setup environment
+      uses: ./.github/actions/setup-env
       with:
         node-version: ${{ inputs.node-version }}
-        package-manager-cache: false
 
     - name: Install dependencies
       shell: bash
       run: pnpm install --node-linker=hoisted
+
+    # 移除国内 electron 镜像配置，GitHub Actions 使用官方源更快
+    - name: Remove China electron mirror from .npmrc
+      shell: bash
+      run: |
+        NPMRC_FILE="./apps/desktop/.npmrc"
+        if [ -f "$NPMRC_FILE" ]; then
+          sed -i.bak '/^electron_mirror=/d; /^electron_builder_binaries_mirror=/d' "$NPMRC_FILE"
+          rm -f "${NPMRC_FILE}.bak"
+          echo "✅ Removed electron mirror config from .npmrc"
+        fi
 
     - name: Install deps on Desktop
       shell: bash

@@ -1,22 +1,17 @@
-import { APP_WINDOW_MIN_SIZE, TITLE_BAR_HEIGHT } from '@lobechat/desktop-bridge';
-import { MainBroadcastEventKey, MainBroadcastParams } from '@lobechat/electron-client-ipc';
-import {
-  BrowserWindow,
-  BrowserWindowConstructorOptions,
-  Menu,
-  session as electronSession,
-  ipcMain,
-  screen,
-} from 'electron';
 import console from 'node:console';
-import { join } from 'node:path';
+import path from 'node:path';
+
+import { APP_WINDOW_MIN_SIZE } from '@lobechat/desktop-bridge';
+import type { MainBroadcastEventKey, MainBroadcastParams } from '@lobechat/electron-client-ipc';
+import type { BrowserWindowConstructorOptions } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, session as electronSession, shell } from 'electron';
 
 import { preloadDir, resourcesDir } from '@/const/dir';
-import { isDev, isMac } from '@/const/env';
+import { isMac } from '@/const/env';
 import { ELECTRON_BE_PROTOCOL_SCHEME } from '@/const/protocol';
 import RemoteServerConfigCtr from '@/controllers/RemoteServerConfigCtr';
 import { backendProxyProtocolManager } from '@/core/infrastructure/BackendProxyProtocolManager';
-import { setResponseHeader } from '@/utils/http-headers';
+import { appendVercelCookie, setResponseHeader } from '@/utils/http-headers';
 import { createLogger } from '@/utils/logger';
 
 import type { App } from '../App';
@@ -115,15 +110,22 @@ export default class Browser {
   // ==================== Window Creation ====================
 
   private createBrowserWindow(): BrowserWindow {
-    const { title, width, height, ...rest } = this.options;
+    const {
+      title,
+      width,
+      height,
+      // Strip platform visual effect props — these are managed exclusively
+      // by WindowThemeManager.getPlatformConfig() to prevent config leaking
+      // from appBrowsers/windowTemplates into the BrowserWindow constructor.
+      vibrancy: _vibrancy,
+      visualEffectState: _visualEffectState,
+      transparent: _transparent,
+      ...rest
+    } = this.options;
 
     const resolvedState = this.stateManager.resolveState({ height, width });
     logger.info(`Creating new BrowserWindow instance: ${this.identifier}`);
     logger.debug(`[${this.identifier}] Resolved window state: ${JSON.stringify(resolvedState)}`);
-
-    // Calculate traffic light position to center vertically in title bar
-    // Traffic light buttons are approximately 12px tall
-    const trafficLightY = Math.round((TITLE_BAR_HEIGHT - 12) / 2);
 
     return new BrowserWindow({
       ...rest,
@@ -134,18 +136,17 @@ export default class Browser {
       height: resolvedState.height,
       show: false,
       title,
-      trafficLightPosition: isMac ? { x: 12, y: trafficLightY } : undefined,
-      vibrancy: 'sidebar',
-      visualEffectState: 'active',
       webPreferences: {
         backgroundThrottling: false,
         contextIsolation: true,
-        preload: join(preloadDir, 'index.js'),
+        preload: path.join(preloadDir, 'index.js'),
         sandbox: false,
+        webviewTag: true,
       },
       width: resolvedState.width,
       x: resolvedState.x,
       y: resolvedState.y,
+      // Platform visual config is the SOLE source of vibrancy / transparency / titleBarOverlay.
       ...this.themeManager.getPlatformConfig(),
     });
   }
@@ -166,11 +167,14 @@ export default class Browser {
     // Setup devtools if enabled
     if (this.options.devTools) {
       logger.debug(`[${this.identifier}] Opening DevTools.`);
-      browserWindow.webContents.openDevTools();
+      browserWindow.webContents.openDevTools({ mode: 'detach' });
     }
 
     // Setup event listeners
     this.setupEventListeners(browserWindow);
+
+    // Setup external link handler (prevents opening new windows in renderer)
+    this.setupWindowOpenHandler(browserWindow);
   }
 
   private initiateContentLoading(): void {
@@ -192,7 +196,27 @@ export default class Browser {
     this.setupCloseListener(browserWindow);
     this.setupFocusListener(browserWindow);
     this.setupWillPreventUnloadListener(browserWindow);
-    this.setupDevContextMenu(browserWindow);
+    this.setupContextMenu(browserWindow);
+  }
+
+  /**
+   * Setup window open handler to intercept external links
+   * Prevents opening new windows in renderer and uses system browser instead
+   */
+  private setupWindowOpenHandler(browserWindow: BrowserWindow): void {
+    logger.debug(`[${this.identifier}] Setting up window open handler for external links`);
+
+    browserWindow.webContents.setWindowOpenHandler(({ url }) => {
+      logger.info(`[${this.identifier}] Intercepted window open for URL: ${url}`);
+
+      // Open external URL in system browser
+      shell.openExternal(url).catch((error) => {
+        logger.error(`[${this.identifier}] Failed to open external URL: ${url}`, error);
+      });
+
+      // Deny creating new window in renderer
+      return { action: 'deny' };
+    });
   }
 
   private setupWillPreventUnloadListener(browserWindow: BrowserWindow): void {
@@ -214,7 +238,7 @@ export default class Browser {
       logger.debug(`[${this.identifier}] Window 'ready-to-show' event fired.`);
       if (this.options.showOnInit) {
         logger.debug(`Showing window ${this.identifier} because showOnInit is true.`);
-        browserWindow.show();
+        this.show();
       } else {
         logger.debug(`Window ${this.identifier} not shown because showOnInit is false.`);
       }
@@ -235,43 +259,36 @@ export default class Browser {
     browserWindow.on('focus', () => {
       logger.debug(`[${this.identifier}] Window 'focus' event fired.`);
       this.broadcast('windowFocused');
+      // Clear any completion badge once the user returns to the app.
+      try {
+        app.setBadgeCount(0);
+        if (process.platform === 'darwin' && app.dock) app.dock.setBadge('');
+      } catch {
+        /* noop — some platforms may not support badge counts */
+      }
     });
   }
 
   /**
-   * Setup context menu with "Inspect Element" option in development mode
+   * Setup context menu with platform-specific features
+   * Delegates to MenuManager for consistent platform behavior
    */
-  private setupDevContextMenu(browserWindow: BrowserWindow): void {
-    if (!isDev) return;
-
-    logger.debug(`[${this.identifier}] Setting up dev context menu.`);
+  private setupContextMenu(browserWindow: BrowserWindow): void {
+    logger.debug(`[${this.identifier}] Setting up context menu.`);
 
     browserWindow.webContents.on('context-menu', (_event, params) => {
-      const { x, y } = params;
+      const { x, y, selectionText, linkURL, srcURL, mediaType, isEditable } = params;
 
-      const menu = Menu.buildFromTemplate([
-        {
-          click: () => {
-            browserWindow.webContents.inspectElement(x, y);
-          },
-          label: 'Inspect Element',
-        },
-        { type: 'separator' },
-        {
-          click: () => {
-            browserWindow.webContents.openDevTools();
-          },
-          label: 'Open DevTools',
-        },
-        {
-          click: () => {
-            browserWindow.webContents.reload();
-          },
-          label: 'Reload',
-        },
-      ]);
-
-      menu.popup({ window: browserWindow });
+      // Use the platform menu system with full context data
+      this.app.menuManager.showContextMenu('default', {
+        isEditable,
+        linkURL: linkURL || undefined,
+        mediaType: mediaType as any,
+        selectionText: selectionText || undefined,
+        srcURL: srcURL || undefined,
+        x,
+        y,
+      });
     });
   }
 
@@ -279,6 +296,7 @@ export default class Browser {
 
   show(): void {
     logger.debug(`Showing window: ${this.identifier}`);
+    this.ensureForegroundAppOnMac();
     if (!this._browserWindow?.isDestroyed()) {
       this.determineWindowPosition();
     }
@@ -311,7 +329,7 @@ export default class Browser {
     if (this._browserWindow?.isVisible() && this._browserWindow.isFocused()) {
       this.hide();
     } else {
-      this._browserWindow?.show();
+      this.show();
       this._browserWindow?.focus();
     }
   }
@@ -370,11 +388,22 @@ export default class Browser {
     this._browserWindow!.setPosition(newX, newY, false);
   }
 
+  private ensureForegroundAppOnMac(): void {
+    if (!isMac || this.identifier !== 'app') return;
+
+    try {
+      app.setActivationPolicy('regular');
+      app.dock?.show();
+    } catch (error) {
+      logger.warn(`[${this.identifier}] Failed to restore regular activation policy:`, error);
+    }
+  }
+
   // ==================== Content Loading ====================
 
   loadPlaceholder = async (): Promise<void> => {
     logger.debug(`[${this.identifier}] Loading splash screen placeholder`);
-    await this._browserWindow!.loadFile(join(resourcesDir, 'splash.html'));
+    await this._browserWindow!.loadFile(path.join(resourcesDir, 'splash.html'));
     logger.debug(`[${this.identifier}] Splash screen placeholder loaded.`);
   };
 
@@ -405,7 +434,7 @@ export default class Browser {
   private async handleLoadError(urlWithLocale: string): Promise<void> {
     try {
       logger.info(`[${this.identifier}] Attempting to load error page...`);
-      await this._browserWindow!.loadFile(join(resourcesDir, 'error.html'));
+      await this._browserWindow!.loadFile(path.join(resourcesDir, 'error.html'));
       logger.info(`[${this.identifier}] Error page loaded successfully.`);
 
       this.setupRetryHandler(urlWithLocale);
@@ -428,7 +457,7 @@ export default class Browser {
       } catch (err: any) {
         logger.error(`[${this.identifier}] Retry connection failed:`, err);
         try {
-          await this._browserWindow?.loadFile(join(resourcesDir, 'error.html'));
+          await this._browserWindow?.loadFile(path.join(resourcesDir, 'error.html'));
         } catch (loadErr) {
           logger.error(`[${this.identifier}] Failed to reload error page:`, loadErr);
         }
@@ -481,7 +510,7 @@ export default class Browser {
 
   /**
    * Setup CORS bypass for ALL requests
-   * In production, the renderer uses app://next protocol which triggers CORS
+   * In production, the renderer uses app://renderer protocol which triggers CORS
    */
   private setupCORSBypass(browserWindow: BrowserWindow): void {
     logger.debug(`[${this.identifier}] Setting up CORS bypass for all requests`);
@@ -497,6 +526,8 @@ export default class Browser {
         delete requestHeaders['Origin'];
         logger.debug(`[${this.identifier}] Removed Origin header for: ${details.url}`);
       }
+
+      appendVercelCookie(requestHeaders);
 
       callback({ requestHeaders });
     });

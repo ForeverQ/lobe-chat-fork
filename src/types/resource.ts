@@ -1,4 +1,4 @@
-import type { FilesTabs, SortType } from '@/types/files';
+import { type FilesTabs, type SortType } from '@/types/files';
 
 /**
  * Unified resource item that represents both files and documents
@@ -10,13 +10,14 @@ export interface ResourceItem {
     error?: Error;
     isPending: boolean;
     lastSyncAttempt?: Date;
+    queryKey?: string;
     retryCount: number;
   };
 
   chunkCount?: number | null;
-  chunkTaskId?: string | null;
   chunkingError?: any | null;
   chunkingStatus?: string | null;
+  chunkTaskId?: string | null;
 
   // Document-specific (optional)
   content?: string | null;
@@ -55,23 +56,6 @@ export interface ResourceItem {
 }
 
 /**
- * Sync operation queued for background processing
- */
-export interface SyncOperation {
-  id: string;
-  payload: any;
-  reject?: (reason?: any) => void;
-  // Promise resolver for async operations
-  resolve?: (value?: any) => void;
-  // Operation ID (sync-{resourceId}-{timestamp})
-  resourceId: string;
-  retryCount: number;
-  timestamp: Date;
-  // Resource ID (temp or real)
-  type: 'create' | 'update' | 'delete' | 'move';
-}
-
-/**
  * Query parameters for fetching resources
  */
 export interface ResourceQueryParams {
@@ -82,8 +66,8 @@ export interface ResourceQueryParams {
   parentId?: string | null;
   q?: string;
   showFilesInKnowledgeBase?: boolean;
-  sortType?: SortType;
   sorter?: 'name' | 'createdAt' | 'size';
+  sortType?: SortType;
 }
 
 /**

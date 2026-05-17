@@ -1,21 +1,41 @@
 'use client';
 
 import isEqual from 'fast-deep-equal';
-import { type ReactElement, type ReactNode, memo, useCallback, useEffect, useRef } from 'react';
-import { VList, type VListHandle } from 'virtua';
+import type { KeyboardEvent, PointerEvent, ReactElement, ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import type { VListHandle } from 'virtua';
+import { VList } from 'virtua';
+import { useShallow } from 'zustand/react/shallow';
+
+import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 
 import WideScreenContainer from '../../../WideScreenContainer';
-import { dataSelectors, useConversationStore, virtuaListSelectors } from '../../store';
-import { useScrollToUserMessage } from '../hooks/useScrollToUserMessage';
+import {
+  dataSelectors,
+  inputSelectors,
+  messageStateSelectors,
+  useConversationStore,
+  virtuaListSelectors,
+} from '../../store';
+import {
+  CONVERSATION_SPACER_TRANSITION_MS,
+  useConversationScroll,
+} from '../hooks/useConversationScroll';
+import { useSelectionMessageIds } from '../hooks/useSelectionMessageIds';
+import { useTopicScrollPersist } from '../hooks/useTopicScrollPersist';
 import AutoScroll from './AutoScroll';
-import DebugInspector, {
-  AT_BOTTOM_THRESHOLD,
-  OPEN_DEV_INSPECTOR,
-} from './AutoScroll/DebugInspector';
+import { AT_BOTTOM_THRESHOLD } from './AutoScroll/const';
+import DebugInspector, { OPEN_DEV_INSPECTOR } from './AutoScroll/DebugInspector';
+import { useAutoScrollEnabled } from './AutoScroll/useAutoScrollEnabled';
 import BackBottom from './BackBottom';
+
+const CONVERSATION_FOOTER_ID = '__conversation_footer__';
+const USER_SCROLL_INTENT_TTL_MS = 500;
+const SCROLL_KEYS = new Set(['ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp', ' ']);
 
 interface VirtualizedListProps {
   dataSource: string[];
+  footerSlot?: ReactNode;
   itemContent: (index: number, data: string) => ReactNode;
 }
 
@@ -24,9 +44,41 @@ interface VirtualizedListProps {
  *
  * Based on ConversationStore data flow, no dependency on global ChatStore.
  */
-const VirtualizedList = memo<VirtualizedListProps>(({ dataSource, itemContent }) => {
+const VirtualizedList = memo<VirtualizedListProps>(({ dataSource, footerSlot, itemContent }) => {
   const virtuaRef = useRef<VListHandle>(null);
   const scrollEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastUserScrollIntentAtRef = useRef(0);
+
+  // Per-topic scroll restoration. Provider does not remount on topic switch,
+  // so we key the scroll snapshot by the message-map key derived from
+  // ConversationStore's `context`.
+  const contextKey = useConversationStore((s) => messageMapKey(s.context));
+  const { recordScroll } = useTopicScrollPersist({
+    contextKey,
+    dataSourceLength: dataSource.length,
+    virtuaRef,
+  });
+
+  // Second-to-last message is the user turn when sending (user + assistant pair)
+  const isSecondLastMessageFromUser = useConversationStore(
+    dataSelectors.isSecondLastMessageFromUser,
+  );
+
+  const {
+    isScrollShrinking,
+    isSpacerMessage,
+    listData,
+    onScrollOffset,
+    registerSpacerNode,
+    spacerActive,
+    spacerHeight,
+  } = useConversationScroll({
+    dataSource,
+    isSecondLastMessageFromUser,
+    virtuaRef,
+  });
+
+  const isAutoScrollEnabled = useAutoScrollEnabled();
 
   // Store actions
   const registerVirtuaScrollMethods = useConversationStore((s) => s.registerVirtuaScrollMethods);
@@ -34,6 +86,28 @@ const VirtualizedList = memo<VirtualizedListProps>(({ dataSource, itemContent })
   const resetVisibleItems = useConversationStore((s) => s.resetVisibleItems);
   const setActiveIndex = useConversationStore((s) => s.setActiveIndex);
   const activeIndex = useConversationStore(virtuaListSelectors.activeIndex);
+
+  const markUserScrollIntent = useCallback(() => {
+    lastUserScrollIntentAtRef.current = Date.now();
+  }, []);
+
+  const handlePointerMove = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      if (event.buttons > 0) {
+        markUserScrollIntent();
+      }
+    },
+    [markUserScrollIntent],
+  );
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (SCROLL_KEYS.has(event.key)) {
+        markUserScrollIntent();
+      }
+    },
+    [markUserScrollIntent],
+  );
 
   // Check if at bottom based on scroll position
   const checkAtBottom = useCallback(() => {
@@ -45,7 +119,7 @@ const VirtualizedList = memo<VirtualizedListProps>(({ dataSource, itemContent })
     const viewportSize = ref.viewportSize;
 
     return scrollSize - scrollOffset - viewportSize <= AT_BOTTOM_THRESHOLD;
-  }, [AT_BOTTOM_THRESHOLD]);
+  }, []);
 
   // Handle scroll events
   const handleScroll = useCallback(() => {
@@ -61,9 +135,21 @@ const VirtualizedList = memo<VirtualizedListProps>(({ dataSource, itemContent })
 
     setScrollState({ isScrolling: true });
 
+    // Shrink spacer on scroll up when not streaming
+    const ref = virtuaRef.current;
+    if (ref) {
+      const hasUserScrollIntent =
+        Date.now() - lastUserScrollIntentAtRef.current <= USER_SCROLL_INTENT_TTL_MS;
+      onScrollOffset(ref.scrollOffset, hasUserScrollIntent);
+    }
+
     // Check if at bottom
     const isAtBottom = checkAtBottom();
     setScrollState({ atBottom: isAtBottom });
+
+    if (ref) {
+      recordScroll(ref.scrollOffset, isAtBottom);
+    }
 
     // Clear existing timer
     if (scrollEndTimerRef.current) {
@@ -74,7 +160,7 @@ const VirtualizedList = memo<VirtualizedListProps>(({ dataSource, itemContent })
     scrollEndTimerRef.current = setTimeout(() => {
       setScrollState({ isScrolling: false });
     }, 150);
-  }, [activeIndex, checkAtBottom, setActiveIndex, setScrollState]);
+  }, [activeIndex, checkAtBottom, onScrollOffset, recordScroll, setActiveIndex, setScrollState]);
 
   const handleScrollEnd = useCallback(() => {
     setScrollState({ isScrolling: false });
@@ -85,9 +171,13 @@ const VirtualizedList = memo<VirtualizedListProps>(({ dataSource, itemContent })
     const ref = virtuaRef.current;
     if (ref) {
       registerVirtuaScrollMethods({
+        getItemOffset: (index) => ref.getItemOffset(index),
+        getItemSize: (index) => ref.getItemSize(index),
         getScrollOffset: () => ref.scrollOffset,
         getScrollSize: () => ref.scrollSize,
+        getTotalCount: () => totalCountRef.current,
         getViewportSize: () => ref.viewportSize,
+        scrollTo: (offset) => ref.scrollTo(offset),
         scrollToIndex: (index, options) => ref.scrollToIndex(index, options),
       });
 
@@ -113,42 +203,111 @@ const VirtualizedList = memo<VirtualizedListProps>(({ dataSource, itemContent })
     };
   }, [resetVisibleItems]);
 
-  // Get the last message to check if it's a user message
-  const displayMessages = useConversationStore(dataSelectors.displayMessages);
-  const lastMessage = displayMessages.at(-1);
-  const isLastMessageFromUser = lastMessage?.role === 'user';
+  // Keep currently-streaming items mounted so vlist recycling never triggers
+  // Markdown animation replay when the user scrolls them back into view.
+  const streamingIndices = useConversationStore(
+    useShallow((s) => {
+      const indices: number[] = [];
+      for (let i = 0; i < dataSource.length; i++) {
+        const id = dataSource[i];
+        if (!id) continue;
+        if (messageStateSelectors.isMessageGenerating(id)(s)) indices.push(i);
+      }
+      return indices;
+    }),
+  );
 
-  // Auto scroll to user message when user sends a new message
-  // Only scroll when the new message is from the user, not when AI/agent responds
-  useScrollToUserMessage({
-    dataSourceLength: dataSource.length,
-    isLastMessageFromUser,
-    scrollToIndex: virtuaRef.current?.scrollToIndex ?? null,
-  });
+  // Also keep items that host the active text selection — unmounting a node
+  // containing a Selection endpoint would silently drop the user's highlight.
+  const selectionMessageIds = useSelectionMessageIds();
 
-  // Scroll to bottom on initial render
-  useEffect(() => {
-    if (virtuaRef.current && dataSource.length > 0) {
-      virtuaRef.current.scrollToIndex(dataSource.length - 1, { align: 'end' });
+  const keepMountedIndices = useMemo(() => {
+    if (selectionMessageIds.size === 0) return streamingIndices;
+    const merged = new Set<number>(streamingIndices);
+    for (let i = 0; i < dataSource.length; i++) {
+      const id = dataSource[i];
+      if (id && selectionMessageIds.has(id)) merged.add(i);
     }
-  }, []);
+    if (merged.size === streamingIndices.length) return streamingIndices;
+    return [...merged].sort((a, b) => a - b);
+  }, [dataSource, streamingIndices, selectionMessageIds]);
 
   const atBottom = useConversationStore(virtuaListSelectors.atBottom);
   const scrollToBottom = useConversationStore((s) => s.scrollToBottom);
 
+  // The ChatInput's floating overlay (TodoProgress + QueueTray) covers the
+  // bottom of this scroll viewport like a layer. Extend VList's internal
+  // padding-bottom by the overlay height so the last message can still be
+  // scrolled into view *above* the overlay; the +12 compensates for the
+  // ChatInput's `marginTop: -12` (skipScrollMarginWithList) so the last
+  // message lands exactly on the overlay's top edge.
+  const overlayHeight = useConversationStore(inputSelectors.chatInputOverlayHeight);
+  const paddingBottom = Math.max(24, overlayHeight + 12);
+
+  const dataWithFooter = useMemo(
+    () => (footerSlot ? [...listData, CONVERSATION_FOOTER_ID] : listData),
+    [listData, footerSlot],
+  );
+
+  // Mirror the latest data length into a ref so the scroll-methods registered
+  // once on mount can read the current total count (including spacer/footer)
+  // without re-registering on every render.
+  const totalCountRef = useRef(dataWithFooter.length);
+  totalCountRef.current = dataWithFooter.length;
+
   return (
-    <div style={{ height: '100%', position: 'relative' }}>
-      {/* Debug Inspector - 放在 VList 外面，不会被虚拟列表回收 */}
+    <div
+      style={{ height: '100%', position: 'relative' }}
+      onKeyDownCapture={handleKeyDown}
+      onPointerDownCapture={markUserScrollIntent}
+      onPointerMoveCapture={handlePointerMove}
+      onTouchMoveCapture={markUserScrollIntent}
+      onWheelCapture={markUserScrollIntent}
+    >
+      {/* Debug Inspector - placed outside VList so it won't be recycled by the virtual list */}
       {OPEN_DEV_INSPECTOR && <DebugInspector />}
       <VList
         bufferSize={typeof window !== 'undefined' ? window.innerHeight : 0}
-        data={dataSource}
+        data={dataWithFooter}
+        keepMounted={keepMountedIndices}
+        ref={virtuaRef}
+        style={{ height: '100%', overflowAnchor: 'none', paddingBottom }}
         onScroll={handleScroll}
         onScrollEnd={handleScrollEnd}
-        ref={virtuaRef}
-        style={{ height: '100%', paddingBottom: 24 }}
       >
         {(messageId, index): ReactElement => {
+          if (messageId === CONVERSATION_FOOTER_ID) {
+            return (
+              <WideScreenContainer key={messageId} style={{ position: 'relative' }}>
+                {footerSlot}
+              </WideScreenContainer>
+            );
+          }
+          if (isSpacerMessage(messageId)) {
+            // Only animate the collapse-to-zero (unmount). Any non-zero height
+            // change (initial mount, shrink as assistant grows) is applied
+            // instantly so virtua's scrollSize updates in a single frame and
+            // scrollToIndex can reach the user message without trailing behind
+            // a 200ms transition.
+            const shouldAnimate = !isScrollShrinking && spacerHeight === 0;
+            return (
+              <WideScreenContainer key={messageId} style={{ position: 'relative' }}>
+                <div
+                  aria-hidden
+                  ref={registerSpacerNode}
+                  style={{
+                    height: spacerHeight,
+                    pointerEvents: 'none',
+                    transition: shouldAnimate
+                      ? `height ${CONVERSATION_SPACER_TRANSITION_MS}ms ease`
+                      : 'none',
+                    width: '100%',
+                  }}
+                />
+              </WideScreenContainer>
+            );
+          }
+
           const isAgentCouncil = messageId.includes('agentCouncil');
           const isLastItem = index === dataSource.length - 1;
           const content = itemContent(index, messageId);
@@ -158,8 +317,8 @@ const VirtualizedList = memo<VirtualizedListProps>(({ dataSource, itemContent })
             return (
               <div key={messageId} style={{ position: 'relative', width: '100%' }}>
                 {content}
-                {/* AutoScroll 放在最后一个 Item 里面，这样只有当最后一个 Item 可见时才会触发自动滚动 */}
-                {isLastItem && <AutoScroll />}
+                {/* AutoScroll is placed inside the last Item so it only triggers when the last Item is visible */}
+                {isLastItem && isAutoScrollEnabled && !spacerActive && <AutoScroll />}
               </div>
             );
           }
@@ -167,14 +326,20 @@ const VirtualizedList = memo<VirtualizedListProps>(({ dataSource, itemContent })
           return (
             <WideScreenContainer key={messageId} style={{ position: 'relative' }}>
               {content}
-              {/* AutoScroll 放在最后一个 Item 里面，这样只有当最后一个 Item 可见时才会触发自动滚动 */}
-              {isLastItem && <AutoScroll />}
+              {isLastItem && isAutoScrollEnabled && !spacerActive && <AutoScroll />}
             </WideScreenContainer>
           );
         }}
       </VList>
-      {/* BackBottom 放在 VList 外面，这样无论滚动到哪里都能看到 */}
-      <BackBottom atBottom={atBottom} onScrollToBottom={() => scrollToBottom(true)} visible={!atBottom} />
+      {/* BackBottom is placed outside VList so it remains visible regardless of scroll position */}
+      <WideScreenContainer style={{ position: 'relative' }}>
+        <BackBottom
+          atBottom={atBottom}
+          bottomOffset={overlayHeight}
+          visible={!atBottom}
+          onScrollToBottom={() => scrollToBottom(true)}
+        />
+      </WideScreenContainer>
     </div>
   );
 }, isEqual);

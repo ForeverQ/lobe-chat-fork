@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AssistantStore } from '@/server/modules/AssistantStore';
 import { PluginStore } from '@/server/modules/PluginStore';
-import { AssistantSorts, ModelSorts, PluginSorts, ProviderSorts } from '@/types/discover';
+import { ModelSorts, PluginSorts, ProviderSorts } from '@/types/discover';
 
 import { DiscoverService } from './index';
 
@@ -11,7 +11,6 @@ import { DiscoverService } from './index';
 vi.mock('@/server/modules/AssistantStore');
 vi.mock('@/server/modules/PluginStore');
 vi.mock('@lobehub/market-sdk');
-vi.mock('@/utils/toolManifest');
 vi.mock('@/locales/resources', () => ({
   normalizeLocale: vi.fn((locale) => {
     if (locale === 'en-US') return 'en';
@@ -57,6 +56,19 @@ vi.mock('model-bank', async (importOriginal) => {
           output: 0.075,
         },
         releasedAt: '2024-02-01T00:00:00Z',
+      },
+      {
+        id: 'lobehub-onboarding-v1',
+        displayName: 'LobeHub Onboarding',
+        description: 'Runtime-only onboarding alias model',
+        providerId: 'lobehub',
+        contextWindowTokens: 1_000_000,
+        abilities: {
+          functionCall: true,
+          reasoning: true,
+        },
+        releasedAt: '2026-04-24T00:00:00Z',
+        visible: false,
       },
     ],
   };
@@ -395,30 +407,6 @@ describe('DiscoverService', () => {
         expect(result.items.map((item) => item.identifier)).toContain('assistant-3');
       });
 
-      it('should sort by creation date descending', async () => {
-        const result = await service.getAssistantList({
-          sort: AssistantSorts.CreatedAt,
-          order: 'desc',
-          source: 'legacy',
-        });
-
-        expect(result.items[0].identifier).toBe('assistant-3');
-        expect(result.items[1].identifier).toBe('assistant-2');
-        expect(result.items[2].identifier).toBe('assistant-1');
-      });
-
-      it('should sort by title ascending', async () => {
-        const result = await service.getAssistantList({
-          sort: AssistantSorts.Title,
-          order: 'asc',
-          source: 'legacy',
-        });
-
-        // Note: The service has reversed logic for title sorting
-        expect(result.items[0].title).toBe('Test Assistant 3');
-        expect(result.items[1].title).toBe('Test Assistant 2');
-      });
-
       it('should paginate results', async () => {
         const result = await service.getAssistantList({ page: 1, pageSize: 1, source: 'legacy' });
 
@@ -699,6 +687,12 @@ describe('DiscoverService', () => {
 
         expect(result.items.length).toBeGreaterThan(0);
       });
+
+      it('should filter hidden runtime-only models', async () => {
+        const result = await service.getModelList({ q: 'onboarding' });
+
+        expect(result.items).toEqual([]);
+      });
     });
 
     describe('getModelDetail', () => {
@@ -716,6 +710,14 @@ describe('DiscoverService', () => {
           }),
         );
       });
+
+      it('should not expose hidden runtime-only model details', async () => {
+        const result = await service.getModelDetail({
+          identifier: 'lobehub-onboarding-v1',
+        });
+
+        expect(result).toBeUndefined();
+      });
     });
 
     describe('getModelCategories', () => {
@@ -730,6 +732,12 @@ describe('DiscoverService', () => {
             }),
           ]),
         );
+      });
+
+      it('should not include categories that only have hidden models', async () => {
+        const result = await service.getModelCategories();
+
+        expect(result.some((item) => item.category === 'lobehub')).toBe(false);
       });
     });
   });

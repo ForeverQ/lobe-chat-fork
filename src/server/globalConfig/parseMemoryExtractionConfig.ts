@@ -25,23 +25,35 @@ const parseTokenLimitEnv = (value?: string) => {
   return Math.floor(parsed);
 };
 
+// NOTICE:
+// Memory context limit envs reserve only the dynamic context slice that we trim before requests.
+// The final provider request still adds system prompts, user prompt wrappers, JSON schemas, tools,
+// and response tokens. Configure layer/persona limits to 65%-75% of the provider context window,
+// not the hard model maximum. For example, a 272000-token provider limit should use roughly
+// 176800-204000 here so wrappers cannot push the final request over the limit.
+// TODO: Move these provider-window assumptions to model-bank once it exposes context-window and
+// embedding-input-limit capability metadata for each model.
+
 export type MemoryAgentConfig = MemoryAgentPublicConfig & {
   apiKey?: string;
   language?: string;
   model: string;
 };
+
 export type MemoryLayerExtractorConfig = MemoryLayerExtractorPublicConfig &
   MemoryAgentConfig & {
     layers: Record<GlobalMemoryLayer, string>;
   };
 
 export interface MemoryExtractionPrivateConfig {
+  agentBenchmarkLoCoMo: MemoryAgentConfig;
   agentGateKeeper: MemoryAgentConfig;
   agentGateKeeperPreferredModels?: string[];
   agentGateKeeperPreferredProviders?: string[];
   agentLayerExtractor: MemoryLayerExtractorConfig;
   agentLayerExtractorPreferredModels?: string[];
   agentLayerExtractorPreferredProviders?: string[];
+  agentPersonaWriter: MemoryAgentConfig;
   concurrency?: number;
   embedding: MemoryAgentConfig;
   embeddingPreferredModels?: string[];
@@ -60,7 +72,10 @@ export interface MemoryExtractionPrivateConfig {
     secretAccessKey?: string;
   };
   upstashWorkflowExtraHeaders?: Record<string, string>;
-  webhookHeaders?: Record<string, string>;
+  webhook: {
+    baseUrl?: string;
+    headers?: Record<string, string>;
+  };
   whitelistUsers?: string[];
 }
 
@@ -80,11 +95,28 @@ const parseGateKeeperAgent = (): MemoryAgentConfig => {
   };
 };
 
+const parseBenchmarkLoCoMoAgent = (fallback: MemoryAgentConfig): MemoryAgentConfig => {
+  const model = process.env.MEMORY_USER_MEMORY_BENCHMARK_LOCOMO_AGENT_MODEL || fallback.model;
+  const provider =
+    process.env.MEMORY_USER_MEMORY_BENCHMARK_LOCOMO_AGENT_PROVIDER ||
+    fallback.provider ||
+    DEFAULT_MINI_PROVIDER;
+
+  return {
+    apiKey: process.env.MEMORY_USER_MEMORY_BENCHMARK_LOCOMO_AGENT_API_KEY ?? fallback.apiKey,
+    baseURL: process.env.MEMORY_USER_MEMORY_BENCHMARK_LOCOMO_AGENT_BASE_URL ?? fallback.baseURL,
+    language: process.env.MEMORY_USER_MEMORY_BENCHMARK_LOCOMO_AGENT_LANGUAGE ?? fallback.language,
+    model,
+    provider,
+  };
+};
+
 const parseLayerExtractorAgent = (fallbackModel: string): MemoryLayerExtractorConfig => {
   const apiKey = process.env.MEMORY_USER_MEMORY_LAYER_EXTRACTOR_API_KEY;
   const baseURL = process.env.MEMORY_USER_MEMORY_LAYER_EXTRACTOR_BASE_URL;
   const model = process.env.MEMORY_USER_MEMORY_LAYER_EXTRACTOR_MODEL || fallbackModel;
   const provider = process.env.MEMORY_USER_MEMORY_LAYER_EXTRACTOR_PROVIDER || DEFAULT_MINI_PROVIDER;
+  // Keep this below the model hard limit; see the headroom notice above.
   const contextLimit = parseTokenLimitEnv(
     process.env.MEMORY_USER_MEMORY_LAYER_EXTRACTOR_CONTEXT_LIMIT,
   );
@@ -127,7 +159,30 @@ const parseEmbeddingAgent = (
   return {
     apiKey: process.env.MEMORY_USER_MEMORY_EMBEDDING_API_KEY ?? fallbackApiKey,
     baseURL: process.env.MEMORY_USER_MEMORY_EMBEDDING_BASE_URL,
+    // Embedding providers often have a smaller per-input limit than chat models.
+    // Keep this below the provider's single-input embedding window.
     contextLimit: parseTokenLimitEnv(process.env.MEMORY_USER_MEMORY_EMBEDDING_CONTEXT_LIMIT),
+    model,
+    provider,
+  };
+};
+
+const parsePersonaWriterAgent = (
+  fallbackModel: string,
+  fallbackProvider?: string,
+  fallbackApiKey?: string,
+): MemoryAgentConfig => {
+  const model = process.env.MEMORY_USER_MEMORY_PERSONA_WRITER_MODEL || fallbackModel;
+  const provider =
+    process.env.MEMORY_USER_MEMORY_PERSONA_WRITER_PROVIDER ||
+    fallbackProvider ||
+    DEFAULT_MINI_PROVIDER;
+
+  return {
+    apiKey: process.env.MEMORY_USER_MEMORY_PERSONA_WRITER_API_KEY ?? fallbackApiKey,
+    baseURL: process.env.MEMORY_USER_MEMORY_PERSONA_WRITER_BASE_URL,
+    // Keep this below the model hard limit; see the headroom notice above.
+    contextLimit: parseTokenLimitEnv(process.env.MEMORY_USER_MEMORY_PERSONA_WRITER_CONTEXT_LIMIT),
     model,
     provider,
   };
@@ -176,7 +231,9 @@ const parsePreferredList = (value?: string) =>
 
 export const parseMemoryExtractionConfig = (): MemoryExtractionPrivateConfig => {
   const agentGateKeeper = parseGateKeeperAgent();
+  const agentBenchmarkLoCoMo = parseBenchmarkLoCoMoAgent(agentGateKeeper);
   const agentLayerExtractor = parseLayerExtractorAgent(agentGateKeeper.model);
+  const agentPersonaWriter = parsePersonaWriterAgent(agentGateKeeper.model);
   const embedding = parseEmbeddingAgent(
     agentLayerExtractor.model,
     agentLayerExtractor.provider || DEFAULT_MINI_PROVIDER,
@@ -240,12 +297,14 @@ export const parseMemoryExtractionConfig = (): MemoryExtractionPrivateConfig => 
   );
 
   return {
+    agentBenchmarkLoCoMo,
     agentGateKeeper,
     agentGateKeeperPreferredModels,
     agentGateKeeperPreferredProviders,
     agentLayerExtractor,
     agentLayerExtractorPreferredModels,
     agentLayerExtractorPreferredProviders,
+    agentPersonaWriter,
     concurrency,
     embedding,
     embeddingPreferredModels,
@@ -253,7 +312,10 @@ export const parseMemoryExtractionConfig = (): MemoryExtractionPrivateConfig => 
     featureFlags,
     observabilityS3: extractorObservabilityS3,
     upstashWorkflowExtraHeaders,
-    webhookHeaders,
+    webhook: {
+      baseUrl: process.env.MEMORY_USER_MEMORY_WEBHOOK_BASE_URL,
+      headers: webhookHeaders,
+    },
     whitelistUsers,
   };
 };

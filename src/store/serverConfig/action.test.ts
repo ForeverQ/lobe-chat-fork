@@ -1,18 +1,17 @@
-import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { globalService } from '@/services/global';
-import { GlobalRuntimeConfig } from '@/types/serverConfig';
+import { type GlobalRuntimeConfig } from '@/types/serverConfig';
 
 import { createServerConfigStore } from './store';
 
 // Mock SWR
 let mockSWRData: GlobalRuntimeConfig | undefined;
+let mockSWRError: Error | undefined;
 let mockOnSuccessCallback: ((data: GlobalRuntimeConfig) => void) | undefined;
 
 vi.mock('@/libs/swr', () => ({
   useOnlyFetchOnceSWR: vi.fn((key, fetcher, options) => {
-    const { onSuccess } = options || {};
+    const { onError, onSuccess } = options || {};
     mockOnSuccessCallback = onSuccess;
 
     // Simulate SWR behavior
@@ -20,9 +19,13 @@ vi.mock('@/libs/swr', () => ({
       onSuccess(mockSWRData);
     }
 
+    if (mockSWRError && onError) {
+      onError(mockSWRError);
+    }
+
     return {
       data: mockSWRData,
-      error: undefined,
+      error: mockSWRError,
       isLoading: false,
       isValidating: false,
       mutate: vi.fn(),
@@ -47,11 +50,13 @@ beforeEach(() => {
   vi.resetModules();
 
   mockSWRData = mockGlobalConfig;
+  mockSWRError = undefined;
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   mockSWRData = undefined;
+  mockSWRError = undefined;
   mockOnSuccessCallback = undefined;
 });
 
@@ -76,6 +81,18 @@ describe('ServerConfigAction', () => {
 
       expect(state.serverConfig).toBeDefined();
       expect(state.featureFlags).toBeDefined();
+    });
+
+    it('should mark server config as initialized when the fetch fails', () => {
+      mockSWRData = undefined;
+      mockSWRError = new Error('network error');
+
+      const store = createServerConfigStore();
+
+      store.getState().useInitServerConfig();
+
+      expect(store.getState().serverConfigInit).toBe(true);
+      expect(store.getState().serverConfig).toEqual({ aiProvider: {}, telemetry: {} });
     });
 
     it('should pass a fetcher function that calls globalService', async () => {
@@ -142,6 +159,7 @@ describe('ServerConfigAction', () => {
         'FETCH_SERVER_CONFIG',
         expect.any(Function),
         expect.objectContaining({
+          onError: expect.any(Function),
           onSuccess: expect.any(Function),
         }),
       );

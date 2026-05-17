@@ -1,4 +1,4 @@
-import type { LobeChatPluginManifest } from '@lobehub/chat-plugin-sdk';
+import { type ToolManifest } from '@lobechat/types';
 import { z } from 'zod';
 
 import { PluginModel } from '@/database/models/plugin';
@@ -49,7 +49,7 @@ export const klavisRouter = router({
       const tools = toolsResponse.tools || [];
 
       // Save to database using the provided identifier (format: lowercase, spaces replaced with hyphens)
-      const manifest: LobeChatPluginManifest = {
+      const manifest: ToolManifest = {
         api: tools.map((tool: any) => ({
           description: tool.description || '',
           name: tool.name,
@@ -124,6 +124,7 @@ export const klavisRouter = router({
 
   /**
    * Get server instance status from Klavis API
+   * Returns error object instead of throwing on auth errors (useful for polling)
    */
   getServerInstance: klavisProcedure
     .input(
@@ -132,16 +133,43 @@ export const klavisRouter = router({
       }),
     )
     .query(async ({ input, ctx }) => {
-      const response = await ctx.klavisClient.mcpServer.getServerInstance(input.instanceId);
-      return {
-        authNeeded: response.authNeeded,
-        externalUserId: response.externalUserId,
-        instanceId: response.instanceId,
-        isAuthenticated: response.isAuthenticated,
-        oauthUrl: response.oauthUrl,
-        platform: response.platform,
-        serverName: response.serverName,
-      };
+      try {
+        const response = await ctx.klavisClient.mcpServer.getServerInstance(input.instanceId);
+        return {
+          authNeeded: response.authNeeded,
+          error: undefined,
+          externalUserId: response.externalUserId,
+          instanceId: response.instanceId,
+          isAuthenticated: response.isAuthenticated,
+          oauthUrl: response.oauthUrl,
+          platform: response.platform,
+          serverName: response.serverName,
+        };
+      } catch (error) {
+        // Check if this is an authentication error
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const isAuthError =
+          errorMessage.includes('Invalid API key or instance ID') ||
+          errorMessage.includes('Status code: 401');
+
+        // For auth errors, return error object instead of throwing
+        // This prevents 500 errors in logs during polling
+        if (isAuthError) {
+          return {
+            authNeeded: true,
+            error: 'AUTH_ERROR',
+            externalUserId: undefined,
+            instanceId: input.instanceId,
+            isAuthenticated: false,
+            oauthUrl: undefined,
+            platform: undefined,
+            serverName: undefined,
+          };
+        }
+
+        // For other errors, still throw
+        throw error;
+      }
     }),
 
   getUserIntergrations: klavisProcedure
@@ -204,7 +232,7 @@ export const klavisRouter = router({
       const existingPlugin = await ctx.pluginModel.findById(identifier);
 
       // Build manifest containing all tools
-      const manifest: LobeChatPluginManifest = {
+      const manifest: ToolManifest = {
         api: tools.map((tool) => ({
           description: tool.description || '',
           name: tool.name,

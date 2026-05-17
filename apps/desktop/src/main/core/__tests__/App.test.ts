@@ -90,8 +90,9 @@ vi.mock('@/env', () => ({
 }));
 
 vi.mock('@/const/dir', () => ({
+  binDir: '/mock/bin',
   buildDir: '/mock/build',
-  nextExportDir: '/mock/export/out',
+  rendererDir: '/mock/export/out',
   appStorageDir: '/mock/storage/path',
   userDataDir: '/mock/user/data',
   FILE_STORAGE_DIR: 'file-storage',
@@ -114,9 +115,9 @@ vi.mock('../infrastructure/I18nManager', () => ({
 
 vi.mock('../infrastructure/StoreManager', () => ({
   StoreManager: vi.fn().mockImplementation(() => ({
-    get: vi.fn((key) => {
-      if (key === 'storagePath') return '/mock/storage/path';
-      return undefined;
+    get: vi.fn((_key, defaultValue) => {
+      if (_key === 'storagePath') return '/mock/storage/path';
+      return defaultValue;
     }),
     set: vi.fn(),
   })),

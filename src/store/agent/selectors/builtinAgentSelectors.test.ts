@@ -2,7 +2,7 @@ import { BUILTIN_AGENT_SLUGS } from '@lobechat/builtin-agents';
 import { INBOX_SESSION_ID } from '@lobechat/const';
 import { describe, expect, it } from 'vitest';
 
-import { AgentStoreState } from '@/store/agent/initialState';
+import { type AgentStoreState } from '@/store/agent/initialState';
 import { initialAgentSliceState } from '@/store/agent/slices/agent/initialState';
 import { initialBuiltinAgentSliceState } from '@/store/agent/slices/builtin';
 
@@ -66,6 +66,24 @@ describe('builtinAgentSelectors', () => {
       });
 
       expect(builtinAgentSelectors.pageAgentId(state)).toBeUndefined();
+    });
+  });
+
+  describe('taskAgentId', () => {
+    it('should return task agent id', () => {
+      const state = createState({
+        builtinAgentIdMap: { [BUILTIN_AGENT_SLUGS.taskAgent]: 'task-agent-456' },
+      });
+
+      expect(builtinAgentSelectors.taskAgentId(state)).toBe('task-agent-456');
+    });
+
+    it('should return undefined when task agent not initialized', () => {
+      const state = createState({
+        builtinAgentIdMap: {},
+      });
+
+      expect(builtinAgentSelectors.taskAgentId(state)).toBeUndefined();
     });
   });
 

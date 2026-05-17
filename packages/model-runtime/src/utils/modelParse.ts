@@ -1,6 +1,6 @@
 import type { ChatModelCard } from '@lobechat/types';
-import { AIBaseModelCard } from 'model-bank';
-import type { AiModelSettings, ExtendParamsType } from 'model-bank';
+import type { AIBaseModelCard, AiModelSettings, AiModelType, ExtendParamsType } from 'model-bank';
+import { AiModelTypeSchema } from 'model-bank';
 
 import type { ModelProviderKey } from '../types';
 
@@ -31,18 +31,18 @@ export const MODEL_LIST_CONFIGS = {
     visionKeywords: [],
   },
   deepseek: {
-    functionCallKeywords: ['v3', 'r1', 'deepseek-chat'],
-    reasoningKeywords: ['r1', 'deepseek-reasoner', 'v3.1', 'v3.2'],
+    functionCallKeywords: ['v3', 'v4', 'r1', 'deepseek-chat'],
+    reasoningKeywords: ['r1', 'deepseek-reasoner', 'v3.', 'v4'],
     visionKeywords: ['ocr'],
   },
   google: {
     excludeKeywords: ['tts'],
-    functionCallKeywords: ['gemini', '!-image-'],
+    functionCallKeywords: ['gemini', '!-image-', 'gemma-4'],
     imageOutputKeywords: ['-image-'],
-    reasoningKeywords: ['thinking', '-2.5-', '!-image-', '-3-'],
-    searchKeywords: ['-search', '!-image-'],
+    reasoningKeywords: ['thinking', '-2.5-', '!-image-', '-3-', 'gemma-4'],
+    searchKeywords: ['-search', '!-image-', 'gemma-4'],
     videoKeywords: ['-2.5-', '!-image-', '-3-'],
-    visionKeywords: ['gemini', 'learnlm'],
+    visionKeywords: ['gemini', 'learnlm', 'gemma-4'],
   },
   inclusionai: {
     functionCallKeywords: ['ling-'],
@@ -64,16 +64,21 @@ export const MODEL_LIST_CONFIGS = {
     reasoningKeywords: ['-m'],
     visionKeywords: ['-vl', 'Text-01'],
   },
+  mistral: {
+    functionCallKeywords: ['mistral', 'ministral', 'pixtral'],
+    reasoningKeywords: ['magistral'],
+    visionKeywords: ['magistral', 'pixtral', 'ministral', 'mistral'],
+  },
   moonshot: {
     functionCallKeywords: ['moonshot', 'kimi'],
-    reasoningKeywords: ['thinking'],
-    visionKeywords: ['vision', 'kimi-latest', 'kimi-thinking-preview'],
+    reasoningKeywords: ['thinking', 'k2.5'],
+    visionKeywords: ['vision', 'kimi-latest', 'kimi-thinking-preview', 'k2.5'],
   },
   openai: {
     excludeKeywords: ['audio'],
-    functionCallKeywords: ['4o', '4.1', 'o3', 'o4', 'oss'],
-    reasoningKeywords: ['o1', 'o3', 'o4', 'oss'],
-    visionKeywords: ['4o', '4.1', 'o4'],
+    functionCallKeywords: ['4o', '4.1', 'o3', 'o4', 'oss', '-5'],
+    reasoningKeywords: ['o1', 'o3', 'o4', 'oss', '-5'],
+    visionKeywords: ['4o', '4.1', 'o4', '-5'],
   },
   qwen: {
     functionCallKeywords: [
@@ -86,7 +91,7 @@ export const MODEL_LIST_CONFIGS = {
       'qwen2.5',
       'qwen3',
     ],
-    reasoningKeywords: ['qvq', 'qwq', 'qwen3', '!-instruct-', '!-coder-', '!-max-'],
+    reasoningKeywords: ['qvq', 'qwq', 'qwen3', '!-instruct-', '!-coder-'],
     visionKeywords: ['qvq', '-vl', '-omni'],
   },
   replicate: {
@@ -107,7 +112,7 @@ export const MODEL_LIST_CONFIGS = {
     visionKeywords: ['v0'],
   },
   volcengine: {
-    functionCallKeywords: ['1.5', '1-5', '1.6', '1-6'],
+    functionCallKeywords: ['seed'],
     reasoningKeywords: ['thinking', 'seed', 'ui-tars'],
     visionKeywords: ['vision', '-m', 'seed', 'ui-tars'],
   },
@@ -122,17 +127,20 @@ export const MODEL_LIST_CONFIGS = {
     visionKeywords: ['vision', 'grok-4'],
   },
   xiaomimimo: {
+    excludeKeywords: ['tts'],
     functionCallKeywords: ['mimo'],
     reasoningKeywords: ['mimo'],
-    visionKeywords: [],
+    // mimo-v2.5 (non-pro) is natively omni-modal; match the exact id
+    // without also catching mimo-v2.5-pro, which is text-only.
+    visionKeywords: ['omni', 're:^mimo-v2\\.5$'],
   },
   zeroone: {
     functionCallKeywords: ['fc'],
     visionKeywords: ['vision'],
   },
   zhipu: {
-    functionCallKeywords: ['glm-4', 'glm-z1'],
-    reasoningKeywords: ['glm-zero', 'glm-z1', 'glm-4.'],
+    functionCallKeywords: ['glm-4', 'glm-z1', 'glm-5'],
+    reasoningKeywords: ['glm-zero', 'glm-z1', 'glm-4.', 'glm-5'],
     visionKeywords: ['re:glm-4(\\.\\d)?v'],
   },
 } as const;
@@ -142,11 +150,12 @@ export const MODEL_OWNER_DETECTION_CONFIG = {
   anthropic: ['claude'],
   comfyui: ['comfyui/'], // ComfyUI models detection - all ComfyUI models have comfyui/ prefix
   deepseek: ['deepseek'],
-  google: ['gemini', 'imagen'],
+  google: ['gemini', 'imagen', 'gemma'],
   inclusionai: ['ling-', 'ming-', 'ring-'],
   llama: ['llama', 'llava'],
   longcat: ['longcat'],
   minimax: ['minimax'],
+  mistral: ['mistral', 'ministral', 'magistral', 'pixtral'],
   moonshot: ['moonshot', 'kimi'],
   openai: ['o1', 'o3', 'o4', 'gpt-'],
   qwen: ['qwen', 'qwq', 'qvq'],
@@ -183,6 +192,20 @@ export const IMAGE_MODEL_KEYWORDS = [
 
 // Embedding model keyword configuration
 export const EMBEDDING_MODEL_KEYWORDS = ['embedding', 'embed', 'bge', 'm3e'] as const;
+
+const AI_MODEL_TYPE_SET = new Set<AiModelType>(AiModelTypeSchema.options);
+
+const normalizeModelType = (value: unknown): AiModelType | undefined => {
+  if (typeof value !== 'string') return undefined;
+
+  const normalized = value.toLowerCase() as AiModelType;
+
+  if (AI_MODEL_TYPE_SET.has(normalized)) {
+    return normalized;
+  }
+
+  return undefined;
+};
 
 /**
  * Detect whether a keyword list matches a model ID (supports multiple matching patterns)
@@ -337,6 +360,10 @@ const processReleasedAt = (model: any, knownModel?: any): string | undefined => 
  * @returns Processed display name
  */
 const processDisplayName = (displayName: string): string => {
+  if (displayName.includes('Gemini 3.1 Flash Image Preview')) {
+    return displayName.replace('Gemini 3.1 Flash Image Preview', 'Nano Banana 2');
+  }
+
   // If it contains "Gemini 2.5 Flash Image Preview", replace the corresponding part with "Nano Banana"
   if (displayName.includes('Gemini 2.5 Flash Image Preview')) {
     return displayName.replace('Gemini 2.5 Flash Image Preview', 'Nano Banana');
@@ -472,8 +499,9 @@ const processModelCard = (
   } = config;
 
   const isExcludedModel = isKeywordListMatch(model.id.toLowerCase(), excludeKeywords);
+  const normalizedModelType = normalizeModelType(model.type);
   const modelType =
-    model.type ||
+    normalizedModelType ||
     knownModel?.type ||
     (isKeywordListMatch(
       model.id.toLowerCase(),

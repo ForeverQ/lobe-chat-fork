@@ -1,14 +1,27 @@
 import { type MCPToolCallResult } from '@/libs/mcp';
+import { truncateToolResult } from '@/server/utils/truncateToolResult';
 import { useToolStore } from '@/store/tool';
 import { type ChatToolPayload } from '@/types/message';
 import { safeParseJSON } from '@/utils/safeParseJSON';
 
 /**
+ * Context for remote tool execution, derived from the invoking message
+ */
+export interface RemoteToolExecutorContext {
+  /** Topic ID from the message that triggered this tool call */
+  topicId?: string;
+}
+
+/**
  * Executor function type for remote tool invocation
  * @param payload - Tool call payload
+ * @param context - Context from the invoking message
  * @returns Promise with MCPToolCallResult data
  */
-export type RemoteToolExecutor = (payload: ChatToolPayload) => Promise<MCPToolCallResult>;
+export type RemoteToolExecutor = (
+  payload: ChatToolPayload,
+  context?: RemoteToolExecutorContext,
+) => Promise<MCPToolCallResult>;
 
 /**
  * Create a failed MCPToolCallResult
@@ -22,8 +35,8 @@ const createFailedResult = (
   success: false,
 });
 
-export const klavisExecutor: RemoteToolExecutor = async (p) => {
-  // payload.identifier 现在是存储用的 identifier（如 'google-calendar'）
+export const klavisExecutor: RemoteToolExecutor = async (p, _context) => {
+  // payload.identifier is now the storage identifier (e.g., 'google-calendar')
   const identifier = p.identifier;
   const klavisServers = useToolStore.getState().servers || [];
   const server = klavisServers.find((s) => s.identifier === identifier);
@@ -51,7 +64,7 @@ export const klavisExecutor: RemoteToolExecutor = async (p) => {
   const toolResult = result.data;
   if (toolResult) {
     return {
-      content: toolResult.content,
+      content: truncateToolResult(toolResult.content),
       error: toolResult.state?.isError ? toolResult.state : undefined,
       state: toolResult.state,
       success: toolResult.success,
@@ -61,7 +74,7 @@ export const klavisExecutor: RemoteToolExecutor = async (p) => {
   return createFailedResult('Klavis tool returned empty result');
 };
 
-export const lobehubSkillExecutor: RemoteToolExecutor = async (p) => {
+export const lobehubSkillExecutor: RemoteToolExecutor = async (p, context) => {
   // payload.identifier is the provider id (e.g., 'linear', 'microsoft')
   const provider = p.identifier;
 
@@ -69,10 +82,12 @@ export const lobehubSkillExecutor: RemoteToolExecutor = async (p) => {
   const args = safeParseJSON(p.arguments) || {};
 
   // Call LobeHub Skill tool via store action
+  // topicId comes from message context, not global active state
   const result = await useToolStore.getState().callLobehubSkillTool({
     args,
     provider,
     toolName: p.apiName,
+    topicId: context?.topicId,
   });
 
   if (!result.success) {
@@ -82,7 +97,9 @@ export const lobehubSkillExecutor: RemoteToolExecutor = async (p) => {
   }
 
   // Convert to MCPToolCallResult format
-  const content = typeof result.data === 'string' ? result.data : JSON.stringify(result.data);
+  const rawContent = typeof result.data === 'string' ? result.data : JSON.stringify(result.data);
+  const content = truncateToolResult(rawContent);
+
   return {
     content,
     error: undefined,

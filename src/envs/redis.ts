@@ -1,8 +1,7 @@
-/* eslint-disable sort-keys-fix/sort-keys-fix */
-import { createEnv } from '@t3-oss/env-nextjs';
+import { createEnv } from '@t3-oss/env-core';
 import { z } from 'zod';
 
-import type { RedisConfig } from '@/libs/redis';
+import { type RedisConfig } from '@/libs/redis';
 
 const parseNumber = (value?: string) => {
   const parsed = Number.parseInt(value ?? '', 10);
@@ -34,7 +33,8 @@ export const getRedisEnv = () => {
       REDIS_PASSWORD: z.string().optional(),
       REDIS_PREFIX: z.string(),
       REDIS_TLS: z.boolean().default(false),
-      REDIS_URL: z.string().url().optional(),
+      // NOTE: don't use z.string().url() because docker will pass empty string when not set
+      REDIS_URL: z.string().optional(),
       REDIS_USERNAME: z.string().optional(),
     },
   });

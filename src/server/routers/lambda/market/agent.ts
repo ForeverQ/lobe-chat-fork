@@ -5,9 +5,12 @@ import { z } from 'zod';
 
 import { authedProcedure, router } from '@/libs/trpc/lambda';
 import { marketSDK, marketUserInfo, serverDatabase } from '@/libs/trpc/lambda/middleware';
-import { type TrustedClientUserInfo, generateTrustedClientToken } from '@/libs/trusted-client';
+import { type TrustedClientUserInfo } from '@/libs/trusted-client';
+import { generateTrustedClientToken } from '@/libs/trusted-client';
+import { normalizeLocale } from '@/locales/resources';
+import type { AgentForkBatchResult, AgentForkResponse } from '@/types/discover';
 
-const MARKET_BASE_URL = process.env.NEXT_PUBLIC_MARKET_BASE_URL || 'https://market.lobehub.com';
+const MARKET_BASE_URL = process.env.MARKET_BASE_URL || 'https://market.lobehub.com';
 
 interface MarketUserInfo {
   accountId: number;
@@ -87,6 +90,103 @@ const fetchMarketUserInfo = async (
     return null;
   }
 };
+
+/**
+ * Build market-API auth headers from a procedure context.
+ * Mirrors the inline pattern used by other market.* procedures.
+ */
+const buildMarketAuthHeaders = (ctx: {
+  marketOidcAccessToken?: string;
+  marketUserInfo?: TrustedClientUserInfo;
+}): Record<string, string> => {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (ctx.marketUserInfo) {
+    const trustedClientToken = generateTrustedClientToken(ctx.marketUserInfo);
+    if (trustedClientToken) {
+      headers['x-lobe-trust-token'] = trustedClientToken;
+    }
+  }
+
+  if (!headers['x-lobe-trust-token'] && ctx.marketOidcAccessToken) {
+    headers['Authorization'] = `Bearer ${ctx.marketOidcAccessToken}`;
+  }
+
+  return headers;
+};
+
+interface ForkAgentItemInput {
+  identifier: string;
+  name?: string;
+  sourceIdentifier: string;
+  status?: 'published' | 'unpublished' | 'archived' | 'deprecated';
+  versionNumber?: number;
+  visibility?: 'public' | 'private' | 'internal';
+}
+
+const forkOneAgent = async (
+  item: ForkAgentItemInput,
+  headers: Record<string, string>,
+): Promise<AgentForkBatchResult> => {
+  try {
+    const forkUrl = `${MARKET_BASE_URL}/api/v1/agents/${item.sourceIdentifier}/fork`;
+    const response = await fetch(forkUrl, {
+      body: JSON.stringify({
+        identifier: item.identifier,
+        name: item.name,
+        status: item.status,
+        versionNumber: item.versionNumber,
+        visibility: item.visibility,
+      }),
+      headers,
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      log(
+        'Fork agent failed (source=%s): %s %s - %s',
+        item.sourceIdentifier,
+        response.status,
+        response.statusText,
+        errorText,
+      );
+      return {
+        error: {
+          code: `HTTP_${response.status}`,
+          message: errorText || response.statusText || 'Failed to fork agent',
+        },
+        sourceIdentifier: item.sourceIdentifier,
+        success: false,
+      };
+    }
+
+    const data = (await response.json()) as AgentForkResponse;
+    log('Fork agent success (source=%s)', item.sourceIdentifier);
+    return { data, sourceIdentifier: item.sourceIdentifier, success: true };
+  } catch (error) {
+    log('Error forking agent (source=%s): %O', item.sourceIdentifier, error);
+    return {
+      error: {
+        code: 'FORK_FAILED',
+        message: error instanceof Error ? error.message : 'Failed to fork agent',
+      },
+      sourceIdentifier: item.sourceIdentifier,
+      success: false,
+    };
+  }
+};
+
+const forkAgentItemSchema = z.object({
+  identifier: z.string(),
+  name: z.string().optional(),
+  sourceIdentifier: z.string(),
+  status: z.enum(['published', 'unpublished', 'archived', 'deprecated']).optional(),
+  versionNumber: z.number().optional(),
+  visibility: z.enum(['public', 'private', 'internal']).optional(),
+});
 
 // Authenticated procedure for agent management
 // Requires user to be logged in and has MarketSDK initialized
@@ -177,8 +277,8 @@ const publishOrCreateSchema = z.object({
   editorData: z.record(z.any()).optional(),
 
   // Agent basic info
-  identifier: z.string().optional(),
-  // Optional - if not provided or not owned, will create new
+  identifier: z.string().nullish(),
+  // Optional - if not provided or not owned, will create new (allow null or undefined)
   name: z.string(),
   tags: z.array(z.string()).optional(),
   tokenUsage: z.number().optional(),
@@ -312,86 +412,28 @@ export const agentRouter = router({
       }
     }),
 
-  
   /**
-   * Fork an agent
-   * POST /market/agent/:identifier/fork
+   * Fork one or more agents in a single batch.
+   * POST /market/agent/fork (batch)
+   *
+   * Best-effort: single-item failures are returned in-line as
+   * `{ success: false, error }` and do not abort the rest of the batch.
    */
-forkAgent: agentProcedure
-    .input(
-      z.object({
-        identifier: z.string(),
-        name: z.string().optional(),
-        sourceIdentifier: z.string(),
-        status: z.enum(['published', 'unpublished', 'archived', 'deprecated']).optional(),
-        versionNumber: z.number().optional(),
-        visibility: z.enum(['public', 'private', 'internal']).optional(),
-      }),
-    )
+  forkAgent: agentProcedure
+    .input(z.object({ items: z.array(forkAgentItemSchema).min(1) }))
     .mutation(async ({ input, ctx }) => {
-      log('forkAgent input: %O', input);
+      log('forkAgent batch size: %d', input.items.length);
 
-      try {
-        // Call Market API directly to fork agent
-        const forkUrl = `${MARKET_BASE_URL}/api/v1/agents/${input.sourceIdentifier}/fork`;
+      const headers = buildMarketAuthHeaders(ctx);
 
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        };
-
-        // Use trustedClientToken or accessToken for authentication
-        const userInfo = ctx.marketUserInfo as TrustedClientUserInfo | undefined;
-        const accessToken = (ctx as { marketOidcAccessToken?: string }).marketOidcAccessToken;
-
-        if (userInfo) {
-          const trustedClientToken = generateTrustedClientToken(userInfo);
-          if (trustedClientToken) {
-            headers['x-lobe-trust-token'] = trustedClientToken;
-          }
-        }
-
-        if (!headers['x-lobe-trust-token'] && accessToken) {
-          headers['Authorization'] = `Bearer ${accessToken}`;
-        }
-
-        const response = await fetch(forkUrl, {
-          body: JSON.stringify({
-            identifier: input.identifier,
-            name: input.name,
-            status: input.status,
-            versionNumber: input.versionNumber,
-            visibility: input.visibility,
-          }),
-          headers,
-          method: 'POST',
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          log('Fork agent failed: %s %s - %s', response.status, response.statusText, errorText);
-          throw new Error(`Failed to fork agent: ${response.statusText}`);
-        }
-
-        const result = await response.json();
-        log('Fork agent success: %O', result);
-        return result;
-      } catch (error) {
-        log('Error forking agent: %O', error);
-        throw new TRPCError({
-          cause: error,
-          code: 'INTERNAL_SERVER_ERROR',
-          message: error instanceof Error ? error.message : 'Failed to fork agent',
-        });
-      }
+      return Promise.all(input.items.map((item) => forkOneAgent(item, headers)));
     }),
 
-  
-  
-/**
+  /**
    * Get agent detail by identifier
    * GET /market/agent/:identifier
    */
-getAgentDetail: agentProcedure
+  getAgentDetail: agentProcedure
     .input(z.object({ identifier: z.string() }))
     .query(async ({ input, ctx }) => {
       log('getAgentDetail input: %O', input);
@@ -409,14 +451,66 @@ getAgentDetail: agentProcedure
       }
     }),
 
-  
-  
+  /**
+   * Get the full curated onboarding agent catalog for the marketplace picker.
+   * Proxies to GET /api/v1/agents/onboarding-full with trust-token authentication.
+   * Response is keyed by MarketplaceCategory slug.
+   */
+  getOnboardingFull: agentProcedure
+    .input(z.object({ locale: z.string().optional() }).optional().default({}))
+    .query(async ({ input, ctx }) => {
+      const url = new URL('/api/v1/agents/onboarding-full', MARKET_BASE_URL);
+      url.searchParams.set('_ts', String(Date.now()));
+      url.searchParams.set('locale', normalizeLocale(input.locale));
 
-/**
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      const userInfo = ctx.marketUserInfo as TrustedClientUserInfo | undefined;
+      const accessToken = (ctx as { marketOidcAccessToken?: string }).marketOidcAccessToken;
+
+      if (userInfo) {
+        const trustedClientToken = generateTrustedClientToken(userInfo);
+        if (trustedClientToken) {
+          headers['x-lobe-trust-token'] = trustedClientToken;
+        }
+      }
+
+      if (!headers['x-lobe-trust-token'] && accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+      }
+
+      try {
+        const response = await fetch(url, { headers, method: 'GET' });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          log(
+            'Get onboarding full failed: %s %s - %s',
+            response.status,
+            response.statusText,
+            errorText,
+          );
+          throw new Error(`Failed to get onboarding full: ${response.statusText}`);
+        }
+
+        return (await response.json()) as Record<string, unknown[]>;
+      } catch (error) {
+        log('Error getting onboarding full: %O', error);
+        throw new TRPCError({
+          cause: error,
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error instanceof Error ? error.message : 'Failed to get onboarding full',
+        });
+      }
+    }),
+
+  /**
    * Get the fork source of an agent
    * GET /market/agent/:identifier/fork-source
    */
-getAgentForkSource: agentProcedure
+  getAgentForkSource: agentProcedure
     .input(z.object({ identifier: z.string() }))
     .query(async ({ input, ctx }) => {
       log('getAgentForkSource input: %O', input);
@@ -470,16 +564,11 @@ getAgentForkSource: agentProcedure
       }
     }),
 
-  
-  
-
-
-
-/**
+  /**
    * Get all forks of an agent
    * GET /market/agent/:identifier/forks
    */
-getAgentForks: agentProcedure
+  getAgentForks: agentProcedure
     .input(z.object({ identifier: z.string() }))
     .query(async ({ input, ctx }) => {
       log('getAgentForks input: %O', input);
@@ -533,17 +622,11 @@ getAgentForks: agentProcedure
       }
     }),
 
-  
-  
-
-
-
-
-/**
+  /**
    * Get own agents (requires authentication)
    * GET /market/agent/own
    */
-getOwnAgents: agentProcedure.input(paginationSchema.optional()).query(async ({ input, ctx }) => {
+  getOwnAgents: agentProcedure.input(paginationSchema.optional()).query(async ({ input, ctx }) => {
     log('getOwnAgents input: %O', input);
 
     try {
@@ -562,16 +645,11 @@ getOwnAgents: agentProcedure.input(paginationSchema.optional()).query(async ({ i
     }
   }),
 
-  
-  
-
-
-
-/**
+  /**
    * Publish an agent (make it visible in marketplace)
    * POST /market/agent/:identifier/publish
    */
-publishAgent: agentProcedure
+  publishAgent: agentProcedure
     .input(z.object({ identifier: z.string() }))
     .mutation(async ({ input, ctx }) => {
       log('publishAgent input: %O', input);
@@ -589,11 +667,7 @@ publishAgent: agentProcedure
       }
     }),
 
-  
-  
-
-
-/**
+  /**
    * Unified publish or create agent flow
    * This procedure handles the complete publish logic:
    * 1. Check if identifier exists and if current user is owner
@@ -602,7 +676,7 @@ publishAgent: agentProcedure
    *
    * Returns: { identifier, isNewAgent, success }
    */
-publishOrCreate: agentProcedure.input(publishOrCreateSchema).mutation(async ({ input, ctx }) => {
+  publishOrCreate: agentProcedure.input(publishOrCreateSchema).mutation(async ({ input, ctx }) => {
     log('publishOrCreate input: %O', input);
 
     const { identifier: inputIdentifier, name, ...versionData } = input;
@@ -684,13 +758,11 @@ publishOrCreate: agentProcedure.input(publishOrCreateSchema).mutation(async ({ i
     }
   }),
 
-  
-  
-/**
+  /**
    * Unpublish an agent (hide from marketplace, can be republished)
    * POST /market/agent/:identifier/unpublish
    */
-unpublishAgent: agentProcedure
+  unpublishAgent: agentProcedure
     .input(z.object({ identifier: z.string() }))
     .mutation(async ({ input, ctx }) => {
       log('unpublishAgent input: %O', input);

@@ -1,4 +1,4 @@
-import { AIChatModelCard } from '../types/aiModel';
+import type { AIChatModelCard } from '../types/aiModel';
 
 // https://groq.com/pricing/
 // https://console.groq.com/docs/models
@@ -9,7 +9,6 @@ const groqChatModels: AIChatModelCard[] = [
     description:
       'Compound is a composite AI system powered by multiple publicly available models supported on GroqCloud, intelligently and selectively using tools to answer user queries.',
     displayName: 'Compound',
-    enabled: true,
     id: 'groq/compound',
     maxOutput: 8192,
     type: 'chat',
@@ -64,26 +63,6 @@ const groqChatModels: AIChatModelCard[] = [
     type: 'chat',
   },
   {
-    abilities: {
-      functionCall: true,
-    },
-    contextWindowTokens: 262_144,
-    description:
-      'The kimi-k2-0905-preview model supports a 256k context window, with stronger agentic coding, more polished and practical frontend code, and better context understanding.',
-    displayName: 'Kimi K2 0905',
-    enabled: true,
-    id: 'moonshotai/kimi-k2-instruct-0905',
-    maxOutput: 16_384,
-    pricing: {
-      units: [
-        { name: 'textInput', rate: 1, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 3, strategy: 'fixed', unit: 'millionTokens' },
-      ],
-    },
-    releasedAt: '2025-09-05',
-    type: 'chat',
-  },
-  {
     contextWindowTokens: 131_072,
     displayName: 'Llama 4 Scout (17Bx16E)',
     enabled: true,
@@ -93,23 +72,6 @@ const groqChatModels: AIChatModelCard[] = [
       units: [
         { name: 'textInput', rate: 0.11, strategy: 'fixed', unit: 'millionTokens' },
         { name: 'textOutput', rate: 0.34, strategy: 'fixed', unit: 'millionTokens' },
-      ],
-    },
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-    },
-    contextWindowTokens: 131_072,
-    displayName: 'Llama 4 Maverick (17Bx128E)',
-    enabled: true,
-    id: 'meta-llama/llama-4-maverick-17b-128e-instruct',
-    maxOutput: 8192,
-    pricing: {
-      units: [
-        { name: 'textInput', rate: 0.2, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 0.6, strategy: 'fixed', unit: 'millionTokens' },
       ],
     },
     type: 'chat',
@@ -162,32 +124,6 @@ const groqChatModels: AIChatModelCard[] = [
       units: [
         { name: 'textInput', rate: 0.59, strategy: 'fixed', unit: 'millionTokens' },
         { name: 'textOutput', rate: 0.79, strategy: 'fixed', unit: 'millionTokens' },
-      ],
-    },
-    type: 'chat',
-  },
-  {
-    contextWindowTokens: 32_768,
-    displayName: 'Mistral Saba 24B',
-    id: 'mistral-saba-24b',
-    maxOutput: 32_768,
-    pricing: {
-      units: [
-        { name: 'textInput', rate: 0.79, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 0.79, strategy: 'fixed', unit: 'millionTokens' },
-      ],
-    },
-    type: 'chat',
-  },
-  {
-    contextWindowTokens: 131_072,
-    displayName: 'Llama Guard 4 12B',
-    id: 'meta-llama/llama-guard-4-12b',
-    maxOutput: 1024,
-    pricing: {
-      units: [
-        { name: 'textInput', rate: 0.2, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 0.2, strategy: 'fixed', unit: 'millionTokens' },
       ],
     },
     type: 'chat',

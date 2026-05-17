@@ -1,4 +1,4 @@
-import { Menu, app, dialog, shell } from 'electron';
+import { app, dialog, Menu, shell } from 'electron';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { App } from '@/core/App';
@@ -61,8 +61,11 @@ const createMockApp = () => {
       'dev.forceReload': 'Force Reload',
       'dev.devTools': 'Developer Tools',
       'dev.devPanel': 'Dev Panel',
+      'tray.openMiniToolbar': 'Quick Composer',
       'tray.open': `Open ${params?.appName || 'App'}`,
+      'tray.quickChat': 'Quick Chat',
       'tray.quit': 'Quit',
+      'tray.settings': 'Settings',
     };
     return translations[key] || key;
   });
@@ -175,7 +178,7 @@ describe('LinuxMenu', () => {
     });
 
     it('should pass data to context menu', () => {
-      const data = { selection: 'text' };
+      const data = { selectionText: 'test selection', x: 100, y: 200 };
       linuxMenu.buildContextMenu('chat', data);
 
       expect(Menu.buildFromTemplate).toHaveBeenCalled();
@@ -196,6 +199,7 @@ describe('LinuxMenu', () => {
       const template = (Menu.buildFromTemplate as any).mock.calls[0][0];
       expect(template.length).toBeGreaterThan(0);
       expect(template.some((item: any) => item.label?.includes('Open'))).toBe(true);
+      expect(template.some((item: any) => item.label === 'Settings')).toBe(true);
       expect(template.some((item: any) => item.label === 'Quit')).toBe(true);
     });
   });
@@ -299,47 +303,49 @@ describe('LinuxMenu', () => {
   });
 
   describe('menu accelerators', () => {
-    it('should use Ctrl prefix for Linux shortcuts', () => {
+    it('should use role for standard edit shortcuts (accelerators handled by Electron)', () => {
       linuxMenu.buildAndSetAppMenu();
 
       const template = (Menu.buildFromTemplate as any).mock.calls[0][0];
       const editMenu = template.find((item: any) => item.label === 'Edit');
       const copyItem = editMenu.submenu.find((item: any) => item.label === 'Copy');
 
-      expect(copyItem.accelerator).toBe('Ctrl+C');
+      expect(copyItem.role).toBe('copy');
     });
 
-    it('should set correct accelerator for close', () => {
+    it('should bind CmdOrCtrl+W to a smart close handler (tab first, then window)', () => {
       linuxMenu.buildAndSetAppMenu();
 
       const template = (Menu.buildFromTemplate as any).mock.calls[0][0];
       const fileMenu = template.find((item: any) => item.label === 'File');
       const closeItem = fileMenu.submenu.find((item: any) => item.label === 'Close');
 
-      expect(closeItem.accelerator).toBe('Ctrl+W');
+      expect(closeItem.accelerator).toBe('CmdOrCtrl+W');
+      expect(typeof closeItem.click).toBe('function');
+      expect(closeItem.role).toBeUndefined();
     });
 
-    it('should set correct accelerator for minimize', () => {
+    it('should use role for minimize (accelerator handled by Electron)', () => {
       linuxMenu.buildAndSetAppMenu();
 
       const template = (Menu.buildFromTemplate as any).mock.calls[0][0];
       const fileMenu = template.find((item: any) => item.label === 'File');
       const minimizeItem = fileMenu.submenu.find((item: any) => item.label === 'Minimize');
 
-      expect(minimizeItem.accelerator).toBe('Ctrl+M');
+      expect(minimizeItem.role).toBe('minimize');
     });
 
-    it('should set Ctrl+Shift+Z for redo', () => {
+    it('should use role for redo (accelerator handled by Electron)', () => {
       linuxMenu.buildAndSetAppMenu();
 
       const template = (Menu.buildFromTemplate as any).mock.calls[0][0];
       const editMenu = template.find((item: any) => item.label === 'Edit');
       const redoItem = editMenu.submenu.find((item: any) => item.label === 'Redo');
 
-      expect(redoItem.accelerator).toBe('Ctrl+Shift+Z');
+      expect(redoItem.role).toBe('redo');
     });
 
-    it('should set F11 for fullscreen', () => {
+    it('should use role for fullscreen (accelerator handled by Electron)', () => {
       linuxMenu.buildAndSetAppMenu();
 
       const template = (Menu.buildFromTemplate as any).mock.calls[0][0];
@@ -348,7 +354,7 @@ describe('LinuxMenu', () => {
         (item: any) => item.label === 'Toggle Full Screen',
       );
 
-      expect(fullscreenItem.accelerator).toBe('F11');
+      expect(fullscreenItem.role).toBe('togglefullscreen');
     });
   });
 
@@ -375,14 +381,14 @@ describe('LinuxMenu', () => {
       expect(mockApp.browserManager.retrieveByIdentifier).toHaveBeenCalledWith('devtools');
     });
 
-    it('should set Ctrl+Shift+I for developer tools', () => {
+    it('should use role for developer tools (accelerator handled by Electron)', () => {
       linuxMenu.buildAndSetAppMenu({ showDevItems: true });
 
       const template = (Menu.buildFromTemplate as any).mock.calls[0][0];
       const devMenu = template.find((item: any) => item.label === 'Developer');
       const devToolsItem = devMenu.submenu.find((item: any) => item.label === 'Developer Tools');
 
-      expect(devToolsItem.accelerator).toBe('Ctrl+Shift+I');
+      expect(devToolsItem.role).toBe('toggleDevTools');
     });
 
     it('should include reload options in developer menu', () => {
@@ -411,13 +417,14 @@ describe('LinuxMenu', () => {
       expect(pasteItem).toBeDefined();
     });
 
-    it('should use Ctrl accelerators in context menus', () => {
+    it('should use role for copy in context menus (accelerator handled by Electron)', () => {
       linuxMenu.buildContextMenu('editor');
 
       const template = (Menu.buildFromTemplate as any).mock.calls[0][0];
       const copyItem = template.find((item: any) => item.role === 'copy');
 
-      expect(copyItem.accelerator).toBe('Ctrl+C');
+      expect(copyItem).toBeDefined();
+      expect(copyItem.role).toBe('copy');
     });
 
     it('should include cut in editor context menu', () => {
@@ -427,7 +434,7 @@ describe('LinuxMenu', () => {
       const cutItem = template.find((item: any) => item.role === 'cut');
 
       expect(cutItem).toBeDefined();
-      expect(cutItem.accelerator).toBe('Ctrl+X');
+      expect(cutItem.role).toBe('cut');
     });
 
     it('should include delete in editor context menu', () => {

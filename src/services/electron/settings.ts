@@ -1,8 +1,18 @@
-import { type NetworkProxySettings, type ShortcutUpdateResult } from '@lobechat/electron-client-ipc';
+import {
+  type NetworkProxySettings,
+  type ShortcutUpdateResult,
+} from '@lobechat/electron-client-ipc';
 
 import { ensureElectronIpc } from '@/utils/electron/ipc';
 
 class DesktopSettingsService {
+  /**
+   * Get app tray visibility
+   */
+  getAppTrayVisible = async () => {
+    return ensureElectronIpc().tray.getAppTrayVisible();
+  };
+
   /**
    * Get proxy settings
    */
@@ -15,6 +25,13 @@ class DesktopSettingsService {
    */
   setSettings = async (data: Partial<NetworkProxySettings>) => {
     return ensureElectronIpc().networkProxy.setProxySettings(data);
+  };
+
+  /**
+   * Set app tray visibility
+   */
+  setAppTrayVisible = async (visible: boolean) => {
+    return ensureElectronIpc().tray.setAppTrayVisible(visible);
   };
 
   /**

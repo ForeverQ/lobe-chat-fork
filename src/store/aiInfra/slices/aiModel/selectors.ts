@@ -68,6 +68,12 @@ const isModelSupportVideo = (id: string, provider: string) => (s: AIProviderStor
   return model?.abilities?.video;
 };
 
+const isModelSupportImageOutput = (id: string, provider: string) => (s: AIProviderStoreState) => {
+  const model = getEnabledModelById(id, provider)(s);
+
+  return model?.abilities?.imageOutput || false;
+};
+
 const isModelSupportReasoning = (id: string, provider: string) => (s: AIProviderStoreState) => {
   const model = getEnabledModelById(id, provider)(s);
 
@@ -93,6 +99,12 @@ const modelExtendParams = (id: string, provider: string) => (s: AIProviderStoreS
   return model?.settings?.extendParams;
 };
 
+const modelDisabledParams = (id: string, provider: string) => (s: AIProviderStoreState) => {
+  const model = getEnabledModelById(id, provider)(s);
+
+  return model?.settings?.disabledParams;
+};
+
 const isModelHasExtendParams = (id: string, provider: string) => (s: AIProviderStoreState) => {
   const controls = modelExtendParams(id, provider)(s);
 
@@ -111,11 +123,13 @@ const isModelHasBuiltinSearch = (id: string, provider: string) => (s: AIProvider
   return !!searchImpl;
 };
 
-const isModelBuiltinSearchInternal = (id: string, provider: string) => (s: AIProviderStoreState): boolean => {
-  const searchImpl = modelBuiltinSearchImpl(id, provider)(s);
+const isModelBuiltinSearchInternal =
+  (id: string, provider: string) =>
+  (s: AIProviderStoreState): boolean => {
+    const searchImpl = modelBuiltinSearchImpl(id, provider)(s);
 
-  return searchImpl === ModelSearchImplement.Internal;
-};
+    return searchImpl === ModelSearchImplement.Internal;
+  };
 
 const isModelHasBuiltinSearchConfig =
   (id: string, provider: string) => (s: AIProviderStoreState) => {
@@ -147,12 +161,14 @@ export const aiModelSelectors = {
   isModelHasExtendParams,
   isModelLoading,
   isModelSupportFiles,
+  isModelSupportImageOutput,
   isModelSupportReasoning,
   isModelSupportToolUse,
   isModelSupportVideo,
   isModelSupportVision,
   modelBuiltinSearchImpl,
   modelContextWindowTokens,
+  modelDisabledParams,
   modelExtendParams,
   totalAiProviderModelList,
 };

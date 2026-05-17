@@ -98,8 +98,16 @@ export class FlatListBuilder {
             return child?.role !== 'task';
           });
 
-          // Create tasks virtual message
-          const tasksMessage = this.createTasksMessage(parentMessage, taskChildren, processedIds);
+          // Check if tasks have different agentIds (groupTasks) or same agentId (tasks)
+          const taskAgentIds = new Set(
+            taskChildren.map((childId) => this.messageMap.get(childId)?.agentId).filter(Boolean),
+          );
+          const isGroupTasks = taskAgentIds.size > 1;
+
+          // Create appropriate virtual message based on agent diversity
+          const tasksMessage = isGroupTasks
+            ? this.createGroupTasksMessage(parentMessage, taskChildren, processedIds)
+            : this.createTasksMessage(parentMessage, taskChildren, processedIds);
           flatList.push(tasksMessage);
 
           // Continue with non-task children (e.g., final summary from assistant)
@@ -136,8 +144,18 @@ export class FlatListBuilder {
                     taskGrandchild.tools &&
                     taskGrandchild.tools.length > 0
                   ) {
-                    this.processAssistantGroup(
-                      taskGrandchild,
+                    this.processAssistantGroup(taskGrandchild, flatList, processedIds, allMessages);
+                  } else if (
+                    // Check if it's a supervisor message without tools (content-only)
+                    taskGrandchild.role === 'assistant' &&
+                    taskGrandchild.metadata?.isSupervisor &&
+                    (!taskGrandchild.tools || taskGrandchild.tools.length === 0)
+                  ) {
+                    const supervisorMessage = this.createSupervisorContentMessage(taskGrandchild);
+                    flatList.push(supervisorMessage);
+                    processedIds.add(taskGrandchildId);
+                    this.buildFlatListRecursive(
+                      taskGrandchildId,
                       flatList,
                       processedIds,
                       allMessages,
@@ -205,17 +223,44 @@ export class FlatListBuilder {
           processedIds,
         );
 
+        // Gather external-signal callback blocks (LOBE-8998) for any
+        // tool in the chain that fired toolless reactive replies
+        // (Monitor stdout pushes, etc.). Snapshot now so the UI doesn't
+        // need to query messageMap; mark callback messages as processed
+        // so they don't render as separate top-level bubbles.
+        const signalBlocks = this.messageCollector.collectFlatSignalCallbacks(
+          allToolMessages,
+          allMessages,
+        );
+
+        // Post-task-summary turns (LOBE-8998) — toolless siblings of
+        // the callbacks under the same tool_result, tagged with
+        // `signal.type === 'task-completion'`. Belong inside the same
+        // AssistantGroup, rendered AFTER the SignalCallbacks accordion.
+        const taskCompletionMessages = this.messageCollector.collectFlatTaskCompletions(
+          allToolMessages,
+          allMessages,
+        );
+
         // Create assistantGroup virtual message
         const groupMessage = this.createAssistantGroupMessage(
           assistantChain[0],
           assistantChain,
           allToolMessages,
+          signalBlocks,
+          taskCompletionMessages,
         );
         flatList.push(groupMessage);
 
         // Mark all as processed
         assistantChain.forEach((m) => processedIds.add(m.id));
         allToolMessages.forEach((m) => processedIds.add(m.id));
+        for (const block of signalBlocks) {
+          for (const cb of block.callbacks) processedIds.add(cb.id);
+        }
+        for (const completion of taskCompletionMessages) {
+          processedIds.add(completion.id);
+        }
 
         // Continue after the assistant chain
         // Priority 1: If last assistant has non-tool children, continue from it
@@ -730,6 +775,13 @@ export class FlatListBuilder {
     firstAssistant: Message,
     assistantChain: Message[],
     allToolMessages: Message[],
+    signalCallbackBlocks?: {
+      callbacks: Message[];
+      sourceToolCallId: string;
+      sourceToolMessageId: string;
+      sourceToolName: string;
+    }[],
+    taskCompletionMessages?: Message[],
   ): Message {
     const children: AssistantContentBlock[] = [];
 
@@ -787,18 +839,23 @@ export class FlatListBuilder {
           'inputCitationTokens',
           'inputImageTokens',
           'inputTextTokens',
+          'inputVideoTokens',
+          'inputToolTokens',
           'inputWriteCacheTokens',
           'latency',
           'outputAudioTokens',
           'outputImageTokens',
           'outputReasoningTokens',
           'outputTextTokens',
+          // Nested canonical shape — see splitMetadata
+          'performance',
           'rejectedPredictionTokens',
           'totalInputTokens',
           'totalOutputTokens',
           'totalTokens',
           'tps',
           'ttft',
+          'usage',
         ]);
 
         Object.entries(assistant.metadata).forEach(([key, value]) => {
@@ -884,6 +941,47 @@ export class FlatListBuilder {
       result.metadata = { ...result.metadata, isSupervisor: true };
     }
 
+    // Snapshot signal-callback blocks onto the virtual group message
+    // (LOBE-8998) so AssistantGroupMessage can render `<SignalCallbacks>`
+    // without re-querying the store. Each callback Message becomes a
+    // compact UISignalCallback with content + model/provider/sequence.
+    if (signalCallbackBlocks && signalCallbackBlocks.length > 0) {
+      result.signalCallbacks = signalCallbackBlocks.map((block) => ({
+        callbacks: block.callbacks.map((m) => ({
+          content: m.content ?? '',
+          id: m.id,
+          model: m.model ?? undefined,
+          provider: m.provider ?? undefined,
+          sequence: (m.metadata as { signal?: { sequence?: number } } | null | undefined)?.signal
+            ?.sequence,
+        })),
+        sourceToolCallId: block.sourceToolCallId,
+        sourceToolMessageId: block.sourceToolMessageId,
+        sourceToolName: block.sourceToolName,
+      }));
+    }
+
+    // Snapshot post-task-summary turns as content blocks (LOBE-8998).
+    // They render after `<SignalCallbacks>` inside the same group, via
+    // a second `<Group>` that pulls live content from the store using
+    // the block id (no need to denormalize text here — keeps streaming
+    // updates working without an extra refresh).
+    if (taskCompletionMessages && taskCompletionMessages.length > 0) {
+      result.taskCompletions = taskCompletionMessages.map((m) => {
+        const block: AssistantContentBlock = {
+          content: m.content ?? '',
+          id: m.id,
+        };
+        if (m.error) block.error = m.error;
+        if (m.fileList && m.fileList.length > 0) block.fileList = m.fileList;
+        if (m.imageList && m.imageList.length > 0) block.imageList = m.imageList;
+        if (m.performance) block.performance = m.performance;
+        if (m.reasoning) block.reasoning = m.reasoning;
+        if (m.usage) block.usage = m.usage;
+        return block;
+      });
+    }
+
     return result;
   }
 
@@ -929,18 +1027,23 @@ export class FlatListBuilder {
         'inputCitationTokens',
         'inputImageTokens',
         'inputTextTokens',
+        'inputVideoTokens',
+        'inputToolTokens',
         'inputWriteCacheTokens',
         'latency',
         'outputAudioTokens',
         'outputImageTokens',
         'outputReasoningTokens',
         'outputTextTokens',
+        // Nested canonical shape — see splitMetadata
+        'performance',
         'rejectedPredictionTokens',
         'totalInputTokens',
         'totalOutputTokens',
         'totalTokens',
         'tps',
         'ttft',
+        'usage',
       ]);
 
       Object.entries(message.metadata).forEach(([key, value]) => {
@@ -1033,6 +1136,54 @@ export class FlatListBuilder {
       },
       id: tasksId,
       role: 'tasks' as any,
+      tasks: taskMessages as any,
+      updatedAt,
+    } as Message;
+  }
+
+  /**
+   * Create a virtual groupTasks message for multiple tasks with different agentIds
+   */
+  private createGroupTasksMessage(
+    parentMessage: Message,
+    taskChildIds: string[],
+    processedIds: Set<string>,
+  ): Message {
+    const taskMessages: Message[] = [];
+
+    for (const taskId of taskChildIds) {
+      const taskMessage = this.messageMap.get(taskId);
+      if (taskMessage) {
+        taskMessages.push(taskMessage);
+        processedIds.add(taskId);
+      }
+    }
+
+    // Sort by createdAt to maintain order
+    taskMessages.sort((a, b) => a.createdAt - b.createdAt);
+
+    // Generate ID with parent message id and all task message ids
+    const taskIdsStr = taskMessages.map((t) => t.id).join('-');
+    const groupTasksId = `groupTasks-${parentMessage.id}-${taskIdsStr}`;
+
+    // Calculate timestamps from task messages
+    const createdAt =
+      taskMessages.length > 0
+        ? Math.min(...taskMessages.map((m) => m.createdAt))
+        : parentMessage.createdAt;
+    const updatedAt =
+      taskMessages.length > 0
+        ? Math.max(...taskMessages.map((m) => m.updatedAt))
+        : parentMessage.updatedAt;
+
+    return {
+      content: '',
+      createdAt,
+      extra: {
+        parentMessageId: parentMessage.id,
+      },
+      id: groupTasksId,
+      role: 'groupTasks' as any,
       tasks: taskMessages as any,
       updatedAt,
     } as Message;

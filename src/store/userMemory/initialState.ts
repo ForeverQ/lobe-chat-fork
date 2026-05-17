@@ -1,10 +1,17 @@
-import type { RetrieveMemoryParams, RetrieveMemoryResult } from '@lobechat/types';
+import { type RetrieveMemoryParams, type RetrieveMemoryResult } from '@lobechat/types';
 
-import { type AgentMemorySliceState, agentMemoryInitialState } from './slices/agent';
-import { type ContextSliceState, contextInitialState } from './slices/context';
-import { type ExperienceSliceState, experienceInitialState } from './slices/experience';
-import { type IdentitySliceState, identityInitialState } from './slices/identity';
-import { type PreferenceSliceState, preferenceInitialState } from './slices/preference';
+import { type ActivitySliceState } from './slices/activity';
+import { activityInitialState } from './slices/activity';
+import { type AgentMemorySliceState } from './slices/agent';
+import { agentMemoryInitialState } from './slices/agent';
+import { type ContextSliceState } from './slices/context';
+import { contextInitialState } from './slices/context';
+import { type ExperienceSliceState } from './slices/experience';
+import { experienceInitialState } from './slices/experience';
+import { type IdentitySliceState } from './slices/identity';
+import { identityInitialState } from './slices/identity';
+import { type PreferenceSliceState } from './slices/preference';
+import { preferenceInitialState } from './slices/preference';
 
 export interface PersonaData {
   content: string;
@@ -13,6 +20,7 @@ export interface PersonaData {
 
 export interface UserMemoryStoreState
   extends
+    ActivitySliceState,
     AgentMemorySliceState,
     ContextSliceState,
     ExperienceSliceState,
@@ -22,7 +30,7 @@ export interface UserMemoryStoreState
   activeParamsKey?: string;
   editingMemoryContent?: string;
   editingMemoryId?: string;
-  editingMemoryLayer?: 'context' | 'experience' | 'identity' | 'preference';
+  editingMemoryLayer?: 'activity' | 'context' | 'experience' | 'identity' | 'preference';
   memoryFetchedAtMap: Record<string, number>;
   memoryMap: Record<string, RetrieveMemoryResult>;
   persona?: PersonaData;
@@ -33,6 +41,7 @@ export interface UserMemoryStoreState
 }
 
 export const initialState: UserMemoryStoreState = {
+  ...activityInitialState,
   ...agentMemoryInitialState,
   ...contextInitialState,
   ...experienceInitialState,

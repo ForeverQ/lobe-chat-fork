@@ -1,8 +1,8 @@
-import { ChatCitationItem, ModelPerformance, ModelUsage } from '@lobechat/types';
+import type { ChatCitationItem, ModelPerformance, ModelUsage } from '@lobechat/types';
 import type { Pricing } from 'model-bank';
 
 import { parseToolCalls } from '../../helpers';
-import { ChatStreamCallbacks } from '../../types';
+import type { ChatStreamCallbacks } from '../../types';
 import { AgentRuntimeErrorType } from '../../types/error';
 import { safeParseJSON } from '../../utils/safeParseJSON';
 import { nanoid } from '../../utils/uuid';
@@ -19,6 +19,7 @@ export type ChatPayloadForTransformStream = {
  * context in the stream to save temporarily data
  */
 export interface StreamContext {
+  chunkIndex?: number;
   id: string;
   /**
    * As pplx citations is in every chunk, but we only need to return it once
@@ -143,8 +144,122 @@ const chatStreamable = async function* <T>(stream: AsyncIterable<T>) {
 
 const ERROR_CHUNK_PREFIX = '%FIRST_CHUNK_ERROR%: ';
 
-export function readableFromAsyncIterable<T>(iterable: AsyncIterable<T>) {
-  let it = iterable[Symbol.asyncIterator]();
+/**
+ * Optional diagnostic context attached to errors that surface from the
+ * provider SDK iterator. Lets the FIRST_CHUNK_ERROR payload carry
+ * provider/model identifiers so log triage can correlate identical
+ * upstream failures across operations.
+ */
+export type StreamErrorContext = {
+  model?: string;
+  provider?: string;
+};
+
+/**
+ * Build the FIRST_CHUNK_ERROR payload string for a thrown error.
+ *
+ * Beyond `message`/`name`/`stack`, this surfaces:
+ * - `provider`/`model` from the caller, so error-log consumers know which
+ *   upstream blew up without grepping for the operation
+ * - `causeMessage`/`causeName` when `error.cause` is set — many wrapped
+ *   errors (e.g. APIError around a SyntaxError) bury the actionable detail
+ *   in `cause` and the bare triplet drops it
+ * - `parsePosition` extracted from V8 JSON SyntaxError messages
+ *   (e.g. `"Bad escaped character in JSON at position 160050"`) so we can
+ *   group by failure offset and confirm the same chunk class is recurring.
+ *   Walks both the outer error and any Error cause — SDKs commonly wrap
+ *   the SyntaxError in an APIError, and the wrapped case is exactly the
+ *   one this enrichment is meant to diagnose.
+ */
+const buildStreamErrorPayload = (error: Error, context?: StreamErrorContext): string => {
+  const payload: Record<string, unknown> = {
+    message: error.message,
+    name: error.name,
+    stack: error.stack,
+  };
+
+  if (context?.provider) payload.provider = context.provider;
+  if (context?.model) payload.model = context.model;
+
+  const cause = (error as { cause?: unknown }).cause;
+  const causeAsError = cause instanceof Error ? cause : undefined;
+
+  if (causeAsError) {
+    payload.causeName = causeAsError.name;
+    payload.causeMessage = causeAsError.message;
+  } else if (cause !== undefined && cause !== null) {
+    payload.cause = typeof cause === 'object' ? toJsonSafe(cause) : String(cause);
+  }
+
+  const parsePosition = extractParsePosition(error) ?? extractParsePosition(causeAsError);
+  if (parsePosition !== undefined) payload.parsePosition = parsePosition;
+
+  return ERROR_CHUNK_PREFIX + safeJsonStringify(payload);
+};
+
+/**
+ * Extract a JSON parse offset from V8's `SyntaxError` message format
+ * (`"... in JSON at position N (line ... column ...)"`). Accepts either a
+ * `SyntaxError` directly or any `Error` whose message still carries the
+ * `"JSON at position"` signature — wrapped errors routinely lose the
+ * `SyntaxError` name but preserve the offset in the message string.
+ */
+const extractParsePosition = (error: Error | undefined): number | undefined => {
+  if (!error) return undefined;
+  const isJsonParseError = error.name === 'SyntaxError' || /JSON at position/i.test(error.message);
+  if (!isJsonParseError) return undefined;
+  const match = /position\s+(\d+)/i.exec(error.message);
+  return match ? Number(match[1]) : undefined;
+};
+
+/**
+ * `JSON.stringify` with a replacer that handles `BigInt` and circular refs
+ * so the outer stringify in `buildStreamErrorPayload` never throws.
+ *
+ * If this throws, the FIRST_CHUNK_ERROR chunk never gets emitted and a
+ * diagnostic path turns into a hard stream failure — `safeJsonStringify`
+ * is the difference between "consumer sees a typed error" and "consumer
+ * sees the stream just stop".
+ */
+const safeJsonStringify = (value: unknown): string => {
+  const seen = new WeakSet<object>();
+  try {
+    return JSON.stringify(value, (_key, val) => {
+      if (typeof val === 'bigint') return val.toString();
+      if (typeof val === 'object' && val !== null) {
+        if (seen.has(val as object)) return '[Circular]';
+        seen.add(val as object);
+      }
+      return val;
+    });
+  } catch {
+    return JSON.stringify({
+      message: 'Failed to serialize error payload',
+      name: 'StreamErrorSerializationFailure',
+    });
+  }
+};
+
+/**
+ * Reduce an arbitrary cause object to a JSON-safe shape. `structuredClone`
+ * succeeds on values that `JSON.stringify` later chokes on (cycles, BigInt,
+ * functions in nested values), so the clone alone isn't enough — we run
+ * the result through `safeJsonStringify` and parse it back so consumers
+ * always receive plain JSON.
+ */
+const toJsonSafe = (cause: object): unknown => {
+  try {
+    return JSON.parse(safeJsonStringify(cause));
+  } catch {
+    return String(cause);
+  }
+};
+
+export function readableFromAsyncIterable<T>(
+  iterable: AsyncIterable<T>,
+  context?: StreamErrorContext,
+) {
+  const it = iterable[Symbol.asyncIterator]();
   return new ReadableStream<T>({
     async cancel(reason) {
       await it.return?.(reason);
@@ -156,12 +271,7 @@ export function readableFromAsyncIterable<T>(iterable: AsyncIterable<T>) {
         if (done) controller.close();
         else controller.enqueue(value);
       } catch (e) {
-        const error = e as Error;
-
-        controller.enqueue(
-          (ERROR_CHUNK_PREFIX +
-            JSON.stringify({ message: error.message, name: error.name, stack: error.stack })) as T,
-        );
+        controller.enqueue(buildStreamErrorPayload(e as Error, context) as T);
         controller.close();
       }
     },
@@ -169,12 +279,15 @@ export function readableFromAsyncIterable<T>(iterable: AsyncIterable<T>) {
 }
 
 // make the response to the streamable format
-export const convertIterableToStream = <T>(stream: AsyncIterable<T>) => {
+export const convertIterableToStream = <T>(
+  stream: AsyncIterable<T>,
+  context?: StreamErrorContext,
+) => {
   const iterable = chatStreamable(stream);
 
   // copy from https://github.com/vercel/ai/blob/d3aa5486529e3d1a38b30e3972b4f4c63ea4ae9a/packages/ai/streams/ai-stream.ts#L284
   // and add an error handle
-  let it = iterable[Symbol.asyncIterator]();
+  const it = iterable[Symbol.asyncIterator]();
 
   return new ReadableStream<T>({
     async cancel(reason) {
@@ -186,12 +299,7 @@ export const convertIterableToStream = <T>(stream: AsyncIterable<T>) => {
         if (done) controller.close();
         else controller.enqueue(value);
       } catch (e) {
-        const error = e as Error;
-
-        controller.enqueue(
-          (ERROR_CHUNK_PREFIX +
-            JSON.stringify({ message: error.message, name: error.name, stack: error.stack })) as T,
-        );
+        controller.enqueue(buildStreamErrorPayload(e as Error, context) as T);
         controller.close();
       }
     },
@@ -202,12 +310,7 @@ export const convertIterableToStream = <T>(stream: AsyncIterable<T>) => {
         if (done) controller.close();
         else controller.enqueue(value);
       } catch (e) {
-        const error = e as Error;
-
-        controller.enqueue(
-          (ERROR_CHUNK_PREFIX +
-            JSON.stringify({ message: error.message, name: error.name, stack: error.stack })) as T,
-        );
+        controller.enqueue(buildStreamErrorPayload(e as Error, context) as T);
         controller.close();
       }
     },
@@ -266,15 +369,19 @@ export function createCallbacksTransformer(cb: ChatStreamCallbacks | undefined) 
   let speed: ModelPerformance | undefined;
   let grounding: any;
   let toolsCalling: any;
+  let streamError: any;
+  let finishReason: string | undefined;
   // Track base64 images for accumulation
-  let base64Images: Array<{ data: string; id: string }> = [];
+  const base64Images: Array<{ data: string; id: string }> = [];
 
   let currentType = '' as unknown as StreamProtocolChunk['type'];
   const callbacks = cb || {};
 
-  return new TransformStream({
+  return new TransformStream<string, Uint8Array>({
     async flush(): Promise<void> {
       const data = {
+        error: streamError,
+        finishReason,
         grounding,
         speed,
         text: aggregatedText,
@@ -385,6 +492,29 @@ export function createCallbacksTransformer(cb: ChatStreamCallbacks | undefined) 
             toolsCalling = parseToolCalls(toolsCalling, data);
 
             await callbacks.onToolsCalling?.({ chunk: data, toolsCalling });
+            break;
+          }
+
+          case 'stop': {
+            // Provider's terminal finishReason (e.g. Google's RECITATION / MAX_TOKENS,
+            // OpenAI's length, Anthropic's end_turn). Capture so downstream consumers
+            // can detect soft interrupts where content is empty but tokens were billed.
+            //
+            // Some providers emit multiple stop chunks per stream — Anthropic sends
+            // `message_delta` (carrying the real `stop_reason` like `end_turn` /
+            // `max_tokens` / `tool_use`) followed by a `message_stop` sentinel.
+            // Keep the FIRST non-empty value so the meaningful reason is not
+            // clobbered by the trailing sentinel.
+            if (typeof data === 'string' && data && !finishReason) {
+              finishReason = data;
+            }
+            break;
+          }
+
+          case 'error': {
+            streamError = data;
+            await callbacks.onError?.(data);
+            break;
           }
         }
       }
@@ -467,9 +597,20 @@ export const createTokenSpeedCalculator = (
   let outputStartAt: number | undefined;
 
   const process = (chunk: StreamProtocolChunk) => {
-    let result = [chunk];
-    // if the chunk is the first text or reasoning chunk, set as output start
-    if (!outputStartAt && (chunk.type === 'text' || chunk.type === 'reasoning')) {
+    const result = [chunk];
+    // Set outputStartAt when receiving the first content chunk (for TTFT calculation)
+    // - text/reasoning: standard text output events
+    // - content_part/reasoning_part: multimodal output events used by Gemini 3+ models
+    //   which emit structured parts instead of plain text events
+    // - tool_calls: function calling output events
+    if (
+      !outputStartAt &&
+      (chunk.type === 'text' ||
+        chunk.type === 'reasoning' ||
+        chunk.type === 'content_part' ||
+        chunk.type === 'reasoning_part' ||
+        chunk.type === 'tool_calls')
+    ) {
       outputStartAt = Date.now();
     }
 

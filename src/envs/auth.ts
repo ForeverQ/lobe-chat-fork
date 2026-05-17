@@ -1,112 +1,87 @@
-/* eslint-disable sort-keys-fix/sort-keys-fix , typescript-sort-keys/interface */
-import { createEnv } from '@t3-oss/env-nextjs';
+import { createEnv } from '@t3-oss/env-core';
 import { z } from 'zod';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace NodeJS {
     interface ProcessEnv {
-      // ===== Better Auth ===== //
-      AUTH_SECRET?: string;
-      AUTH_EMAIL_VERIFICATION?: string;
-      ENABLE_MAGIC_LINK?: string;
-      AUTH_SSO_PROVIDERS?: string;
-      AUTH_TRUSTED_ORIGINS?: string;
       AUTH_ALLOWED_EMAILS?: string;
-
-      // ===== Auth Provider Credentials ===== //
-      AUTH_GOOGLE_ID?: string;
-      AUTH_GOOGLE_SECRET?: string;
-
+      AUTH_APPLE_APP_BUNDLE_IDENTIFIER?: string;
       AUTH_APPLE_CLIENT_ID?: string;
       AUTH_APPLE_CLIENT_SECRET?: string;
-      AUTH_APPLE_APP_BUNDLE_IDENTIFIER?: string;
-
-      AUTH_GITHUB_ID?: string;
-      AUTH_GITHUB_SECRET?: string;
-
-      AUTH_COGNITO_ID?: string;
-      AUTH_COGNITO_SECRET?: string;
-      AUTH_COGNITO_ISSUER?: string;
-      AUTH_COGNITO_DOMAIN?: string;
-      AUTH_COGNITO_REGION?: string;
-      AUTH_COGNITO_USERPOOL_ID?: string;
-
-      AUTH_MICROSOFT_ID?: string;
-      AUTH_MICROSOFT_SECRET?: string;
-
       AUTH_AUTH0_ID?: string;
-      AUTH_AUTH0_SECRET?: string;
       AUTH_AUTH0_ISSUER?: string;
+      AUTH_AUTH0_SECRET?: string;
 
       AUTH_AUTHELIA_ID?: string;
-      AUTH_AUTHELIA_SECRET?: string;
       AUTH_AUTHELIA_ISSUER?: string;
 
+      AUTH_AUTHELIA_SECRET?: string;
       AUTH_AUTHENTIK_ID?: string;
-      AUTH_AUTHENTIK_SECRET?: string;
       AUTH_AUTHENTIK_ISSUER?: string;
 
+      AUTH_AUTHENTIK_SECRET?: string;
       AUTH_CASDOOR_ID?: string;
-      AUTH_CASDOOR_SECRET?: string;
+
       AUTH_CASDOOR_ISSUER?: string;
-
+      AUTH_CASDOOR_SECRET?: string;
       AUTH_CLOUDFLARE_ZERO_TRUST_ID?: string;
-      AUTH_CLOUDFLARE_ZERO_TRUST_SECRET?: string;
       AUTH_CLOUDFLARE_ZERO_TRUST_ISSUER?: string;
+      AUTH_CLOUDFLARE_ZERO_TRUST_SECRET?: string;
+      AUTH_COGNITO_DOMAIN?: string;
 
+      AUTH_COGNITO_ID?: string;
+      AUTH_COGNITO_ISSUER?: string;
+      AUTH_COGNITO_REGION?: string;
+      AUTH_COGNITO_SECRET?: string;
+
+      AUTH_COGNITO_USERPOOL_ID?: string;
+      AUTH_DISABLE_EMAIL_PASSWORD?: string;
+      AUTH_EMAIL_VERIFICATION?: string;
+
+      AUTH_ENABLE_MAGIC_LINK?: string;
       AUTH_FEISHU_APP_ID?: string;
       AUTH_FEISHU_APP_SECRET?: string;
 
       AUTH_GENERIC_OIDC_ID?: string;
-      AUTH_GENERIC_OIDC_SECRET?: string;
       AUTH_GENERIC_OIDC_ISSUER?: string;
+      AUTH_GENERIC_OIDC_SECRET?: string;
 
+      AUTH_GITHUB_ID?: string;
+      AUTH_GITHUB_SECRET?: string;
+      // ===== Auth Provider Credentials ===== //
+      AUTH_GOOGLE_ID?: string;
+
+      AUTH_GOOGLE_SECRET?: string;
       AUTH_KEYCLOAK_ID?: string;
-      AUTH_KEYCLOAK_SECRET?: string;
       AUTH_KEYCLOAK_ISSUER?: string;
 
+      AUTH_KEYCLOAK_SECRET?: string;
       AUTH_LOGTO_ID?: string;
-      AUTH_LOGTO_SECRET?: string;
-      AUTH_LOGTO_ISSUER?: string;
 
-      AUTH_MICROSOFT_ENTRA_ID_ID?: string;
-      AUTH_MICROSOFT_ENTRA_ID_SECRET?: string;
-      AUTH_MICROSOFT_ENTRA_ID_TENANT_ID?: string;
-      AUTH_MICROSOFT_ENTRA_ID_BASE_URL?: string;
+      AUTH_LOGTO_ISSUER?: string;
+      AUTH_LOGTO_SECRET?: string;
+      AUTH_MICROSOFT_AUTHORITY_URL?: string;
+
+      AUTH_MICROSOFT_ID?: string;
+      AUTH_MICROSOFT_SECRET?: string;
+      AUTH_MICROSOFT_TENANT_ID?: string;
 
       AUTH_OKTA_ID?: string;
-      AUTH_OKTA_SECRET?: string;
       AUTH_OKTA_ISSUER?: string;
+      AUTH_OKTA_SECRET?: string;
+
+      // ===== Better Auth ===== //
+      AUTH_SECRET?: string;
+      AUTH_SSO_PROVIDERS?: string;
+      AUTH_TRUSTED_ORIGINS?: string;
 
       AUTH_WECHAT_ID?: string;
       AUTH_WECHAT_SECRET?: string;
 
       AUTH_ZITADEL_ID?: string;
-      AUTH_ZITADEL_SECRET?: string;
       AUTH_ZITADEL_ISSUER?: string;
-
-      AUTH_AZURE_AD_ID?: string;
-      AUTH_AZURE_AD_SECRET?: string;
-      AUTH_AZURE_AD_TENANT_ID?: string;
-
-      AZURE_AD_CLIENT_ID?: string;
-      AZURE_AD_CLIENT_SECRET?: string;
-      AZURE_AD_TENANT_ID?: string;
-
-      // ZITADEL
-      ZITADEL_CLIENT_ID?: string;
-      ZITADEL_CLIENT_SECRET?: string;
-      ZITADEL_ISSUER?: string;
-
-      // ===== JWKS Key ===== //
-      /**
-       * Generic JWKS key for signing/verifying JWTs.
-       * Used for internal service authentication and other cryptographic operations.
-       * Must be a JWKS JSON string containing an RS256 RSA key pair.
-       * Can be generated using `node scripts/generate-oidc-jwk.mjs`.
-       */
-      JWKS_KEY?: string;
+      AUTH_ZITADEL_SECRET?: string;
 
       /**
        * Internal JWT expiration time for lambda → async calls.
@@ -116,20 +91,31 @@ declare global {
        * @default '30s'
        */
       INTERNAL_JWT_EXPIRATION?: string;
+
+      // ===== JWKS Key ===== //
+      /**
+       * Generic JWKS key for signing/verifying JWTs.
+       * Used for internal service authentication and other cryptographic operations.
+       * Must be a JWKS JSON string containing an RS256 RSA key pair.
+       * Can be generated using `node scripts/generate-oidc-jwk.mjs`.
+       */
+      JWKS_KEY?: string;
     }
   }
 }
 
 export const getAuthConfig = () => {
   return createEnv({
+    clientPrefix: 'NEXT_PUBLIC_',
     client: {},
     server: {
       AUTH_SECRET: z.string().optional(),
       AUTH_SSO_PROVIDERS: z.string().optional().default(''),
       AUTH_TRUSTED_ORIGINS: z.string().optional(),
       AUTH_EMAIL_VERIFICATION: z.boolean().optional().default(false),
-      ENABLE_MAGIC_LINK: z.boolean().optional().default(false),
+      AUTH_ENABLE_MAGIC_LINK: z.boolean().optional().default(false),
       AUTH_ALLOWED_EMAILS: z.string().optional(),
+      AUTH_DISABLE_EMAIL_PASSWORD: z.boolean().optional().default(false),
 
       AUTH_GOOGLE_ID: z.string().optional(),
       AUTH_GOOGLE_SECRET: z.string().optional(),
@@ -148,8 +134,10 @@ export const getAuthConfig = () => {
       AUTH_COGNITO_REGION: z.string().optional(),
       AUTH_COGNITO_USERPOOL_ID: z.string().optional(),
 
+      AUTH_MICROSOFT_AUTHORITY_URL: z.string().optional(),
       AUTH_MICROSOFT_ID: z.string().optional(),
       AUTH_MICROSOFT_SECRET: z.string().optional(),
+      AUTH_MICROSOFT_TENANT_ID: z.string().optional(),
 
       AUTH_AUTH0_ID: z.string().optional(),
       AUTH_AUTH0_SECRET: z.string().optional(),
@@ -186,11 +174,6 @@ export const getAuthConfig = () => {
       AUTH_LOGTO_SECRET: z.string().optional(),
       AUTH_LOGTO_ISSUER: z.string().optional(),
 
-      AUTH_MICROSOFT_ENTRA_ID_ID: z.string().optional(),
-      AUTH_MICROSOFT_ENTRA_ID_SECRET: z.string().optional(),
-      AUTH_MICROSOFT_ENTRA_ID_TENANT_ID: z.string().optional(),
-      AUTH_MICROSOFT_ENTRA_ID_BASE_URL: z.string().optional(),
-
       AUTH_OKTA_ID: z.string().optional(),
       AUTH_OKTA_SECRET: z.string().optional(),
       AUTH_OKTA_ISSUER: z.string().optional(),
@@ -201,18 +184,6 @@ export const getAuthConfig = () => {
       AUTH_ZITADEL_ID: z.string().optional(),
       AUTH_ZITADEL_SECRET: z.string().optional(),
       AUTH_ZITADEL_ISSUER: z.string().optional(),
-
-      AUTH_AZURE_AD_ID: z.string().optional(),
-      AUTH_AZURE_AD_SECRET: z.string().optional(),
-      AUTH_AZURE_AD_TENANT_ID: z.string().optional(),
-
-      AZURE_AD_CLIENT_ID: z.string().optional(),
-      AZURE_AD_CLIENT_SECRET: z.string().optional(),
-      AZURE_AD_TENANT_ID: z.string().optional(),
-
-      ZITADEL_CLIENT_ID: z.string().optional(),
-      ZITADEL_CLIENT_SECRET: z.string().optional(),
-      ZITADEL_ISSUER: z.string().optional(),
 
       LOGTO_WEBHOOK_SIGNING_KEY: z.string().optional(),
 
@@ -229,11 +200,12 @@ export const getAuthConfig = () => {
 
     runtimeEnv: {
       AUTH_EMAIL_VERIFICATION: process.env.AUTH_EMAIL_VERIFICATION === '1',
-      ENABLE_MAGIC_LINK: process.env.ENABLE_MAGIC_LINK === '1',
+      AUTH_ENABLE_MAGIC_LINK: process.env.AUTH_ENABLE_MAGIC_LINK === '1',
       AUTH_SECRET: process.env.AUTH_SECRET,
       AUTH_SSO_PROVIDERS: process.env.AUTH_SSO_PROVIDERS,
       AUTH_TRUSTED_ORIGINS: process.env.AUTH_TRUSTED_ORIGINS,
       AUTH_ALLOWED_EMAILS: process.env.AUTH_ALLOWED_EMAILS,
+      AUTH_DISABLE_EMAIL_PASSWORD: process.env.AUTH_DISABLE_EMAIL_PASSWORD === '1',
 
       // Cognito provider specific env vars
       AUTH_COGNITO_DOMAIN: process.env.AUTH_COGNITO_DOMAIN,
@@ -251,8 +223,10 @@ export const getAuthConfig = () => {
       AUTH_GITHUB_ID: process.env.AUTH_GITHUB_ID,
       AUTH_GITHUB_SECRET: process.env.AUTH_GITHUB_SECRET,
 
+      AUTH_MICROSOFT_AUTHORITY_URL: process.env.AUTH_MICROSOFT_AUTHORITY_URL,
       AUTH_MICROSOFT_ID: process.env.AUTH_MICROSOFT_ID,
       AUTH_MICROSOFT_SECRET: process.env.AUTH_MICROSOFT_SECRET,
+      AUTH_MICROSOFT_TENANT_ID: process.env.AUTH_MICROSOFT_TENANT_ID,
 
       AUTH_COGNITO_ID: process.env.AUTH_COGNITO_ID,
       AUTH_COGNITO_SECRET: process.env.AUTH_COGNITO_SECRET,
@@ -293,11 +267,6 @@ export const getAuthConfig = () => {
       AUTH_LOGTO_SECRET: process.env.AUTH_LOGTO_SECRET,
       AUTH_LOGTO_ISSUER: process.env.AUTH_LOGTO_ISSUER,
 
-      AUTH_MICROSOFT_ENTRA_ID_ID: process.env.AUTH_MICROSOFT_ENTRA_ID_ID,
-      AUTH_MICROSOFT_ENTRA_ID_SECRET: process.env.AUTH_MICROSOFT_ENTRA_ID_SECRET,
-      AUTH_MICROSOFT_ENTRA_ID_TENANT_ID: process.env.AUTH_MICROSOFT_ENTRA_ID_TENANT_ID,
-      AUTH_MICROSOFT_ENTRA_ID_BASE_URL: process.env.AUTH_MICROSOFT_ENTRA_ID_BASE_URL,
-
       AUTH_OKTA_ID: process.env.AUTH_OKTA_ID,
       AUTH_OKTA_SECRET: process.env.AUTH_OKTA_SECRET,
       AUTH_OKTA_ISSUER: process.env.AUTH_OKTA_ISSUER,
@@ -309,28 +278,14 @@ export const getAuthConfig = () => {
       AUTH_ZITADEL_SECRET: process.env.AUTH_ZITADEL_SECRET,
       AUTH_ZITADEL_ISSUER: process.env.AUTH_ZITADEL_ISSUER,
 
-      AUTH_AZURE_AD_ID: process.env.AUTH_AZURE_AD_ID,
-      AUTH_AZURE_AD_SECRET: process.env.AUTH_AZURE_AD_SECRET,
-      AUTH_AZURE_AD_TENANT_ID: process.env.AUTH_AZURE_AD_TENANT_ID,
-
-      // legacy Azure AD envs for backward compatibility
-      AZURE_AD_CLIENT_ID: process.env.AZURE_AD_CLIENT_ID,
-      AZURE_AD_CLIENT_SECRET: process.env.AZURE_AD_CLIENT_SECRET,
-      AZURE_AD_TENANT_ID: process.env.AZURE_AD_TENANT_ID,
-
-      ZITADEL_CLIENT_ID: process.env.ZITADEL_CLIENT_ID,
-      ZITADEL_CLIENT_SECRET: process.env.ZITADEL_CLIENT_SECRET,
-      ZITADEL_ISSUER: process.env.ZITADEL_ISSUER,
-
       // LOGTO
       LOGTO_WEBHOOK_SIGNING_KEY: process.env.LOGTO_WEBHOOK_SIGNING_KEY,
 
       // Casdoor
       CASDOOR_WEBHOOK_SECRET: process.env.CASDOOR_WEBHOOK_SECRET,
 
-      // Generic JWKS key (fallback to OIDC_JWKS_KEY for backward compatibility)
-      JWKS_KEY: process.env.JWKS_KEY || process.env.OIDC_JWKS_KEY,
-      ENABLE_OIDC: !!(process.env.JWKS_KEY || process.env.OIDC_JWKS_KEY),
+      JWKS_KEY: process.env.JWKS_KEY,
+      ENABLE_OIDC: !!process.env.JWKS_KEY,
 
       // Internal JWT expiration time
       INTERNAL_JWT_EXPIRATION: process.env.INTERNAL_JWT_EXPIRATION,
@@ -343,5 +298,3 @@ export const authEnv = getAuthConfig();
 // Auth headers and constants
 export const LOBE_CHAT_AUTH_HEADER = 'X-lobe-chat-auth';
 export const LOBE_CHAT_OIDC_AUTH_HEADER = 'Oidc-Auth';
-export const OAUTH_AUTHORIZED = 'X-oauth-authorized';
-export const SECRET_XOR_KEY = 'LobeHub · LobeHub';

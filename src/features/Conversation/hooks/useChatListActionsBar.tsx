@@ -1,4 +1,4 @@
-import type { ActionIconGroupItemType } from '@lobehub/ui';
+import { type ActionIconGroupItemType } from '@lobehub/ui';
 import { css, cx } from 'antd-style';
 import {
   ArrowDownFromLine,
@@ -110,7 +110,7 @@ export const useChatListActionsBar = ({
       export: {
         icon: DownloadIcon,
         key: 'export',
-        label: '导出为 PDF',
+        label: 'Export as PDF',
       },
       regenerate: {
         disabled: isRegenerating,

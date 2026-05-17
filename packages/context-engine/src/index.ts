@@ -6,6 +6,8 @@ export { BaseFirstUserContentProvider } from './base/BaseFirstUserContentProvide
 export { BaseLastUserContentProvider } from './base/BaseLastUserContentProvider';
 export { BaseProcessor } from './base/BaseProcessor';
 export { BaseProvider } from './base/BaseProvider';
+export { BaseSystemRoleProvider } from './base/BaseSystemRoleProvider';
+export { BaseVirtualLastUserContentProvider } from './base/BaseVirtualLastUserContentProvider';
 
 // Context Engine
 export * from './engine';
@@ -14,6 +16,16 @@ export { ContextEngine } from './pipeline';
 
 // Context Providers
 export * from './providers';
+
+// Token accounting (compression triggers + UI breakdown)
+export type {
+  ContextTokenAccounting,
+  CountContextTokensParams,
+  MessageTokenBreakdown,
+  TokenSourceType,
+  ToolDefinitionTokenBreakdown,
+} from './tokenAccounting';
+export { countContextTokens, DEFAULT_DRIFT_MULTIPLIER } from './tokenAccounting';
 // Processors
 export type { PlaceholderValue, PlaceholderValueMap } from './processors';
 export {

@@ -1,7 +1,6 @@
 import { lambdaClient } from '@/libs/trpc/client';
 import { globalHelpers } from '@/store/global/helpers';
 import { type PluginQueryParams } from '@/types/discover';
-import { convertOpenAIManifestToLobeManifest, getToolManifest } from '@/utils/toolManifest';
 
 class ToolService {
   getOldPluginList = async (params: PluginQueryParams): Promise<any> => {
@@ -14,9 +13,6 @@ class ToolService {
       pageSize: params.pageSize ? Number(params.pageSize) : 20,
     });
   };
-
-  getToolManifest = getToolManifest;
-  convertOpenAIManifestToLobeManifest = convertOpenAIManifestToLobeManifest;
 }
 
 export const toolService = new ToolService();

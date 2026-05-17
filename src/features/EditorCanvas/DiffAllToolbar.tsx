@@ -1,6 +1,7 @@
 'use client';
 
-import { DiffAction, IEditor, LITEXML_DIFFNODE_ALL_COMMAND } from '@lobehub/editor';
+import type { IEditor } from '@lobehub/editor';
+import { DiffAction, LITEXML_DIFFNODE_ALL_COMMAND } from '@lobehub/editor';
 import { Block, Icon } from '@lobehub/ui';
 import { Button, Space } from 'antd';
 import { createStaticStyles, cssVar, cx } from 'antd-style';
@@ -35,7 +36,7 @@ const styles = createStaticStyles(({ css }) => ({
   `,
 }));
 
-const useIsEditorInit = (editor: IEditor) => {
+const useIsEditorInit = (editor?: IEditor) => {
   const [isEditInit, setEditInit] = useState<boolean>(!!editor?.getLexicalEditor());
 
   useEffect(() => {
@@ -53,7 +54,7 @@ const useIsEditorInit = (editor: IEditor) => {
   return isEditInit;
 };
 
-const useEditorHasPendingDiffs = (editor: IEditor) => {
+const useEditorHasPendingDiffs = (editor?: IEditor) => {
   const [hasPendingDiffs, setHasPendingDiffs] = useState(false);
   const isEditInit = useIsEditorInit(editor);
 
@@ -97,60 +98,56 @@ const useEditorHasPendingDiffs = (editor: IEditor) => {
 
 interface DiffAllToolbarProps {
   documentId: string;
-  editor: IEditor;
+  editor?: IEditor;
 }
-const DiffAllToolbar = memo<DiffAllToolbarProps>(({ documentId }) => {
+const DiffAllToolbar = memo<DiffAllToolbarProps>(({ documentId, editor }) => {
   const { t } = useTranslation('editor');
   const isDarkMode = useIsDark();
-  const [storeEditor, performSave, markDirty] = useDocumentStore((s) => [
-    s.editor!,
-    s.performSave,
-    s.markDirty,
-  ]);
+  const [performSave, markDirty] = useDocumentStore((s) => [s.performSave, s.markDirty]);
 
-  const hasPendingDiffs = useEditorHasPendingDiffs(storeEditor);
+  const hasPendingDiffs = useEditorHasPendingDiffs(editor);
 
-  if (!hasPendingDiffs) return null;
+  if (!editor || !hasPendingDiffs) return null;
 
   const handleSave = async () => {
     markDirty(documentId);
-    await performSave();
+    await performSave(documentId, undefined, { saveSource: 'manual' });
   };
 
   return (
     <div className={styles.container}>
       <Block
+        horizontal
+        shadow
         className={cx(styles.toolbar, isDarkMode ? styles.toolbarDark : styles.toolbarLight)}
         gap={8}
-        horizontal
         padding={4}
-        shadow
         variant="outlined"
       >
         <Space>
           <Button
+            size={'small'}
+            type="text"
             onClick={async () => {
-              storeEditor?.dispatchCommand(LITEXML_DIFFNODE_ALL_COMMAND, {
+              editor.dispatchCommand(LITEXML_DIFFNODE_ALL_COMMAND, {
                 action: DiffAction.Reject,
               });
               await handleSave();
             }}
-            size={'small'}
-            type="text"
           >
             <Icon icon={X} size={16} />
             {t('modifier.rejectAll')}
           </Button>
           <Button
             color={'default'}
+            size={'small'}
+            variant="filled"
             onClick={async () => {
-              storeEditor?.dispatchCommand(LITEXML_DIFFNODE_ALL_COMMAND, {
+              editor.dispatchCommand(LITEXML_DIFFNODE_ALL_COMMAND, {
                 action: DiffAction.Accept,
               });
               await handleSave();
             }}
-            size={'small'}
-            variant="filled"
           >
             <Icon color={'green'} icon={Check} size={16} />
             {t('modifier.acceptAll')}

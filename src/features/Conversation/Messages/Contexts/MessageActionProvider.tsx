@@ -1,5 +1,6 @@
 import { isEqual } from 'es-toolkit/compat';
-import { type FC, type PropsWithChildren, memo, useEffect, useRef, useState } from 'react';
+import { type FC, type PropsWithChildren } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { MESSAGE_ACTION_BAR_PORTAL_SELECTORS } from '@/const/messageActionPortal';
@@ -8,8 +9,8 @@ import { dataSelectors, useConversationStore } from '../../store';
 import { AssistantActionsBar } from '../Assistant/Actions';
 import { GroupActionsBar } from '../AssistantGroup/Actions';
 import { UserActionsBar } from '../User/Actions';
+import { type MessageActionType } from './message-action-context';
 import {
-  type MessageActionType,
   MessageItemActionElementPortialContext,
   MessageItemActionTypeContext,
   SetMessageItemActionElementPortialContext,
@@ -23,13 +24,13 @@ interface SingletonPortalProps {
   index: number;
 }
 
-const AssistantActionsRenderer: FC<SingletonPortalProps> = ({ id, index }) => {
+const AssistantActionsRenderer: FC<SingletonPortalProps> = ({ id }) => {
   const actionsConfig = useConversationStore((s) => s.actionsBar?.assistant);
   const item = useConversationStore(dataSelectors.getDisplayMessageById(id), isEqual);
 
   if (!item) return null;
 
-  return <AssistantActionsBar actionsConfig={actionsConfig} data={item} id={id} index={index} />;
+  return <AssistantActionsBar actionsConfig={actionsConfig} data={item} id={id} />;
 };
 
 const UserActionsRenderer: FC<SingletonPortalProps> = ({ id }) => {

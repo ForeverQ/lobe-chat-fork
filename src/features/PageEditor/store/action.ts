@@ -1,12 +1,15 @@
-import { EDITOR_DEBOUNCE_TIME, EDITOR_MAX_WAIT } from '@lobechat/const';
+import { EDITOR_DEBOUNCE_TIME, EDITOR_MAX_WAIT, isDesktop } from '@lobechat/const';
 import debug from 'debug';
 import { debounce } from 'es-toolkit/compat';
 import { type StateCreator } from 'zustand';
 
 import { useDocumentStore } from '@/store/document';
+import { getElectronStoreState } from '@/store/electron';
+import { electronSyncSelectors } from '@/store/electron/selectors';
 import { useFileStore } from '@/store/file';
 
-import { type State, initialState } from './initialState';
+import { type RightPanelMode, type State } from './initialState';
+import { initialState } from './initialState';
 
 const log = debug('page:editor');
 
@@ -23,6 +26,7 @@ export interface Action {
   initMeta: (title?: string, emoji?: string) => void;
   performMetaSave: () => Promise<void>;
   setEmoji: (emoji: string | undefined) => void;
+  setRightPanelMode: (mode: RightPanelMode) => void;
   setTitle: (title: string) => void;
   triggerDebouncedMetaSave: () => void;
 }
@@ -62,7 +66,10 @@ export const store: (initState?: Partial<State>) => StateCreator<Store> =
       handleCopyLink: (t, message) => {
         const { documentId } = get();
         if (documentId) {
-          const url = `${window.location.origin}${window.location.pathname}`;
+          const appOrigin = isDesktop
+            ? electronSyncSelectors.remoteServerUrl(getElectronStoreState())
+            : window.location.origin;
+          const url = `${appOrigin}${window.location.pathname}`;
           navigator.clipboard.writeText(url);
           message.success(t('pageEditor.linkCopied'));
         }
@@ -133,10 +140,14 @@ export const store: (initState?: Partial<State>) => StateCreator<Store> =
 
         try {
           // Trigger save via DocumentStore with metadata
-          await useDocumentStore.getState().performSave(documentId, {
-            emoji,
-            title,
-          });
+          await useDocumentStore.getState().performSave(
+            documentId,
+            {
+              emoji,
+              title,
+            },
+            { saveSource: 'autosave' },
+          );
 
           // Notify parent after successful save
           if (title !== lastSavedTitle) {
@@ -167,6 +178,10 @@ export const store: (initState?: Partial<State>) => StateCreator<Store> =
         if (isDirty) {
           triggerDebouncedMetaSave();
         }
+      },
+
+      setRightPanelMode: (rightPanelMode) => {
+        set({ rightPanelMode });
       },
 
       setTitle: (title: string) => {

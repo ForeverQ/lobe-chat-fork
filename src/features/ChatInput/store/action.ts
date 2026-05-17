@@ -1,12 +1,14 @@
 import { type StateCreator } from 'zustand/vanilla';
 
-import { type PublicState, type State, initialState } from './initialState';
+import { type PublicState, type State } from './initialState';
+import { initialState } from './initialState';
 
 export interface Action {
-  getJSONState: () => any;
+  getJSONState: () => Record<string, any> | undefined;
   getMarkdownContent: () => string;
   handleSendButton: () => void;
   handleStop: () => void;
+  setDocument: (type: string, content: any, options?: Record<string, unknown>) => void;
   setExpand: (expend: boolean) => void;
   setJSONState: (content: any) => void;
   setShowTypoBar: (show: boolean) => void;
@@ -24,20 +26,29 @@ export const store: CreateStore = (publicState) => (set, get) => ({
   ...publicState,
 
   getJSONState: () => {
-    return get().editor?.getDocument('json');
+    return get().editor?.getDocument('json') as Record<string, any> | undefined;
   },
   getMarkdownContent: () => {
     return String(get().editor?.getDocument('markdown') || '').trimEnd();
   },
   handleSendButton: () => {
-    if (!get().editor) return;
-
     const editor = get().editor;
+    if (!editor) return;
+    if (get().sendButtonProps?.disabled) return;
 
     get().onSend?.({
       clearContent: () => editor?.cleanDocument(),
       editor: editor!,
+      getEditorData: get().getJSONState,
       getMarkdownContent: get().getMarkdownContent,
+    });
+    if (get().expand) {
+      set({ _savedEditorState: undefined, expand: false });
+    }
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        editor.focus();
+      });
     });
   },
 
@@ -47,8 +58,14 @@ export const store: CreateStore = (publicState) => (set, get) => ({
     get().sendButtonProps?.onStop?.({ editor: get().editor! });
   },
 
+  setDocument: (type, content, options) => {
+    get().editor?.setDocument(type, content, options);
+  },
+
   setExpand: (expand) => {
-    set({ expand });
+    const editor = get().editor;
+    const _savedEditorState = editor?.getDocument('json') as Record<string, any> | undefined;
+    set({ _savedEditorState, expand });
   },
 
   setJSONState: (content) => {

@@ -5,6 +5,11 @@ import { createStaticStyles } from 'antd-style';
 import isEqual from 'fast-deep-equal';
 import { memo } from 'react';
 
+import { useAgentStore } from '@/store/agent';
+import { builtinAgentSelectors } from '@/store/agent/selectors';
+import { isDev } from '@/utils/env';
+
+import { contextSelectors, useConversationStore } from '../../../../store';
 import TokenDetail from './UsageDetail';
 
 export const styles = createStaticStyles(({ css, cssVar }) => ({
@@ -22,15 +27,20 @@ interface UsageProps {
 }
 
 const Usage = memo<UsageProps>(({ model, usage, performance, provider }) => {
+  const onboardingAgentId = useAgentStore(builtinAgentSelectors.webOnboardingAgentId);
+  const conversationAgentId = useConversationStore(contextSelectors.agentId);
+
+  if (!isDev && onboardingAgentId && conversationAgentId === onboardingAgentId) return null;
+
   return (
     <Flexbox
+      horizontal
       align={'center'}
       className={styles.container}
       gap={12}
-      horizontal
       justify={'space-between'}
     >
-      <Center gap={4} horizontal style={{ fontSize: 12 }}>
+      <Center horizontal gap={4} style={{ fontSize: 12 }}>
         <ModelIcon model={model as string} type={'mono'} />
         {model}
       </Center>

@@ -1,3 +1,4 @@
+import { HotkeyEnum, HotkeyScopeEnum } from '@lobechat/const/hotkeys';
 import { useEffect } from 'react';
 import { useHotkeysContext } from 'react-hotkeys-hook';
 
@@ -6,7 +7,6 @@ import { useOpenChatSettings } from '@/hooks/useInterceptingRoutes';
 import { useActionSWR } from '@/libs/swr';
 import { useChatStore } from '@/store/chat';
 import { useGlobalStore } from '@/store/global';
-import { HotkeyEnum, HotkeyScopeEnum } from '@/types/hotkey';
 
 import { useHotkeyById } from './useHotkeyById';
 
@@ -49,7 +49,7 @@ export const useClearCurrentMessagesHotkey = () => {
   });
 };
 
-// 注册聚合
+// Register aggregate
 
 export const useRegisterChatHotkeys = () => {
   const { enableScope, disableScope } = useHotkeysContext();

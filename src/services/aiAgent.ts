@@ -1,18 +1,55 @@
+import type { ExecAgentAppContext, ExecAgentResult } from '@lobechat/types';
+
 import { lambdaClient } from '@/libs/trpc/client';
+
+export type { ExecAgentResult };
+
+/**
+ * Resume instruction for an operation that hit `human_approve_required`. When
+ * present, the new op acts as the "continue" step: server reads the target tool
+ * message, writes the user's decision, and either re-dispatches the tool
+ * (approved) or feeds the rejection back to the LLM as user feedback
+ * (rejected / rejected_continue).
+ *
+ * Kept as a top-level field (not folded into `appContext`) so the server schema
+ * can validate it independently.
+ */
+export interface ResumeApprovalParam {
+  decision: 'approved' | 'rejected' | 'rejected_continue';
+  /** ID of the pending `role='tool'` message this decision targets. */
+  parentMessageId: string;
+  /** Optional user-supplied rejection reason (only meaningful for rejected variants). */
+  rejectionReason?: string;
+  /** tool_call_id of the pending tool call being approved/rejected. */
+  toolCallId: string;
+}
 
 export interface ExecAgentTaskParams {
   agentId?: string;
-  appContext?: {
-    groupId?: string | null;
-    scope?: string | null;
-    sessionId?: string;
-    threadId?: string | null;
-    topicId?: string | null;
-  };
+  appContext?: ExecAgentAppContext;
   autoStart?: boolean;
+  /**
+   * Runtime of the client initiating this request. When 'desktop', server
+   * enables `executor: 'client'` tools (local-system, stdio MCP) and
+   * dispatches them over the Agent Gateway WS back to this client.
+   */
+  clientRuntime?: 'desktop' | 'web';
+  deviceId?: string;
   existingMessageIds?: string[];
+  /** File IDs of already-uploaded attachments to attach to the new user message */
+  fileIds?: string[];
+  /** Parent message ID for regeneration/continue (skip user message creation, branch from this message) */
+  parentMessageId?: string;
   prompt: string;
+  /** Resume a previous op paused on `human_approve_required` instead of starting from a fresh user prompt. */
+  resumeApproval?: ResumeApprovalParam;
   slug?: string;
+  /**
+   * Override what initiated this operation. Server defaults to `'chat'` when
+   * omitted. Pass a more specific value (`'cli'`, `'openapi'`, …) so the
+   * `agent_operations.trigger` column reflects the real source.
+   */
+  trigger?: string;
 }
 
 /**
@@ -25,6 +62,8 @@ export interface ExecSubAgentTaskParams {
   groupId?: string;
   instruction: string;
   parentMessageId: string;
+  /** Parent operation ID for dispatching callAgent hooks */
+  parentOperationId?: string;
   timeout?: number;
   /** Task title (shown in UI, used as thread title) */
   title?: string;
@@ -42,7 +81,7 @@ export interface InterruptTaskParams {
 
 /**
  * Parameters for createClientTaskThread
- * Creates a Thread for client-side task execution (desktop only)
+ * Creates a Thread for client-side task execution (desktop only, single agent mode)
  */
 export interface CreateClientTaskThreadParams {
   agentId: string;
@@ -50,6 +89,22 @@ export interface CreateClientTaskThreadParams {
   /** Initial user message content (task instruction) */
   instruction: string;
   parentMessageId: string;
+  title?: string;
+  topicId: string;
+}
+
+/**
+ * Parameters for createClientGroupAgentTaskThread
+ * Creates a Thread for client-side task execution in Group mode
+ */
+export interface CreateClientGroupAgentTaskThreadParams {
+  /** The Group ID (required for Group mode) */
+  groupId: string;
+  /** Initial user message content (task instruction) */
+  instruction: string;
+  parentMessageId: string;
+  /** The Sub-Agent ID that will execute the task (worker agent in group) */
+  subAgentId: string;
   title?: string;
   topicId: string;
 }
@@ -74,10 +129,14 @@ export interface UpdateClientTaskThreadStatusParams {
 
 class AiAgentService {
   /**
-   * Execute a single Agent task
+   * Execute a single Agent task.
+   * Returns the operationId needed to connect to the Agent Gateway.
    */
-  async execAgentTask(params: ExecAgentTaskParams) {
-    return await lambdaClient.aiAgent.execAgent.mutate(params);
+  async execAgentTask(
+    params: ExecAgentTaskParams,
+    options?: { signal?: AbortSignal },
+  ): Promise<ExecAgentResult> {
+    return await lambdaClient.aiAgent.execAgent.mutate(params, options);
   }
 
   /**
@@ -86,6 +145,13 @@ class AiAgentService {
    * - Group mode: pass groupId, Thread will be associated with the Group
    * - Single Agent mode: omit groupId, Thread will only be associated with the Agent
    */
+  /**
+   * Get a fresh JWT token for Gateway WebSocket reconnection.
+   */
+  async refreshGatewayToken(topicId: string): Promise<{ token: string }> {
+    return await lambdaClient.aiAgent.refreshGatewayToken.query({ topicId });
+  }
+
   async execSubAgentTask(params: ExecSubAgentTaskParams) {
     return await lambdaClient.aiAgent.execSubAgentTask.mutate(params);
   }
@@ -106,13 +172,24 @@ class AiAgentService {
   }
 
   /**
-   * Create Thread for client-side task execution (desktop only)
+   * Create Thread for client-side task execution (desktop only, single agent mode)
    *
    * This method is called when runInClient=true on desktop client.
    * It creates the Thread but does NOT execute the task - execution happens locally.
    */
   async createClientTaskThread(params: CreateClientTaskThreadParams) {
     return await lambdaClient.aiAgent.createClientTaskThread.mutate(params);
+  }
+
+  /**
+   * Create Thread for client-side task execution in Group mode
+   *
+   * This method is specifically for Group Chat scenarios where:
+   * - Messages may have different agentIds (supervisor, workers)
+   * - Thread messages query should not filter by agentId
+   */
+  async createClientGroupAgentTaskThread(params: CreateClientGroupAgentTaskThreadParams) {
+    return await lambdaClient.aiAgent.createClientGroupAgentTaskThread.mutate(params);
   }
 
   /**

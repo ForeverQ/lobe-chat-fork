@@ -1,23 +1,23 @@
 'use client';
 
 import { Flexbox } from '@lobehub/ui';
-import { Suspense, memo, useCallback, useMemo } from 'react';
+import { memo, Suspense, useCallback, useMemo } from 'react';
 
+import { type ConversationContext, type ConversationHooks } from '@/features/Conversation';
 import {
   ChatInput,
   ChatList,
-  type ConversationContext,
-  type ConversationHooks,
   ConversationProvider,
-  MessageItem,
   conversationSelectors,
+  MessageItem,
   useConversationStore,
 } from '@/features/Conversation';
 import SkeletonList from '@/features/Conversation/components/SkeletonList';
 import { useOperationState } from '@/hooks/useOperationState';
 import { useChatStore } from '@/store/chat';
-import { threadSelectors } from '@/store/chat/selectors';
-import { type MessageMapKeyInput, messageMapKey } from '@/store/chat/utils/messageMapKey';
+import { portalThreadSelectors, threadSelectors } from '@/store/chat/selectors';
+import { type MessageMapKeyInput } from '@/store/chat/utils/messageMapKey';
+import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 
 import ThreadDivider from './ThreadDivider';
 import { useThreadActionsBarConfig } from './useThreadActionsBarConfig';
@@ -26,7 +26,11 @@ import { useThreadActionsBarConfig } from './useThreadActionsBarConfig';
  * Inner component that uses ConversationStore for message rendering
  * Must be inside ConversationProvider to access the store
  */
-const ThreadChatContent = memo(() => {
+interface ThreadChatContentProps {
+  isSubagentThread: boolean;
+}
+
+const ThreadChatContent = memo<ThreadChatContentProps>(({ isSubagentThread }) => {
   // Get display messages from ConversationStore to determine thread divider position
   // With the new backend API, parent messages have threadId === null
   // and thread messages have threadId === context.threadId
@@ -61,15 +65,15 @@ const ThreadChatContent = memo(() => {
 
       return (
         <MessageItem
-          disableEditing={isParentMessage}
+          inPortalThread
+          disableEditing={isSubagentThread || isParentMessage}
           endRender={enableThreadDivider ? <ThreadDivider /> : undefined}
           id={id}
-          inPortalThread
           index={index}
         />
       );
     },
-    [threadSourceInfo.sourceMessageId, threadSourceInfo.sourceMessageIndex],
+    [threadSourceInfo.sourceMessageId, threadSourceInfo.sourceMessageIndex, isSubagentThread],
   );
 
   return (
@@ -83,17 +87,19 @@ const ThreadChatContent = memo(() => {
       >
         <Flexbox
           flex={1}
+          width={'100%'}
           style={{
             overflowX: 'hidden',
             overflowY: 'auto',
             position: 'relative',
           }}
-          width={'100%'}
         >
           <ChatList itemContent={itemContent} />
         </Flexbox>
       </Suspense>
-      <ChatInput leftActions={['typo', 'stt', 'portalToken']} />
+      {!isSubagentThread && (
+        <ChatInput leftActions={['typo', 'stt']} rightActions={['contextWindow']} />
+      )}
     </>
   );
 });
@@ -118,8 +124,18 @@ const ThreadChat = memo(() => {
       s.newThreadMode,
     ]);
 
+  // Subagent threads are auto-spawned by a parent tool call (CC's `Agent`
+  // tool etc.); the external CLI owns the session so the user can't inject
+  // new turns or mutate existing ones. `sourceToolCallId` is set by the
+  // executor on every spawn — unambiguous marker to flip the thread into a
+  // read-only record (hides composer, wipes per-message actions, disables
+  // double-click editing).
+  const isSubagentThread = useChatStore(
+    (s) => !!portalThreadSelectors.portalCurrentThread(s)?.metadata?.sourceToolCallId,
+  );
+
   // Get thread-specific actionsBar config
-  const actionsBarConfig = useThreadActionsBarConfig();
+  const actionsBarConfig = useThreadActionsBarConfig({ readonly: isSubagentThread });
 
   // Build ConversationContext for thread
   // When creating new thread (!portalThreadId), use isNew + scope: 'thread'
@@ -204,13 +220,13 @@ const ThreadChat = memo(() => {
       hasInitMessages={!!messages}
       hooks={hooks}
       messages={messages}
+      operationState={operationState}
+      skipFetch={isCreatingNewThread}
       onMessagesChange={(msgs, ctx) => {
         replaceMessages(msgs, { context: ctx });
       }}
-      operationState={operationState}
-      skipFetch={isCreatingNewThread}
     >
-      <ThreadChatContent />
+      <ThreadChatContent isSubagentThread={isSubagentThread} />
     </ConversationProvider>
   );
 });

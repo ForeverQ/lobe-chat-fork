@@ -1,5 +1,4 @@
-import type { NavigateFunction } from 'react-router-dom';
-import type { StateCreator } from 'zustand/vanilla';
+import { BUILTIN_AGENT_SLUGS } from '@lobechat/builtin-agents';
 
 import { chatGroupService } from '@/services/chatGroup';
 import { documentService } from '@/services/document';
@@ -7,36 +6,63 @@ import { getAgentStoreState } from '@/store/agent';
 import { agentSelectors, builtinAgentSelectors } from '@/store/agent/selectors';
 import { getChatGroupStoreState } from '@/store/agentGroup';
 import { useChatStore } from '@/store/chat';
-import type { HomeStore } from '@/store/home/store';
+import { type HomeStore } from '@/store/home/store';
+import { type StoreSetter } from '@/store/types';
+import { getStableNavigate } from '@/utils/stableNavigate';
 import { setNamespace } from '@/utils/storeDebug';
 
-import type { StarterMode } from './initialState';
+import { type StarterMode } from './initialState';
 
 const n = setNamespace('homeInput');
 
-export interface HomeInputAction {
-  clearInputMode: () => void;
-  sendAsAgent: (message: string) => Promise<string>;
-  sendAsGroup: (message: string) => Promise<string>;
-  sendAsImage: () => void;
-  sendAsResearch: (message: string) => Promise<void>;
-  sendAsWrite: (message: string) => Promise<string>;
-  setInputActiveMode: (mode: StarterMode) => void;
-  setNavigate: (navigate: NavigateFunction) => void;
+interface SendMessageWithEditorParams {
+  editorData?: Record<string, any>;
+  groupId?: string;
+  message: string;
 }
 
-export const createHomeInputSlice: StateCreator<
-  HomeStore,
-  [['zustand/devtools', never]],
-  [],
-  HomeInputAction
-> = (set, get) => ({
-  clearInputMode: () => {
-    set({ inputActiveMode: null }, false, n('clearInputMode'));
-  },
+/**
+ * Make sure a builtin agent (agent-builder / group-agent-builder / page-agent)
+ * is hydrated into both `builtinAgentIdMap` and `agentMap` before we read its
+ * id and call sendMessage. Without this, the create-Agent / create-Group /
+ * create-Page flows can race against the host page's `useInitBuiltinAgent`:
+ * `builtinAgentIdMap[slug]` is still undefined, so sendMessage gets
+ * `agentId: undefined` and silently early-returns. Symptom: navigation lands
+ * on the builder page but the conversation never starts.
+ */
+const ensureBuiltinAgentHydrated = async (slug: string): Promise<string | undefined> => {
+  const state = getAgentStoreState();
+  const cachedId = state.builtinAgentIdMap[slug];
+  if (cachedId && state.agentMap[cachedId]) return cachedId;
 
-  sendAsAgent: async (message) => {
-    set({ homeInputLoading: true }, false, n('sendAsAgent/start'));
+  await state.refreshBuiltinAgent(slug);
+  return getAgentStoreState().builtinAgentIdMap[slug];
+};
+
+type Setter = StoreSetter<HomeStore>;
+export const createHomeInputSlice = (set: Setter, get: () => HomeStore, _api?: unknown) =>
+  new HomeInputActionImpl(set, get, _api);
+
+export class HomeInputActionImpl {
+  readonly #get: () => HomeStore;
+  readonly #set: Setter;
+
+  constructor(set: Setter, get: () => HomeStore, _api?: unknown) {
+    void _api;
+    this.#set = set;
+    this.#get = get;
+  }
+
+  clearInputMode = (): void => {
+    this.#set({ inputActiveMode: null }, false, n('clearInputMode'));
+  };
+
+  sendAsAgent = async ({
+    editorData,
+    groupId,
+    message,
+  }: SendMessageWithEditorParams): Promise<string> => {
+    this.#set({ homeInputLoading: true }, false, n('sendAsAgent/start'));
 
     try {
       const agentState = getAgentStoreState();
@@ -57,44 +83,52 @@ export const createHomeInputSlice: StateCreator<
           systemRole: message,
           title: message?.slice(0, 50) || 'New Agent',
         },
+        groupId,
       });
 
       // 3. Navigate to Agent profile page
-      const { navigate } = get();
-      if (navigate) {
-        navigate(`/agent/${result.agentId}/profile`);
-      }
+      getStableNavigate()?.(`/agent/${result.agentId}/profile`);
 
       // 4. Refresh agent list
-      get().refreshAgentList();
+      this.#get().refreshAgentList();
 
       // 5. Update agentBuilder's model config and send initial message
       if (result.agentId) {
         const { sendMessage } = useChatStore.getState();
-        const agentBuilderId = builtinAgentSelectors.agentBuilderId(agentState);
+        // Ensure agentBuilder is loaded before reading its id — the host
+        // AgentBuilder component's useInitBuiltinAgent only fires after this
+        // navigation completes, which would otherwise race with sendMessage.
+        const agentBuilderId = await ensureBuiltinAgentHydrated(BUILTIN_AGENT_SLUGS.agentBuilder);
 
         // Update agentBuilder's model to match inbox selection
         if (agentBuilderId && model && provider) {
           await agentState.updateAgentConfigById(agentBuilderId, { model, provider });
         }
 
-        await sendMessage({
-          context: { agentId: agentBuilderId!, scope: 'agent_builder' },
-          message,
-        });
+        if (agentBuilderId) {
+          await sendMessage({
+            context: { agentId: agentBuilderId, scope: 'agent_builder' },
+            editorData,
+            message,
+          });
+        }
       }
 
       // 6. Clear mode
-      set({ inputActiveMode: null }, false, n('sendAsAgent/clearMode'));
+      this.#set({ inputActiveMode: null }, false, n('sendAsAgent/clearMode'));
 
       return result.agentId!;
     } finally {
-      set({ homeInputLoading: false }, false, n('sendAsAgent/end'));
+      this.#set({ homeInputLoading: false }, false, n('sendAsAgent/end'));
     }
-  },
+  };
 
-  sendAsGroup: async (message) => {
-    set({ homeInputLoading: true }, false, n('sendAsGroup/start'));
+  sendAsGroup = async ({
+    editorData,
+    groupId,
+    message,
+  }: SendMessageWithEditorParams): Promise<string> => {
+    this.#set({ homeInputLoading: true }, false, n('sendAsGroup/start'));
 
     try {
       const agentState = getAgentStoreState();
@@ -112,6 +146,7 @@ export const createHomeInputSlice: StateCreator<
         config: {
           systemPrompt: message,
         },
+        groupId,
         title: message?.slice(0, 50) || 'New Group',
       });
 
@@ -120,16 +155,16 @@ export const createHomeInputSlice: StateCreator<
       await groupStore.loadGroups();
 
       // 4. Refresh sidebar agent list
-      get().refreshAgentList();
+      this.#get().refreshAgentList();
 
       // 5. Navigate to Group profile page
-      const { navigate } = get();
-      if (navigate) {
-        navigate(`/group/${group.id}/profile`);
-      }
+      getStableNavigate()?.(`/group/${group.id}/profile`);
 
-      // 6. Update groupAgentBuilder's model config and send initial message
-      const groupAgentBuilderId = builtinAgentSelectors.groupAgentBuilderId(agentState);
+      // 6. Update groupAgentBuilder's model config and send initial message.
+      // Hydrate first so we don't race with the group profile page's own init.
+      const groupAgentBuilderId = await ensureBuiltinAgentHydrated(
+        BUILTIN_AGENT_SLUGS.groupAgentBuilder,
+      );
 
       if (groupAgentBuilderId) {
         // Update groupAgentBuilder's model to match inbox selection
@@ -140,78 +175,82 @@ export const createHomeInputSlice: StateCreator<
         const { sendMessage } = useChatStore.getState();
         await sendMessage({
           context: { agentId: groupAgentBuilderId, scope: 'group_agent_builder' },
+          editorData,
           message,
         });
       }
 
       // 7. Clear mode
-      set({ inputActiveMode: null }, false, n('sendAsGroup/clearMode'));
+      this.#set({ inputActiveMode: null }, false, n('sendAsGroup/clearMode'));
 
       return group.id;
     } finally {
-      set({ homeInputLoading: false }, false, n('sendAsGroup/end'));
+      this.#set({ homeInputLoading: false }, false, n('sendAsGroup/end'));
     }
-  },
+  };
 
-  sendAsImage: () => {
-    // Navigate to /image page
-    const { navigate } = get();
-    if (navigate) {
-      navigate('/image');
-    }
-
-    // Clear mode
-    set({ inputActiveMode: null }, false, n('sendAsImage'));
-  },
-
-  sendAsResearch: async (message) => {
+  sendAsResearch = async (message: string): Promise<void> => {
     // TODO: Implement DeepResearch mode
-    console.log('sendAsResearch:', message);
+    console.info('sendAsResearch:', message);
 
     // Clear mode
-    set({ inputActiveMode: null }, false, n('sendAsResearch'));
-  },
+    this.#set({ inputActiveMode: null }, false, n('sendAsResearch'));
+  };
 
-  sendAsWrite: async (message) => {
-    set({ homeInputLoading: true }, false, n('sendAsWrite/start'));
+  sendAsWrite = async ({ editorData, message }: SendMessageWithEditorParams): Promise<string> => {
+    this.#set({ homeInputLoading: true }, false, n('sendAsWrite/start'));
 
     try {
-      // 1. Create new Document
+      const agentState = getAgentStoreState();
+
+      // 1. Get model/provider config from inbox agent
+      const inboxAgentId = builtinAgentSelectors.inboxAgentId(agentState);
+      const inboxConfig = inboxAgentId
+        ? agentSelectors.getAgentConfigById(inboxAgentId)(agentState)
+        : null;
+      const model = inboxConfig?.model;
+      const provider = inboxConfig?.provider;
+
+      // 2. Create new Document
       const newDoc = await documentService.createDocument({
-        editorData: '',
+        editorData: '{}',
+        fileType: 'custom/document',
         title: message?.slice(0, 50) || 'Untitled',
       });
 
-      // 2. Navigate to Page
-      const { navigate } = get();
-      if (navigate) {
-        navigate(`/page/${newDoc.id}`);
+      // 3. Navigate to Page
+      getStableNavigate()?.(`/page/${newDoc.id}`);
+
+      // 4. Update pageAgent's model config and send initial message. Hydrate
+      // first to avoid the same race the agent/group flows hit.
+      const pageAgentId = await ensureBuiltinAgentHydrated(BUILTIN_AGENT_SLUGS.pageAgent);
+
+      if (pageAgentId) {
+        // Update pageAgent's model to match inbox selection
+        if (model && provider) {
+          await agentState.updateAgentConfigById(pageAgentId, { model, provider });
+        }
+
+        const { sendMessage } = useChatStore.getState();
+        await sendMessage({
+          context: { agentId: pageAgentId, scope: 'page' },
+          editorData,
+          message,
+        });
       }
 
-      // 3. Send message with document scope context
-      const { sendMessage } = useChatStore.getState();
-      await sendMessage({
-        context: {
-          agentId: newDoc.id,
-          scope: 'page',
-        },
-        message,
-      });
-
-      // 4. Clear mode
-      set({ inputActiveMode: null }, false, n('sendAsWrite/clearMode'));
+      // 5. Clear mode
+      this.#set({ inputActiveMode: null }, false, n('sendAsWrite/clearMode'));
 
       return newDoc.id;
     } finally {
-      set({ homeInputLoading: false }, false, n('sendAsWrite/end'));
+      this.#set({ homeInputLoading: false }, false, n('sendAsWrite/end'));
     }
-  },
+  };
 
-  setInputActiveMode: (mode) => {
-    set({ inputActiveMode: mode }, false, n('setInputActiveMode', mode));
-  },
+  setInputActiveMode = (mode: StarterMode): void => {
+    this.#set({ inputActiveMode: mode }, false, n('setInputActiveMode', mode));
+  };
+}
 
-  setNavigate: (navigate) => {
-    set({ navigate }, false, n('setNavigate'));
-  },
-});
+export type HomeInputAction = Pick<HomeInputActionImpl, keyof HomeInputActionImpl>;

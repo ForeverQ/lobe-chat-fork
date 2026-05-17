@@ -14,9 +14,14 @@ export type {
   AgentCouncilNode,
   AssistantGroupNode,
   BranchNode,
+  CompareGroupChild,
+  CompareGroupNode,
   CompareNode,
+  CompressedGroupNode,
   ContextNode,
   MessageNode,
+  PinnedMessage,
+  SignalCallbacksNode,
   TasksNode,
 } from './contextTree';
 

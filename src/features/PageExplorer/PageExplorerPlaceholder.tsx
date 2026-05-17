@@ -100,11 +100,7 @@ const PageExplorerPlaceholder = memo<PageExplorerPlaceholderProps>(
       createDocument,
       currentFolderId: null,
       libraryId: knowledgeBaseId ?? null,
-      refetchResources: async () => {
-        const { revalidateResources } = await import('@/store/file/slices/resource/hooks');
-        await revalidateResources();
-        await fetchDocuments();
-      },
+      refetchResources: fetchDocuments,
       t,
     });
 
@@ -113,10 +109,6 @@ const PageExplorerPlaceholder = memo<PageExplorerPlaceholderProps>(
       event: React.ChangeEvent<HTMLInputElement>,
     ) => {
       await notionImport.handleNotionImport(event);
-      // Fetch documents to update the UI immediately
-      // The hook calls refreshFileList which invalidates SWR cache,
-      // but we need to explicitly fetch to update the zustand store
-      await fetchDocuments();
     };
 
     const handleCreateDocument = async (content: string, title: string) => {
@@ -262,11 +254,11 @@ const PageExplorerPlaceholder = memo<PageExplorerPlaceholderProps>(
               <Text type={'secondary'}>{t('or', { ns: 'common' })}</Text>
             </Flexbox>
           )}
-          <Flexbox gap={12} horizontal>
+          <Flexbox horizontal gap={12}>
             <Flexbox
               className={styles.card}
-              onClick={() => handleCreateDocument('', t('pageList.untitled'))}
               padding={16}
+              onClick={() => handleCreateDocument('', t('pageList.untitled'))}
             >
               <span className={styles.actionTitle}>{t('pageEditor.empty.createNewDocument')}</span>
               <div className={styles.glow} style={{ background: cssVar.purple }} />
@@ -309,8 +301,8 @@ const PageExplorerPlaceholder = memo<PageExplorerPlaceholderProps>(
             {/* Import from Notion */}
             <Flexbox
               className={styles.card}
-              onClick={notionImport.handleOpenNotionGuide}
               padding={16}
+              onClick={notionImport.handleOpenNotionGuide}
             >
               <span className={styles.actionTitle}>{t('pageEditor.empty.importNotion')}</span>
               <div className={styles.glow} style={{ background: cssVar.geekblue }} />
@@ -329,17 +321,17 @@ const PageExplorerPlaceholder = memo<PageExplorerPlaceholderProps>(
           cover={<GuideVideo height={269} src={FILE_URL.importFromNotionGuide} width={358} />}
           desc={t('header.actions.notionGuide.desc')}
           okText={t('header.actions.notionGuide.ok')}
-          onCancel={notionImport.handleCloseNotionGuide}
-          onOk={notionImport.handleStartNotionImport}
           open={notionImport.notionGuideOpen}
           title={t('header.actions.notionGuide.title')}
+          onCancel={notionImport.handleCloseNotionGuide}
+          onOk={notionImport.handleStartNotionImport}
         />
         <input
           accept=".zip"
-          onChange={handleNotionImportWithLocalUpdate}
           ref={notionImport.notionInputRef}
           style={{ display: 'none' }}
           type="file"
+          onChange={handleNotionImportWithLocalUpdate}
         />
       </>
     );

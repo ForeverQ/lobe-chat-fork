@@ -15,16 +15,12 @@ vi.mock('next/navigation', () => ({
   })),
 }));
 
-vi.mock('@/components/BrandWatermark', () => ({
-  default: vi.fn(() => <div>Mocked BrandWatermark</div>),
-}));
-
 vi.mock('@/components/Menu', () => ({
   default: vi.fn(({ items, onClick }) => (
     <div>
       Mocked Menu
       {items.map((item: any) => (
-        <button key={item.key} onClick={onClick} type={'button'}>
+        <button key={item.key} type={'button'} onClick={onClick}>
           {item.label}
         </button>
       ))}
@@ -34,7 +30,7 @@ vi.mock('@/components/Menu', () => ({
 
 vi.mock('../UserInfo', () => ({
   default: vi.fn(({ onClick }) => (
-    <button onClick={onClick} type={'button'}>
+    <button type={'button'} onClick={onClick}>
       Mocked UserInfo
     </button>
   )),
@@ -52,7 +48,7 @@ vi.mock('../UserPanel/useMenu', () => ({
 
 vi.mock('../UserLoginOrSignup', () => ({
   default: vi.fn(({ onClick }) => (
-    <button onClick={onClick} type={'button'}>
+    <button type={'button'} onClick={onClick}>
       Mocked SignInBlock
     </button>
   )),
@@ -65,6 +61,13 @@ vi.mock('../DataStatistics', () => ({
 vi.mock('@/const/version', () => ({
   isDeprecatedEdition: false,
   isDesktop: false,
+}));
+
+vi.mock('@/store/serverConfig', () => ({
+  serverConfigSelectors: {
+    enableBusinessFeatures: () => false,
+  },
+  useServerConfigStore: (selector: (s: unknown) => unknown) => selector({}),
 }));
 
 describe('PanelContent', () => {
@@ -110,14 +113,14 @@ describe('PanelContent', () => {
       expect(screen.getAllByText('Mocked Menu').length).toBe(2);
     });
 
-    it('should render BrandWatermark when user is not signed in', () => {
+    it('should render SignInBlock when user is not signed in', () => {
       act(() => {
         useUserStore.setState({ isSignedIn: false });
       });
 
       renderWithRouter(<PanelContent closePopover={closePopover} />);
 
-      expect(screen.getByText('Mocked BrandWatermark')).toBeInTheDocument();
+      expect(screen.getByText('Mocked SignInBlock')).toBeInTheDocument();
     });
   });
 

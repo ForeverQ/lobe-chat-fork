@@ -4,9 +4,11 @@ import { isDesktop } from '@lobechat/const';
 import { Flexbox } from '@lobehub/ui';
 import { createStaticStyles, cx } from 'antd-style';
 import isEqual from 'fast-deep-equal';
-import { type MouseEvent, type ReactNode, Suspense, memo, useCallback } from 'react';
+import { type MouseEvent, type ReactNode } from 'react';
+import { memo, Suspense, useCallback } from 'react';
 
 import BubblesLoading from '@/components/BubblesLoading';
+import SafeBoundary from '@/components/ErrorBoundary';
 
 import History from '../components/History';
 import { useChatItemContextMenu } from '../hooks/useChatItemContextMenu';
@@ -14,6 +16,9 @@ import { dataSelectors, messageStateSelectors, useConversationStore } from '../s
 import AgentCouncilMessage from './AgentCouncil';
 import AssistantMessage from './Assistant';
 import AssistantGroupMessage from './AssistantGroup';
+import type { WorkflowExpandLevelDefault } from './AssistantGroup/components/WorkflowCollapse';
+import CompressedGroupMessage from './CompressedGroup';
+import GroupTasksMessage from './GroupTasks';
 import SupervisorMessage from './Supervisor';
 import TaskMessage from './Task';
 import TasksMessage from './Tasks';
@@ -37,21 +42,25 @@ const styles = createStaticStyles(({ css }) => ({
 
 export interface MessageItemProps {
   className?: string;
+  defaultWorkflowExpandLevel?: WorkflowExpandLevelDefault;
   disableEditing?: boolean;
   enableHistoryDivider?: boolean;
   endRender?: ReactNode;
+  footerRender?: ReactNode;
   id: string;
-  inPortalThread?: boolean;
   index: number;
+  inPortalThread?: boolean;
   isLatestItem?: boolean;
 }
 
 const MessageItem = memo<MessageItemProps>(
   ({
     className,
+    defaultWorkflowExpandLevel,
     enableHistoryDivider,
     id,
     endRender,
+    footerRender,
     disableEditing,
     inPortalThread = false,
     index,
@@ -74,6 +83,7 @@ const MessageItem = memo<MessageItemProps>(
       inPortalThread,
       topic,
     });
+    const shouldInjectFooter = role === 'assistant' || role === 'assistantGroup';
 
     const onContextMenu = useCallback(
       async (event: MouseEvent<HTMLDivElement>) => {
@@ -84,12 +94,17 @@ const MessageItem = memo<MessageItemProps>(
         if (isDesktop) {
           const { electronSystemService } = await import('@/services/electron/system');
 
+          // Get selected text for context menu features like Look Up and Search
+          const selection = window.getSelection();
+          const selectionText = selection?.toString() || '';
+
           electronSystemService.showContextMenu('chat', {
             content: message.content,
             hasError: !!message.error,
             messageId: id,
             // For assistantGroup, we treat it as assistant for context menu purposes
             role: message.role === 'assistantGroup' ? 'assistant' : message.role,
+            selectionText,
           });
 
           return;
@@ -110,6 +125,7 @@ const MessageItem = memo<MessageItemProps>(
           return (
             <AssistantMessage
               disableEditing={disableEditing}
+              footerRender={footerRender}
               id={id}
               index={index}
               isLatestItem={isLatestItem}
@@ -120,7 +136,9 @@ const MessageItem = memo<MessageItemProps>(
         case 'assistantGroup': {
           return (
             <AssistantGroupMessage
+              defaultWorkflowExpandLevel={defaultWorkflowExpandLevel}
               disableEditing={disableEditing}
+              footerRender={footerRender}
               id={id}
               index={index}
               isLatestItem={isLatestItem}
@@ -150,11 +168,19 @@ const MessageItem = memo<MessageItemProps>(
           );
         }
         case 'tasks': {
-          return <TasksMessage id={id} index={index} />;
+          return <TasksMessage id={id} />;
+        }
+
+        case 'groupTasks': {
+          return <GroupTasksMessage id={id} />;
         }
 
         case 'agentCouncil': {
           return <AgentCouncilMessage id={id} index={index} />;
+        }
+
+        case 'compressedGroup': {
+          return <CompressedGroupMessage id={id} index={index} />;
         }
 
         case 'tool': {
@@ -163,7 +189,7 @@ const MessageItem = memo<MessageItemProps>(
       }
 
       return null;
-    }, [role, disableEditing, id, index, isLatestItem]);
+    }, [role, defaultWorkflowExpandLevel, disableEditing, footerRender, id, index, isLatestItem]);
 
     if (!role) return;
 
@@ -175,7 +201,10 @@ const MessageItem = memo<MessageItemProps>(
           data-index={index}
           onContextMenu={onContextMenu}
         >
-          <Suspense fallback={<BubblesLoading />}>{renderContent()}</Suspense>
+          <SafeBoundary variant="alert">
+            <Suspense fallback={<BubblesLoading />}>{renderContent()}</Suspense>
+          </SafeBoundary>
+          {!shouldInjectFooter && footerRender}
           {endRender}
         </Flexbox>
       </>

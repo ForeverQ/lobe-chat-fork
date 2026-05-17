@@ -1,15 +1,17 @@
 'use client';
 
 import { Button, Icon, Text } from '@lobehub/ui';
-import { Form, Input } from 'antd';
+import { Form, Input, type InputRef } from 'antd';
 import { Lock, Mail } from 'lucide-react';
-import Link from '@/libs/next/Link';
-import { useSearchParams } from '@/libs/next/navigation';
-import { useEffect } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { AuthCard } from '../../../../../features/AuthCard';
-import { type SignUpFormValues, useSignUp } from './useSignUp';
+import { trackLoginOrSignupClicked } from '../../../../../features/User/UserLoginOrSignup/trackLoginOrSignupClicked';
+import { type SignUpFormValues } from './useSignUp';
+import { useSignUp } from './useSignUp';
 
 const BetterAuthSignUpForm = () => {
   const [form] = Form.useForm<SignUpFormValues>();
@@ -18,15 +20,33 @@ const BetterAuthSignUpForm = () => {
   const { t } = useTranslation('auth');
   const searchParams = useSearchParams();
 
+  const emailInputRef = useRef<InputRef>(null);
+  const passwordInputRef = useRef<InputRef>(null);
+
   useEffect(() => {
     const email = searchParams.get('email');
-    if (email) form.setFieldsValue({ email });
+    if (email) {
+      form.setFieldsValue({ email });
+      passwordInputRef.current?.focus();
+    } else {
+      emailInputRef.current?.focus();
+    }
   }, [searchParams, form]);
 
   const footer = (
     <Text>
       {t('betterAuth.signup.hasAccount')}{' '}
-      <Link href={`/signin?${searchParams.toString()}`}>{t('betterAuth.signup.signinLink')}</Link>
+      <Link
+        href={`/signin?${searchParams.toString()}`}
+        onClick={(event) => {
+          event.preventDefault();
+          void trackLoginOrSignupClicked({ spm: 'signup.go_to_signin.click' }).finally(() => {
+            window.location.href = `/signin?${searchParams.toString()}`;
+          });
+        }}
+      >
+        {t('betterAuth.signup.signinLink')}
+      </Link>
     </Text>
   );
 
@@ -46,6 +66,8 @@ const BetterAuthSignUpForm = () => {
         >
           <Input
             placeholder={t('betterAuth.signup.emailPlaceholder')}
+            ref={emailInputRef}
+            size="large"
             prefix={
               <Icon
                 icon={Mail}
@@ -54,7 +76,6 @@ const BetterAuthSignUpForm = () => {
                 }}
               />
             }
-            size="large"
           />
         </Form.Item>
         <Form.Item
@@ -67,7 +88,7 @@ const BetterAuthSignUpForm = () => {
               message: t('betterAuth.errors.passwordFormat'),
               validator: (_, value) => {
                 if (!value) return Promise.resolve();
-                const hasLetter = /[A-Za-z]/.test(value);
+                const hasLetter = /[a-z]/i.test(value);
                 const hasNumber = /\d/.test(value);
                 return hasLetter && hasNumber ? Promise.resolve() : Promise.reject();
               },
@@ -76,6 +97,8 @@ const BetterAuthSignUpForm = () => {
         >
           <Input.Password
             placeholder={t('betterAuth.signup.passwordPlaceholder')}
+            ref={passwordInputRef}
+            size="large"
             prefix={
               <Icon
                 icon={Lock}
@@ -84,7 +107,6 @@ const BetterAuthSignUpForm = () => {
                 }}
               />
             }
-            size="large"
           />
         </Form.Item>
         <Form.Item
@@ -104,6 +126,7 @@ const BetterAuthSignUpForm = () => {
         >
           <Input.Password
             placeholder={t('betterAuth.signup.confirmPasswordPlaceholder')}
+            size="large"
             prefix={
               <Icon
                 icon={Lock}
@@ -112,7 +135,6 @@ const BetterAuthSignUpForm = () => {
                 }}
               />
             }
-            size="large"
           />
         </Form.Item>
 

@@ -1,18 +1,21 @@
 import { Center, Checkbox, Flexbox, Icon } from '@lobehub/ui';
 import { Loader2 } from 'lucide-react';
-import { type ReactNode, memo, useState } from 'react';
+import { type CSSProperties, type ReactNode } from 'react';
+import { memo, useState } from 'react';
 
 export interface CheckboxItemProps {
   checked?: boolean;
   hasPadding?: boolean;
   id: string;
   label?: ReactNode;
+  labelMaxWidth?: CSSProperties['maxWidth'];
   onUpdate: (id: string, enabled: boolean) => Promise<void>;
 }
 
 const CheckboxItem = memo<CheckboxItemProps>(
-  ({ id, onUpdate, label, checked, hasPadding = true }) => {
+  ({ id, onUpdate, label, checked, hasPadding = true, labelMaxWidth }) => {
     const [loading, setLoading] = useState(false);
+    const labelContent = label || id;
 
     const updateState = async () => {
       setLoading(true);
@@ -22,26 +25,38 @@ const CheckboxItem = memo<CheckboxItemProps>(
 
     return (
       <Flexbox
+        horizontal
         align={'center'}
         gap={24}
-        horizontal
         justify={'space-between'}
+        style={
+          hasPadding
+            ? {
+                minWidth: 0,
+                paddingLeft: 8,
+              }
+            : { minWidth: 0 }
+        }
         onClick={async (e) => {
           e.stopPropagation();
           updateState();
         }}
-        style={
-          hasPadding
-            ? {
-                paddingLeft: 8,
-              }
-            : void 0
-        }
       >
-        {label || id}
+        <span
+          title={typeof labelContent === 'string' ? labelContent : undefined}
+          style={{
+            maxWidth: labelMaxWidth,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {labelContent}
+        </span>
         {loading ? (
           <Center width={18}>
-            <Icon icon={Loader2} spin />
+            <Icon spin icon={Loader2} />
           </Center>
         ) : (
           <Checkbox

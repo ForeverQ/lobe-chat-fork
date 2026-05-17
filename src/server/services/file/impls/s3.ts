@@ -1,11 +1,36 @@
-import { LobeChatDatabase } from '@lobechat/database';
+import { type LobeChatDatabase } from '@lobechat/database';
+import debug from 'debug';
 import urlJoin from 'url-join';
 
 import { FileModel } from '@/database/models/file';
 import { fileEnv } from '@/envs/file';
+import { getRedisConfig } from '@/envs/redis';
+import { initializeRedis, isRedisEnabled } from '@/libs/redis';
 import { FileS3 } from '@/server/modules/S3';
 
 import { type FileServiceImpl } from './type';
+
+const log = debug('lobe-file:s3');
+
+const PRESIGNED_PREVIEW_CACHE_SAFETY_SECONDS = 60;
+const PRESIGNED_PREVIEW_CACHE_MAX_SECONDS = 3600;
+const PRESIGNED_PREVIEW_CACHE_KEY_PREFIX = 'file:presigned-preview:';
+
+interface PresignedPreviewCacheEntry {
+  expiresAt: number;
+  url: string;
+}
+
+const presignedPreviewUrlCache = new Map<string, PresignedPreviewCacheEntry>();
+
+const createPresignedPreviewCacheKey = (key: string, expiresIn: number) =>
+  `${PRESIGNED_PREVIEW_CACHE_KEY_PREFIX}${expiresIn}:${key}`;
+
+const getPresignedPreviewCacheTtlSeconds = (expiresInSeconds: number) =>
+  Math.min(
+    Math.max(expiresInSeconds - PRESIGNED_PREVIEW_CACHE_SAFETY_SECONDS, 0),
+    PRESIGNED_PREVIEW_CACHE_MAX_SECONDS,
+  );
 
 /**
  * S3-based file service implementation
@@ -47,6 +72,56 @@ export class S3StaticFileImpl implements FileServiceImpl {
     return this.s3.createPreSignedUrlForPreview(key, expiresIn);
   }
 
+  private async getCachedPreSignedUrlForPreview(key: string, expiresIn?: number): Promise<string> {
+    const expiresInSeconds = expiresIn ?? fileEnv.S3_PREVIEW_URL_EXPIRE_IN;
+    const cacheKey = createPresignedPreviewCacheKey(key, expiresInSeconds);
+    const ttlSeconds = getPresignedPreviewCacheTtlSeconds(expiresInSeconds);
+    const now = Date.now();
+    const cached = presignedPreviewUrlCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > now) {
+      return cached.url;
+    }
+
+    try {
+      const redisConfig = getRedisConfig();
+      const redis = isRedisEnabled(redisConfig) ? await initializeRedis(redisConfig) : null;
+      const cachedUrl = await redis?.get(cacheKey);
+
+      if (cachedUrl) {
+        if (ttlSeconds > 0) {
+          presignedPreviewUrlCache.set(cacheKey, {
+            expiresAt: now + ttlSeconds * 1000,
+            url: cachedUrl,
+          });
+        }
+
+        return cachedUrl;
+      }
+    } catch (error) {
+      log('Failed to read presigned preview URL cache from Redis: %O', error);
+    }
+
+    const url = await this.createPreSignedUrlForPreview(key, expiresIn);
+
+    if (ttlSeconds > 0) {
+      presignedPreviewUrlCache.set(cacheKey, {
+        expiresAt: now + ttlSeconds * 1000,
+        url,
+      });
+
+      try {
+        const redisConfig = getRedisConfig();
+        const redis = isRedisEnabled(redisConfig) ? await initializeRedis(redisConfig) : null;
+        await redis?.set(cacheKey, url, { ex: ttlSeconds });
+      } catch (error) {
+        log('Failed to write presigned preview URL cache to Redis: %O', error);
+      }
+    }
+
+    return url;
+  }
+
   async uploadContent(path: string, content: string) {
     return this.s3.uploadContent(path, content);
   }
@@ -65,16 +140,18 @@ export class S3StaticFileImpl implements FileServiceImpl {
       key = extractedKey;
     }
 
-    // If bucket is not set public read, the preview address needs to be regenerated each time
-    if (!fileEnv.S3_SET_ACL) {
-      return await this.createPreSignedUrlForPreview(key, expiresIn);
+    // If bucket is not set public read, or S3_PUBLIC_DOMAIN is not configured,
+    // reuse the same presigned preview URL briefly so repeated chat turns keep
+    // stable media URLs and can reuse provider-side prefix caches.
+    if (!fileEnv.S3_SET_ACL || !fileEnv.S3_PUBLIC_DOMAIN) {
+      return await this.getCachedPreSignedUrlForPreview(key, expiresIn);
     }
 
     if (fileEnv.S3_ENABLE_PATH_STYLE) {
-      return urlJoin(fileEnv.S3_PUBLIC_DOMAIN!, fileEnv.S3_BUCKET!, key);
+      return urlJoin(fileEnv.S3_PUBLIC_DOMAIN, fileEnv.S3_BUCKET!, key);
     }
 
-    return urlJoin(fileEnv.S3_PUBLIC_DOMAIN!, key);
+    return urlJoin(fileEnv.S3_PUBLIC_DOMAIN, key);
   }
 
   async getKeyFromFullUrl(url: string): Promise<string | null> {
@@ -111,6 +188,11 @@ export class S3StaticFileImpl implements FileServiceImpl {
 
   async uploadMedia(key: string, buffer: Buffer): Promise<{ key: string }> {
     await this.s3.uploadMedia(key, buffer);
+    return { key };
+  }
+
+  async uploadBuffer(key: string, buffer: Buffer, contentType: string): Promise<{ key: string }> {
+    await this.s3.uploadBuffer(key, buffer, contentType);
     return { key };
   }
 }

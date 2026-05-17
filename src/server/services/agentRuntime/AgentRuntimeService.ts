@@ -1,9 +1,13 @@
-import {
-  AgentRuntime,
-  type AgentRuntimeContext,
-  type AgentState,
-  GeneralChatAgent,
+import type {
+  Agent,
+  AgentRuntimeContext,
+  AgentState,
+  GeneralAgentConfig,
 } from '@lobechat/agent-runtime';
+import { AgentRuntime, findInMessages, GeneralChatAgent } from '@lobechat/agent-runtime';
+import type { ISnapshotStore } from '@lobechat/agent-tracing';
+import { dynamicInterventionAudits } from '@lobechat/builtin-tools/dynamicInterventionAudits';
+import { getModelPropertyWithFallback } from '@lobechat/model-runtime';
 import { AgentRuntimeErrorType, ChatErrorType, type ChatMessageError } from '@lobechat/types';
 import debug from 'debug';
 import urlJoin from 'url-join';
@@ -11,35 +15,41 @@ import urlJoin from 'url-join';
 import { MessageModel } from '@/database/models/message';
 import { type LobeChatDatabase } from '@/database/type';
 import { appEnv } from '@/envs/app';
-import {
-  AgentRuntimeCoordinator,
-  type AgentRuntimeCoordinatorOptions,
-  createStreamEventManager,
-} from '@/server/modules/AgentRuntime';
-import {
-  type RuntimeExecutorContext,
-  createRuntimeExecutors,
-} from '@/server/modules/AgentRuntime/RuntimeExecutors';
-import type { IStreamEventManager } from '@/server/modules/AgentRuntime/types';
+import { type AgentRuntimeCoordinatorOptions } from '@/server/modules/AgentRuntime';
+import { AgentRuntimeCoordinator, createStreamEventManager } from '@/server/modules/AgentRuntime';
+import { type RuntimeExecutorContext } from '@/server/modules/AgentRuntime/RuntimeExecutors';
+import { createRuntimeExecutors } from '@/server/modules/AgentRuntime/RuntimeExecutors';
+import { type IStreamEventManager } from '@/server/modules/AgentRuntime/types';
+import { emitAgentSignalSourceEvent } from '@/server/services/agentSignal';
+import { toAgentSignalTraceEvents } from '@/server/services/agentSignal/observability/traceEvents';
 import { mcpService } from '@/server/services/mcp';
-import { PluginGatewayService } from '@/server/services/pluginGateway';
 import { QueueService } from '@/server/services/queue';
 import { LocalQueueServiceImpl } from '@/server/services/queue/impls';
 import { ToolExecutionService } from '@/server/services/toolExecution';
 import { BuiltinToolsExecutor } from '@/server/services/toolExecution/builtin';
 
-import type {
-  AgentExecutionParams,
-  AgentExecutionResult,
-  OperationCreationParams,
-  OperationCreationResult,
-  OperationStatusResult,
-  PendingInterventionsResult,
-  StartExecutionParams,
-  StartExecutionResult,
-  StepCompletionReason,
-  StepLifecycleCallbacks,
+import { isAbortError, throwIfAborted } from './abort';
+import { CompletionLifecycle } from './CompletionLifecycle';
+import { hookDispatcher } from './hooks';
+import { HumanInterventionHandler } from './HumanInterventionHandler';
+import { OperationTraceRecorder } from './OperationTraceRecorder';
+import { buildStepPresentation, formatTokenCount } from './stepPresentation';
+import {
+  type AgentExecutionParams,
+  type AgentExecutionResult,
+  type OperationCreationParams,
+  type OperationCreationResult,
+  type OperationStatusResult,
+  type PendingInterventionsResult,
+  type StartExecutionParams,
+  type StartExecutionResult,
+  type StepCompletionReason,
 } from './types';
+
+if (process.env.VERCEL) {
+  // eslint-disable-next-line no-console
+  debug.log = console.log.bind(console);
+}
 
 const log = debug('lobe-server:agent-runtime-service');
 
@@ -80,7 +90,27 @@ function formatErrorForState(error: unknown): ChatMessageError {
   };
 }
 
+const toAgentSignalSnapshotEvents = (
+  emission: Awaited<ReturnType<typeof emitAgentSignalSourceEvent>> | undefined,
+) => {
+  if (!emission || emission.deduped) return [];
+
+  return toAgentSignalTraceEvents({
+    actions: emission.orchestration.actions,
+    results: emission.orchestration.results,
+    signals: emission.orchestration.emittedSignals,
+    source: emission.source,
+  });
+};
+
 export interface AgentRuntimeServiceOptions {
+  /**
+   * Custom agent factory. When provided, this function is called instead of
+   * the default `new GeneralChatAgent(config)` to create the Agent instance.
+   * This allows injecting alternative Agent implementations (e.g. GraphAgent)
+   * without the service needing to know about them.
+   */
+  agentFactory?: (config: GeneralAgentConfig) => Agent;
   /**
    * Coordinator configuration options
    * Allows injection of custom stateManager and streamEventManager
@@ -91,6 +121,12 @@ export interface AgentRuntimeServiceOptions {
    * Set to null to disable queue scheduling (for synchronous execution tests)
    */
   queueService?: QueueService | null;
+  /**
+   * Optional snapshot store for persisting agent execution traces.
+   * When provided, execution snapshots are recorded on every step and finalized on completion.
+   * In dev mode without this option, falls back to FileSnapshotStore automatically.
+   */
+  snapshotStore?: ISnapshotStore;
   /**
    * Custom StreamEventManager
    * Defaults to Redis-based StreamEventManager
@@ -116,18 +152,16 @@ export interface AgentRuntimeServiceOptions {
  * ```
  */
 export class AgentRuntimeService {
+  private agentFactory?: (config: GeneralAgentConfig) => Agent;
+  private completionLifecycle: CompletionLifecycle;
   private coordinator: AgentRuntimeCoordinator;
+  private humanIntervention: HumanInterventionHandler;
   private streamManager: IStreamEventManager;
   private queueService: QueueService | null;
+  private traceRecorder: OperationTraceRecorder;
   private toolExecutionService: ToolExecutionService;
-  /**
-   * Step lifecycle callback registry
-   * key: operationId, value: callbacks
-   */
-  private stepCallbacks: Map<string, StepLifecycleCallbacks> = new Map();
   private get baseURL() {
-    const baseUrl =
-      process.env.AGENT_RUNTIME_BASE_URL || appEnv.APP_URL || 'http://localhost:3010';
+    const baseUrl = process.env.AGENT_RUNTIME_BASE_URL || appEnv.APP_URL || 'http://localhost:3010';
 
     return urlJoin(baseUrl, '/api/agent');
   }
@@ -147,18 +181,22 @@ export class AgentRuntimeService {
     });
     this.queueService =
       options?.queueService === null ? null : (options?.queueService ?? new QueueService());
+    this.traceRecorder = new OperationTraceRecorder(
+      options?.snapshotStore ?? this.createDefaultSnapshotStore(),
+    );
+    this.agentFactory = options?.agentFactory;
     this.serverDB = db;
     this.userId = userId;
     this.messageModel = new MessageModel(db, this.userId);
+    this.completionLifecycle = new CompletionLifecycle(db, userId);
+    this.humanIntervention = new HumanInterventionHandler(db, this.messageModel);
 
     // Initialize ToolExecutionService with dependencies
-    const pluginGatewayService = new PluginGatewayService();
     const builtinToolsExecutor = new BuiltinToolsExecutor(db, userId);
 
     this.toolExecutionService = new ToolExecutionService({
       builtinToolsExecutor,
       mcpService,
-      pluginGatewayService,
     });
 
     // Setup local execution callback for LocalQueueServiceImpl
@@ -176,43 +214,36 @@ export class AgentRuntimeService {
     if (impl instanceof LocalQueueServiceImpl) {
       log('Setting up local execution callback');
       impl.setExecutionCallback(async (operationId, stepIndex, context) => {
-        log('[%s] Local callback executing step %d', operationId, stepIndex);
-        await this.executeStep({
-          context,
-          operationId,
-          stepIndex,
-        });
+        await this.executeStep({ context, operationId, stepIndex });
       });
     }
   }
 
-  // ==================== Step Lifecycle Callbacks ====================
+  // ==================== Operation Interruption ====================
 
   /**
-   * Register step lifecycle callbacks
-   * @param operationId - Operation ID
-   * @param callbacks - Callback function collection
+   * Interrupt a running agent operation by setting its state to 'interrupted'.
+   * The agent will stop at the next step boundary (cannot abort an in-flight LLM call).
+   * Works with both Redis and InMemory state managers via the coordinator abstraction.
+   *
+   * @returns true if the operation was interrupted, false if already in a terminal state or not found
    */
-  registerStepCallbacks(operationId: string, callbacks: StepLifecycleCallbacks): void {
-    this.stepCallbacks.set(operationId, callbacks);
-    log('[%s] Registered step callbacks', operationId);
-  }
+  async interruptOperation(operationId: string): Promise<boolean> {
+    const state = await this.coordinator.loadAgentState(operationId);
+    if (!state) return false;
 
-  /**
-   * Remove step lifecycle callbacks
-   * @param operationId - Operation ID
-   */
-  unregisterStepCallbacks(operationId: string): void {
-    this.stepCallbacks.delete(operationId);
-    log('[%s] Unregistered step callbacks', operationId);
-  }
+    if (state.status === 'done' || state.status === 'error' || state.status === 'interrupted') {
+      return false;
+    }
 
-  /**
-   * Get step lifecycle callbacks
-   * @param operationId - Operation ID
-   */
-  getStepCallbacks(operationId: string): StepLifecycleCallbacks | undefined {
-    return this.stepCallbacks.get(operationId);
+    await this.coordinator.saveAgentState(operationId, {
+      ...state,
+      lastModified: new Date().toISOString(),
+      status: 'interrupted',
+    });
+
+    log('[%s] Operation interrupted', operationId);
+    return true;
   }
 
   // ==================== Operation Management ====================
@@ -222,23 +253,83 @@ export class AgentRuntimeService {
    */
   async createOperation(params: OperationCreationParams): Promise<OperationCreationResult> {
     const {
+      activeDeviceId,
       operationId,
       initialContext,
       agentConfig,
       modelRuntimeConfig,
       userId,
       autoStart = true,
-      tools,
+      stream,
       initialMessages = [],
       appContext,
-      toolManifestMap,
-      toolSourceMap,
-      stepCallbacks,
+      toolSet,
+      hooks,
       userInterventionConfig,
+      queueRetries,
+      queueRetryDelay,
+      botContext,
+      botPlatformContext,
+      deviceAccessPolicy,
+      discordContext,
+      evalContext,
+      maxSteps,
+      userMemory,
+      deviceSystemInfo,
+      operationSkillSet,
+      parentOperationId,
+      signal,
+      userTimezone,
+      initialStepCount = 0,
     } = params;
 
+    // Persist initial agent_operations row. CompletionLifecycle owns both
+    // ends of the persistence lifecycle (start row here, terminal update
+    // in dispatchHooks) and swallows DB errors so runtime startup is never
+    // blocked.
+    await this.completionLifecycle.recordStart({
+      agentId: appContext?.agentId ?? null,
+      appContext: {
+        defaultTaskAssigneeAgentId: appContext?.defaultTaskAssigneeAgentId,
+        documentId: appContext?.documentId,
+        groupId: appContext?.groupId,
+        scope: appContext?.scope,
+        sourceMessageId: appContext?.sourceMessageId,
+      },
+      chatGroupId: appContext?.groupId ?? null,
+      maxSteps,
+      model: modelRuntimeConfig?.model,
+      modelRuntimeConfig,
+      operationId,
+      parentOperationId: parentOperationId ?? null,
+      provider: modelRuntimeConfig?.provider,
+      taskId: appContext?.taskId ?? null,
+      threadId: appContext?.threadId ?? null,
+      topicId: appContext?.topicId ?? null,
+      trigger: appContext?.trigger,
+    });
+
+    const operationToolSet = toolSet;
+    let operationCreated = false;
+    let hooksRegistered = false;
+
     try {
-      log('[%s] Creating new operation (autoStart: %s)', operationId, autoStart);
+      throwIfAborted(signal, 'Agent execution aborted before operation startup');
+
+      const memories = userMemory?.memories;
+      log(
+        '[%s] Creating new operation (autoStart: %s) with params: model=%s, provider=%s, tools=%d, messages=%d, manifests=%d, memory=%s',
+        operationId,
+        autoStart,
+        agentConfig?.model,
+        agentConfig?.provider,
+        operationToolSet.tools?.length ?? 0,
+        initialMessages.length,
+        operationToolSet.manifestMap ? Object.keys(operationToolSet.manifestMap).length : 0,
+        memories
+          ? `{contexts:${memories.contexts?.length ?? 0},experiences:${memories.experiences?.length ?? 0},preferences:${memories.preferences?.length ?? 0},identities:${memories.identities?.length ?? 0},activities:${memories.activities?.length ?? 0},persona:${memories.persona ? 'yes' : 'no'}}`
+          : 'none',
+      );
 
       // Initialize operation state - create state before saving
       const initialState = {
@@ -249,20 +340,38 @@ export class AgentRuntimeService {
         // Use the passed initial messages
         messages: initialMessages,
         metadata: {
+          activeDeviceId,
           agentConfig,
+          botContext,
+          botPlatformContext,
+          deviceAccessPolicy,
+          deviceSystemInfo,
+          discordContext,
+          evalContext,
           // need be removed
           modelRuntimeConfig,
+          queueRetries,
+          queueRetryDelay,
+          stream,
+          operationSkillSet,
           userId,
+          userMemory,
+          userTimezone,
+          workingDirectory: agentConfig?.chatConfig?.runtimeEnv?.workingDirectory,
           ...appContext,
         },
+        maxSteps,
         // modelRuntimeConfig at state level for executor fallback
         modelRuntimeConfig,
         operationId,
+        operationToolSet,
         status: 'idle',
-        stepCount: 0,
-        toolManifestMap,
-        toolSourceMap,
-        tools,
+        stepCount: initialStepCount,
+        // Backward-compat: resolved tool fields read by RuntimeExecutors
+        toolExecutorMap: operationToolSet.executorMap,
+        toolManifestMap: operationToolSet.manifestMap,
+        toolSourceMap: operationToolSet.sourceMap,
+        tools: operationToolSet.tools,
         // User intervention config for headless mode in async tasks
         userInterventionConfig,
       } as Partial<AgentState>;
@@ -273,14 +382,33 @@ export class AgentRuntimeService {
         modelRuntimeConfig,
         userId,
       });
+      operationCreated = true;
 
       // Save initial state
       await this.coordinator.saveAgentState(operationId, initialState as any);
 
-      // Register step lifecycle callbacks
-      if (stepCallbacks) {
-        this.registerStepCallbacks(operationId, stepCallbacks);
+      // Register external hooks
+      if (hooks && hooks.length > 0) {
+        hookDispatcher.register(operationId, hooks);
+        hooksRegistered = true;
+
+        // Persist webhook configs to state metadata for production mode
+        const serializedHooks = hookDispatcher.getSerializedHooks(operationId);
+        if (serializedHooks && serializedHooks.length > 0) {
+          const currentState = await this.coordinator.loadAgentState(operationId);
+          if (currentState) {
+            await this.coordinator.saveAgentState(operationId, {
+              ...currentState,
+              metadata: {
+                ...currentState.metadata,
+                _hooks: serializedHooks,
+              },
+            });
+          }
+        }
       }
+
+      throwIfAborted(signal, 'Agent execution aborted before first step scheduling');
 
       let messageId: string | undefined;
       let autoStarted = false;
@@ -295,7 +423,9 @@ export class AgentRuntimeService {
           endpoint: `${this.baseURL}/run`,
           operationId,
           priority: 'high',
-          stepIndex: 0,
+          retryDelay: queueRetryDelay,
+          retries: queueRetries,
+          stepIndex: initialStepCount,
         });
         autoStarted = true;
         log('[%s] Scheduled first step (messageId: %s)', operationId, messageId);
@@ -307,6 +437,23 @@ export class AgentRuntimeService {
 
       return { autoStarted, messageId, operationId, success: true };
     } catch (error) {
+      if (isAbortError(error)) {
+        if (hooksRegistered) {
+          hookDispatcher.unregister(operationId);
+        }
+
+        if (operationCreated) {
+          try {
+            await this.coordinator.deleteAgentOperation(operationId);
+          } catch (cleanupError) {
+            console.error('Failed to cleanup aborted operation %s: %O', operationId, cleanupError);
+          }
+        }
+
+        log('[%s] Operation creation aborted before scheduling', operationId);
+        throw error;
+      }
+
       console.error('Failed to create operation %s: %O', operationId, error);
       throw error;
     }
@@ -316,14 +463,42 @@ export class AgentRuntimeService {
    * Execute Agent step
    */
   async executeStep(params: AgentExecutionParams): Promise<AgentExecutionResult> {
-    const { operationId, stepIndex, context, humanInput, approvedToolCall, rejectionReason } =
-      params;
+    const {
+      operationId,
+      stepIndex,
+      context,
+      humanInput,
+      approvedToolCall,
+      rejectionReason,
+      rejectAndContinue,
+      toolMessageId,
+      externalRetryCount = 0,
+    } = params;
 
-    // Get registered callbacks
-    const callbacks = this.getStepCallbacks(operationId);
+    // ===== Distributed lock: prevent duplicate execution from QStash retries =====
+    const claimed = await this.coordinator.tryClaimStep(operationId, stepIndex, 35);
+    if (!claimed) {
+      log(
+        '[%s][%d] Step lock conflict — another instance is executing this step, returning locked',
+        operationId,
+        stepIndex,
+      );
+      return {
+        locked: true,
+        nextStepScheduled: false,
+        state: {},
+        success: false,
+      };
+    }
+
+    // Hoisted so the error-path snapshot finalize can record an
+    // approximate startedAt for the failing step. The inner `startAt` at the
+    // runtime.step() call site stays as the authoritative start for the
+    // success path.
+    const stepStartAt = Date.now();
 
     try {
-      log('[%s] Executing step %d', operationId, stepIndex);
+      log('[%s][%d] Start step executing...', operationId, stepIndex);
 
       // Publish step start event
       await this.streamManager.publishStreamEvent(operationId, {
@@ -339,18 +514,97 @@ export class AgentRuntimeService {
         throw new Error(`Agent state not found for operation ${operationId}`);
       }
 
-      // Call onBeforeStep callback
-      if (callbacks?.onBeforeStep) {
-        try {
-          await callbacks.onBeforeStep({
-            context,
+      agentState.metadata = {
+        ...agentState.metadata,
+        externalRetryCount,
+      };
+
+      // Layer 2 defense: catch extremely delayed retries that arrive after lock TTL expired
+      if (agentState.stepCount > stepIndex) {
+        log(
+          '[%s][%d] Step already completed (stepCount=%d), skipping',
+          operationId,
+          stepIndex,
+          agentState.stepCount,
+        );
+        return {
+          nextStepScheduled: false,
+          state: agentState,
+          stepResult: null,
+          success: true,
+        };
+      }
+
+      // Early exit: skip step if operation is already in a terminal state
+      // This prevents executing expensive LLM/tool calls after timeout or interruption
+      if (
+        agentState.status === 'interrupted' ||
+        agentState.status === 'done' ||
+        agentState.status === 'error'
+      ) {
+        log(
+          '[%s][%d] Skipping step — operation already in terminal state: %s',
+          operationId,
+          stepIndex,
+          agentState.status,
+        );
+
+        const reason = this.determineCompletionReason(agentState);
+
+        await this.completionLifecycle.emitSignalEvents(operationId, agentState, reason);
+
+        // Dispatch completion hooks so consumers (e.g., bot local-mode promise) can finalize
+        await this.completionLifecycle.dispatchHooks(operationId, agentState, reason);
+
+        return {
+          nextStepScheduled: false,
+          state: agentState,
+          stepResult: null,
+          success: true,
+        };
+      }
+
+      let beforeStepSignalEvents: Array<{ [key: string]: unknown; type: string }> = [];
+
+      // Dispatch beforeStep hooks
+      try {
+        const beforeStepMetadata = agentState?.metadata || {};
+        const beforeStepSignalEmission = await emitAgentSignalSourceEvent(
+          {
+            payload: {
+              agentId: beforeStepMetadata?.agentId,
+              operationId,
+              serializedContext: undefined,
+              stepIndex,
+              topicId: beforeStepMetadata?.topicId,
+              turnCount: agentState?.stepCount || 0,
+            },
+            sourceId: `${operationId}:before:${stepIndex}`,
+            sourceType: 'runtime.before_step',
+          },
+          {
+            agentId: beforeStepMetadata?.agentId,
+            db: this.serverDB,
+            userId: beforeStepMetadata?.userId || this.userId,
+          },
+          { ignoreError: true },
+        );
+        beforeStepSignalEvents = toAgentSignalSnapshotEvents(beforeStepSignalEmission);
+        await hookDispatcher.dispatch(
+          operationId,
+          'beforeStep',
+          {
+            agentId: beforeStepMetadata?.agentId || '',
+            finalState: agentState,
             operationId,
-            state: agentState,
             stepIndex,
-          });
-        } catch (callbackError) {
-          log('[%s] onBeforeStep callback error: %O', operationId, callbackError);
-        }
+            steps: agentState?.stepCount || 0,
+            userId: beforeStepMetadata?.userId || this.userId,
+          },
+          beforeStepMetadata._hooks,
+        );
+      } catch (hookError) {
+        log('[%s] beforeStep hook dispatch error: %O', operationId, hookError);
       }
 
       // Create Agent and Runtime instances
@@ -367,18 +621,46 @@ export class AgentRuntimeService {
       let currentState = agentState;
 
       if (humanInput || approvedToolCall || rejectionReason) {
-        const interventionResult = await this.handleHumanIntervention(runtime, currentState, {
+        const interventionResult = await this.humanIntervention.process(currentState, {
           approvedToolCall,
           humanInput,
+          rejectAndContinue,
           rejectionReason,
+          toolMessageId,
         });
         currentState = interventionResult.newState;
         currentContext = interventionResult.nextContext;
       }
 
+      // Pre-step computation: extract device context from DB messages
+      // Follows front-end computeStepContext pattern — computed at step boundary, not inside executors
+      if (!currentState.metadata?.activeDeviceId) {
+        const deviceContext = await this.computeDeviceContext(currentState);
+        if (deviceContext && currentState.metadata) {
+          currentState.metadata.activeDeviceId = deviceContext.activeDeviceId;
+          currentState.metadata.devicePlatform = deviceContext.devicePlatform;
+          currentState.metadata.deviceSystemInfo = deviceContext.deviceSystemInfo;
+          log(
+            '[%s][%d] Pre-step: device context computed from messages (deviceId: %s)',
+            operationId,
+            stepIndex,
+            deviceContext.activeDeviceId,
+          );
+        }
+      }
+
       // Execute step
       const startAt = Date.now();
       const stepResult = await runtime.step(currentState, currentContext);
+
+      // Check if the operation was interrupted while the step was executing
+      // (e.g., user clicked abort during a long LLM call)
+      const latestState = await this.coordinator.loadAgentState(operationId);
+      if (latestState?.status === 'interrupted') {
+        stepResult.newState.status = 'interrupted';
+        stepResult.newState.lastModified = new Date().toISOString();
+        log('[%s][%d] Operation was interrupted during step execution', operationId, stepIndex);
+      }
 
       // Save state, coordinator will handle event sending automatically
       await this.coordinator.saveStepResult(operationId, {
@@ -405,21 +687,136 @@ export class AgentRuntimeService {
         type: 'step_complete',
       });
 
-      log('[%s] Step %d completed', operationId, stepIndex);
+      // Build enhanced step completion log & presentation data
+      const { presentation: stepPresentationData, summary: stepSummary } = buildStepPresentation(
+        stepResult,
+        Date.now() - startAt,
+      );
 
-      // Call onAfterStep callback
-      if (callbacks?.onAfterStep) {
-        try {
-          await callbacks.onAfterStep({
+      const { usage } = stepResult.newState;
+      log(
+        '[%s][%d] completed %s | total: %s tokens / $%s | llm×%d | tools×%d',
+        operationId,
+        stepIndex,
+        stepSummary,
+        formatTokenCount(stepPresentationData.totalTokens),
+        stepPresentationData.totalCost.toFixed(4),
+        usage?.llm?.apiCalls ?? 0,
+        usage?.tools?.totalCalls ?? 0,
+      );
+
+      const toolsCalling = stepPresentationData.toolsCalling;
+      const content = stepPresentationData.content;
+
+      let afterStepSignalEvents: Array<{ [key: string]: unknown; type: string }> = [];
+
+      // Dispatch afterStep hooks (enriched with step presentation + tracking data)
+      try {
+        const metadata = stepResult.newState?.metadata || {};
+        const tracking = metadata._stepTracking || {};
+        const elapsedMs = stepResult.newState?.createdAt
+          ? Date.now() - new Date(stepResult.newState.createdAt).getTime()
+          : undefined;
+        const stepLabel = metadata?._stepLabel;
+
+        afterStepSignalEvents = toAgentSignalSnapshotEvents(
+          await emitAgentSignalSourceEvent(
+            {
+              payload: {
+                agentId: metadata?.agentId,
+                operationId,
+                serializedContext: undefined,
+                stepIndex,
+                topicId: metadata?.topicId,
+                turnCount: stepResult.newState?.stepCount || 0,
+              },
+              sourceId: `${operationId}:after:${stepIndex}`,
+              sourceType: 'runtime.after_step',
+            },
+            {
+              agentId: metadata?.agentId,
+              db: this.serverDB,
+              userId: metadata?.userId || this.userId,
+            },
+            { ignoreError: true },
+          ),
+        );
+
+        await hookDispatcher.dispatch(
+          operationId,
+          'afterStep',
+          {
+            agentId: metadata?.agentId || '',
+            content,
+            elapsedMs,
+            executionTimeMs: stepPresentationData.executionTimeMs,
+            finalState: stepResult.newState,
+            ...(stepLabel && { stepLabel }),
+            lastLLMContent: tracking.lastLLMContent,
+            lastToolsCalling: tracking.lastToolsCalling,
             operationId,
+            reasoning: stepPresentationData.reasoning,
             shouldContinue,
-            state: stepResult.newState,
+            status: stepResult.newState?.status,
+            stepCost: stepPresentationData.stepCost,
             stepIndex,
-            stepResult,
-          });
-        } catch (callbackError) {
-          log('[%s] onAfterStep callback error: %O', operationId, callbackError);
-        }
+            stepType: stepPresentationData.stepType,
+            steps: stepResult.newState?.stepCount || 0,
+            thinking: stepPresentationData.thinking,
+            toolCalls: stepResult.newState?.usage?.tools?.totalCalls,
+            toolsCalling: stepPresentationData.toolsCalling,
+            toolsResult: stepPresentationData.toolsResult,
+            topicId: metadata?.topicId,
+            totalCost: stepPresentationData.totalCost,
+            totalInputTokens: stepPresentationData.totalInputTokens,
+            totalOutputTokens: stepPresentationData.totalOutputTokens,
+            totalSteps: stepPresentationData.totalSteps,
+            totalTokens: stepPresentationData.totalTokens,
+            totalToolCalls: (tracking.totalToolCalls ?? 0) + (toolsCalling?.length ?? 0),
+            userId: metadata?.userId || this.userId,
+          },
+          metadata._hooks,
+        );
+      } catch (hookError) {
+        log('[%s] afterStep hook dispatch error: %O', operationId, hookError);
+      }
+
+      await this.traceRecorder.appendStep(operationId, {
+        afterStepSignalEvents,
+        agentState,
+        beforeStepSignalEvents,
+        currentContext,
+        externalRetryCount,
+        presentation: stepPresentationData,
+        startedAt: startAt,
+        stepIndex,
+        stepResult,
+      });
+
+      // Update step tracking in state metadata for afterStep hooks (cross-step accumulator)
+      const hasAfterStepHooks = stepResult.newState.metadata?._hooks?.some(
+        (h: { type: string }) => h.type === 'afterStep',
+      );
+      if (hasAfterStepHooks && stepResult.newState.metadata) {
+        const prevTracking = stepResult.newState.metadata._stepTracking || {};
+        const newTotalToolCalls = (prevTracking.totalToolCalls ?? 0) + (toolsCalling?.length ?? 0);
+
+        // Truncate content to 1800 chars to keep state small
+        const truncatedContent = content
+          ? content.length > 1800
+            ? content.slice(0, 1800) + '...'
+            : content
+          : prevTracking.lastLLMContent;
+
+        const updatedTracking = {
+          lastLLMContent: truncatedContent,
+          lastToolsCalling: toolsCalling || prevTracking.lastToolsCalling,
+          totalToolCalls: newTotalToolCalls,
+        };
+
+        // Persist tracking state for next step
+        stepResult.newState.metadata._stepTracking = updatedTracking;
+        await this.coordinator.saveAgentState(operationId, stepResult.newState);
       }
 
       if (shouldContinue && stepResult.nextContext && this.queueService) {
@@ -433,27 +830,54 @@ export class AgentRuntimeService {
           endpoint: `${this.baseURL}/run`,
           operationId,
           priority,
+          retryDelay:
+            typeof stepResult.newState.metadata?.queueRetryDelay === 'string'
+              ? stepResult.newState.metadata.queueRetryDelay
+              : undefined,
+          retries:
+            typeof stepResult.newState.metadata?.queueRetries === 'number'
+              ? stepResult.newState.metadata.queueRetries
+              : undefined,
           stepIndex: nextStepIndex,
         });
         nextStepScheduled = true;
 
-        log('[%s] Scheduled next step %d', operationId, nextStepIndex);
+        log('[%s][%d] Scheduled next step %d', operationId, stepIndex, nextStepIndex);
       }
 
-      // Check if operation is complete, call onComplete callback
-      if (!shouldContinue && callbacks?.onComplete) {
+      // Check if operation is complete
+      if (!shouldContinue) {
         const reason = this.determineCompletionReason(stepResult.newState);
-        try {
-          await callbacks.onComplete({
-            finalState: stepResult.newState,
-            operationId,
-            reason,
-          });
-          // Clean up callbacks after operation completes
-          this.unregisterStepCallbacks(operationId);
-        } catch (callbackError) {
-          log('[%s] onComplete callback error: %O', operationId, callbackError);
-        }
+
+        const completionSignalEvents = await this.completionLifecycle.emitSignalEvents(
+          operationId,
+          stepResult.newState,
+          reason,
+        );
+
+        // Dispatch completion hooks
+        await this.completionLifecycle.dispatchHooks(operationId, stepResult.newState, reason);
+
+        // Finalize tracing snapshot. The error catch below uses the same
+        // recorder so propagated failures still write the canonical S3
+        // snapshot instead of orphaning the partial (LOBE-8533).
+        await this.traceRecorder.finalize(operationId, {
+          appendEventsToLastStep: completionSignalEvents,
+          completionReason: reason,
+          error: stepResult.newState.error
+            ? {
+                message:
+                  this.completionLifecycle.extractErrorMessage(stepResult.newState.error) ??
+                  JSON.stringify(stepResult.newState.error),
+                type: String(
+                  stepResult.newState.error.type ??
+                    stepResult.newState.error.errorType ??
+                    'unknown',
+                ),
+              }
+            : undefined,
+          state: stepResult.newState,
+        });
       }
 
       return {
@@ -464,44 +888,94 @@ export class AgentRuntimeService {
       };
     } catch (error) {
       log('Step %d failed for operation %s: %O', stepIndex, operationId, error);
+      const formattedError = formatErrorForState(error);
 
-      // Publish error event
-      await this.streamManager.publishStreamEvent(operationId, {
-        data: {
-          error: (error as Error).message,
-          phase: 'step_execution',
+      // Build error state — try loading current state from coordinator, but if that
+      // also fails (e.g. Redis ECONNRESET), fall back to a minimal error state so
+      // that completion callbacks and webhooks can still fire.
+      let finalStateWithError: any;
+      try {
+        await this.streamManager.publishStreamEvent(operationId, {
+          data: {
+            error: formattedError.message,
+            errorType: String(formattedError.type),
+            phase: 'step_execution',
+            stepIndex,
+          },
           stepIndex,
-        },
-        stepIndex,
-        type: 'error',
-      });
-
-      // Build and save error state so it's persisted for later retrieval
-      const errorState = await this.coordinator.loadAgentState(operationId);
-      const finalStateWithError = {
-        ...errorState!,
-        error: formatErrorForState(error),
-        status: 'error' as const,
-      };
-
-      // Save the error state to coordinator so getOperationStatus can retrieve it
-      await this.coordinator.saveAgentState(operationId, finalStateWithError);
-
-      // Also call onComplete callback when execution fails
-      if (callbacks?.onComplete) {
-        try {
-          await callbacks.onComplete({
-            finalState: finalStateWithError,
-            operationId,
-            reason: 'error',
-          });
-          this.unregisterStepCallbacks(operationId);
-        } catch (callbackError) {
-          log('[%s] onComplete callback error in catch: %O', operationId, callbackError);
-        }
+          type: 'error',
+        });
+      } catch (publishError) {
+        log(
+          '[%s] Failed to publish error event (infra may be down): %O',
+          operationId,
+          publishError,
+        );
       }
 
+      try {
+        const errorState = await this.coordinator.loadAgentState(operationId);
+        finalStateWithError = {
+          ...errorState!,
+          error: formattedError,
+          metadata: {
+            ...errorState?.metadata,
+            externalRetryCount,
+          },
+          status: 'error' as const,
+          stepCount: errorState?.stepCount ?? stepIndex,
+        };
+      } catch (loadError) {
+        log('[%s] Failed to load error state (infra may be down): %O', operationId, loadError);
+        // Fallback: construct a minimal error state so callbacks still receive useful info
+        finalStateWithError = {
+          error: formattedError,
+          metadata: { externalRetryCount },
+          status: 'error' as const,
+          stepCount: stepIndex,
+        };
+      }
+
+      try {
+        await this.coordinator.saveAgentState(operationId, finalStateWithError);
+      } catch (saveError) {
+        log('[%s] Failed to save error state (infra may be down): %O', operationId, saveError);
+      }
+
+      await this.completionLifecycle.emitSignalEvents(operationId, finalStateWithError, 'error');
+
+      // Dispatch onComplete + onError hooks
+      await this.completionLifecycle.dispatchHooks(operationId, finalStateWithError, 'error');
+
+      // Finalize the partial snapshot into the canonical S3 path so the
+      // failed op is observable in the same place as a successful run.
+      // Without this, propagated errors (e.g. markPersistFatal from
+      // RuntimeExecutors) leave the partial as an orphan at
+      // `_partial/<op>.json.zst` and the canonical
+      // `agent-traces/<agentId>/<topicId>/<op>.json.zst` returns 404 — see
+      // LOBE-8533.
+      //
+      // `failedStep` synthesizes a step record for the failure because the
+      // real step never reached `appendStepToPartial` — it threw before the
+      // success path could push it. Without this synthetic step, the
+      // snapshot's step count would lag the assistant message that
+      // triggered the failing call.
+      await this.traceRecorder.finalize(operationId, {
+        completionReason: 'error',
+        error: {
+          message: formattedError.message ?? String(formattedError.type),
+          type: String(formattedError.type),
+        },
+        failedStep: { startedAt: stepStartAt, stepIndex },
+        state: finalStateWithError,
+      });
+
       throw error;
+    } finally {
+      // Release lock so legitimate retries or next operations can proceed.
+      // If Vercel force-kills the process, this won't execute — the lock
+      // auto-expires after TTL (35s), allowing QStash retries to self-heal.
+      await this.coordinator.releaseStepLock(operationId, stepIndex);
     }
   }
 
@@ -779,15 +1253,25 @@ export class AgentRuntimeService {
    * Process human intervention
    */
   async processHumanIntervention(params: {
-    action: 'approve' | 'reject' | 'input' | 'select';
+    action: 'approve' | 'reject' | 'reject_continue' | 'input' | 'select';
     approvedToolCall?: any;
     humanInput?: any;
     operationId: string;
+    rejectAndContinue?: boolean;
     rejectionReason?: string;
     stepIndex: number;
+    toolMessageId?: string;
   }): Promise<{ messageId?: string }> {
-    const { operationId, stepIndex, action, approvedToolCall, humanInput, rejectionReason } =
-      params;
+    const {
+      operationId,
+      stepIndex,
+      action,
+      approvedToolCall,
+      humanInput,
+      rejectAndContinue,
+      rejectionReason,
+      toolMessageId,
+    } = params;
 
     try {
       log(
@@ -805,7 +1289,13 @@ export class AgentRuntimeService {
           delay: 100,
           endpoint: `${this.baseURL}/run`,
           operationId,
-          payload: { approvedToolCall, humanInput, rejectionReason },
+          payload: {
+            approvedToolCall,
+            humanInput,
+            rejectAndContinue,
+            rejectionReason,
+            toolMessageId,
+          },
           priority: 'high',
           stepIndex,
         });
@@ -837,20 +1327,46 @@ export class AgentRuntimeService {
     operationId: string;
     stepIndex: number;
   }) {
-    // Create Durable Agent instance
-    const agent = new GeneralChatAgent({
+    const contextWindowTokens =
+      metadata?.modelRuntimeConfig?.model && metadata?.modelRuntimeConfig?.provider
+        ? await getModelPropertyWithFallback<number | undefined>(
+            metadata.modelRuntimeConfig.model,
+            'contextWindowTokens',
+            metadata.modelRuntimeConfig.provider,
+          )
+        : undefined;
+
+    // Create Agent instance — use custom factory if provided, otherwise default to GeneralChatAgent
+    const generalConfig = {
       agentConfig: metadata?.agentConfig,
+      compressionConfig: {
+        enabled: metadata?.agentConfig?.chatConfig?.enableContextCompression ?? true,
+        maxWindowToken: contextWindowTokens ?? undefined,
+      },
+      dynamicInterventionAudits,
       modelRuntimeConfig: metadata?.modelRuntimeConfig,
       operationId,
       userId: metadata?.userId,
-    });
+    };
+
+    const agent = this.agentFactory
+      ? this.agentFactory(generalConfig)
+      : new GeneralChatAgent(generalConfig);
 
     // Create streaming executor context
     const executorContext: RuntimeExecutorContext = {
+      agentConfig: metadata?.agentConfig,
+      botPlatformContext: metadata?.botPlatformContext,
+      discordContext: metadata?.discordContext,
+      userTimezone: metadata?.userTimezone,
+      evalContext: metadata?.evalContext,
+      hookDispatcher,
+      loadAgentState: this.coordinator.loadAgentState.bind(this.coordinator),
       messageModel: this.messageModel,
       operationId,
       serverDB: this.serverDB,
       stepIndex,
+      stream: metadata?.stream,
       streamManager: this.streamManager,
       toolExecutionService: this.toolExecutionService,
       topicId: metadata?.topicId,
@@ -866,27 +1382,66 @@ export class AgentRuntimeService {
   }
 
   /**
-   * Handle human intervention logic
+   * Create default snapshot store based on environment.
+   * - ENABLE_AGENT_S3_TRACING=1 → S3SnapshotStore
+   * - NODE_ENV=development → FileSnapshotStore
+   * - Otherwise → null (no tracing)
    */
-  private async handleHumanIntervention(
-    runtime: AgentRuntime,
-    state: any,
-    intervention: { approvedToolCall?: any; humanInput?: any; rejectionReason?: string },
-  ) {
-    const { humanInput, approvedToolCall, rejectionReason } = intervention;
-
-    if (approvedToolCall && state.status === 'waiting_for_human') {
-      // TODO: implement approveToolCall logic
-      return { newState: state, nextContext: undefined };
-    } else if (rejectionReason && state.status === 'waiting_for_human') {
-      // TODO: implement rejectToolCall logic
-      return { newState: state, nextContext: undefined };
-    } else if (humanInput) {
-      // TODO: implement processHumanInput logic
-      return { newState: state, nextContext: undefined };
+  private createDefaultSnapshotStore(): ISnapshotStore | null {
+    if (process.env.ENABLE_AGENT_S3_TRACING === '1') {
+      try {
+        const { S3SnapshotStore } = require('@/server/modules/AgentTracing');
+        return new S3SnapshotStore();
+      } catch {
+        // S3SnapshotStore not available
+      }
     }
 
-    return { newState: state, nextContext: undefined };
+    if (process.env.NODE_ENV === 'development') {
+      try {
+        const { FileSnapshotStore } = require('@lobechat/agent-tracing');
+        return new FileSnapshotStore();
+      } catch {
+        // agent-tracing not available
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Compute device context from DB messages at step boundary.
+   * Uses findInMessages visitor to scan tool messages for device activation.
+   */
+  private async computeDeviceContext(state: any) {
+    try {
+      const dbMessages = await this.messageModel.query({
+        agentId: state.metadata?.agentId,
+        threadId: state.metadata?.threadId,
+        topicId: state.metadata?.topicId,
+      });
+
+      return findInMessages(
+        dbMessages,
+        (msg) => {
+          const activeDeviceId = msg.pluginState?.metadata?.activeDeviceId;
+          if (activeDeviceId) {
+            return {
+              activeDeviceId,
+              devicePlatform: msg.pluginState?.metadata?.devicePlatform as string | undefined,
+              deviceSystemInfo: msg.pluginState?.metadata?.deviceSystemInfo as
+                | Record<string, string>
+                | undefined,
+            };
+          }
+        },
+        { role: 'tool' },
+      );
+    } catch (error) {
+      log('computeDeviceContext error: %O', error);
+    }
+
+    return undefined;
   }
 
   /**
@@ -905,8 +1460,8 @@ export class AgentRuntimeService {
     // Interrupted
     if (state.status === 'interrupted') return false;
 
-    // Reached maximum steps
-    if (state.maxSteps && state.stepCount >= state.maxSteps) return false;
+    // maxSteps is handled by runtime.step() which sets forceFinish → status:'done'
+    // No redundant check here — trust the runtime state machine
 
     // Exceeded cost limit
     if (state.costLimit && state.cost?.total >= state.costLimit.maxTotalCost) {
@@ -998,7 +1553,7 @@ export class AgentRuntimeService {
       onStepComplete?: (stepIndex: number, state: AgentState) => void;
     },
   ): Promise<AgentState> {
-    const { maxSteps = 9999, onStepComplete, initialContext } = options ?? {};
+    const { maxSteps = 999, onStepComplete, initialContext } = options ?? {};
 
     log('[%s] Starting sync execution (maxSteps: %d)', operationId, maxSteps);
 
@@ -1043,7 +1598,7 @@ export class AgentRuntimeService {
       }
 
       // Execute one step
-      log('[%s] Executing step %d', operationId, stepIndex);
+      log('[%s][%d] Start executing...', operationId, stepIndex);
       const result = await this.executeStep({
         context,
         operationId,
@@ -1068,20 +1623,11 @@ export class AgentRuntimeService {
 
     if (stepIndex >= maxSteps) {
       log('[%s] Sync execution stopped: reached maxSteps (%d)', operationId, maxSteps);
-      // If stopped due to executeSync's maxSteps limit, need to manually call onComplete
+      // If stopped due to executeSync's maxSteps limit, need to manually dispatch onComplete hooks
       // Note: If stopped due to state.maxSteps being reached, onComplete has already been called in executeStep
-      const callbacks = this.getStepCallbacks(operationId);
-      if (callbacks?.onComplete && state.status !== 'done' && state.status !== 'error') {
-        try {
-          await callbacks.onComplete({
-            finalState: state,
-            operationId,
-            reason: 'max_steps',
-          });
-          this.unregisterStepCallbacks(operationId);
-        } catch (callbackError) {
-          log('[%s] onComplete callback error in executeSync: %O', operationId, callbackError);
-        }
+      if (state.status !== 'done' && state.status !== 'error') {
+        await this.completionLifecycle.emitSignalEvents(operationId, state, 'max_steps');
+        await this.completionLifecycle.dispatchHooks(operationId, state, 'max_steps');
       }
     }
 

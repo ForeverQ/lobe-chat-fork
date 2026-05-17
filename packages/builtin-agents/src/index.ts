@@ -3,6 +3,8 @@ import { GROUP_AGENT_BUILDER } from './agents/group-agent-builder';
 import { GROUP_SUPERVISOR } from './agents/group-supervisor';
 import { INBOX } from './agents/inbox';
 import { PAGE_AGENT } from './agents/page-agent';
+import { TASK_AGENT } from './agents/task-agent';
+import { WEB_ONBOARDING } from './agents/web-onboarding';
 import type { BuiltinAgentDefinition, BuiltinAgentSlug, RuntimeContext } from './types';
 import { BUILTIN_AGENT_SLUGS } from './types';
 
@@ -14,6 +16,8 @@ export { GROUP_AGENT_BUILDER } from './agents/group-agent-builder';
 export { GROUP_SUPERVISOR } from './agents/group-supervisor';
 export { INBOX } from './agents/inbox';
 export { PAGE_AGENT } from './agents/page-agent';
+export { TASK_AGENT } from './agents/task-agent';
+export { WEB_ONBOARDING } from './agents/web-onboarding';
 
 /**
  * All builtin agents indexed by slug
@@ -24,6 +28,8 @@ export const BUILTIN_AGENTS: Record<BuiltinAgentSlug, BuiltinAgentDefinition> = 
   [BUILTIN_AGENT_SLUGS.groupSupervisor]: GROUP_SUPERVISOR,
   [BUILTIN_AGENT_SLUGS.inbox]: INBOX,
   [BUILTIN_AGENT_SLUGS.pageAgent]: PAGE_AGENT,
+  [BUILTIN_AGENT_SLUGS.taskAgent]: TASK_AGENT,
+  [BUILTIN_AGENT_SLUGS.webOnboarding]: WEB_ONBOARDING,
 };
 
 /**

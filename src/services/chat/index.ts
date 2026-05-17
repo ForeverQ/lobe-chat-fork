@@ -1,37 +1,33 @@
 import { AgentBuilderIdentifier } from '@lobechat/builtin-tool-agent-builder';
-import { KLAVIS_SERVER_TYPES, LOBEHUB_SKILL_PROVIDERS } from '@lobechat/const';
-import type { OfficialToolItem } from '@lobechat/context-engine';
 import {
-  type FetchSSEOptions,
-  fetchSSE,
-  getMessageError,
-  standardizeAnimationStyle,
-} from '@lobechat/fetch-sse';
-import { AgentRuntimeError, type ChatCompletionErrorPayload } from '@lobechat/model-runtime';
-import {
-  ChatErrorType,
-  type RuntimeInitialContext,
-  type RuntimeStepContext,
-  type TracePayload,
-  TraceTagMap,
-  type UIChatMessage,
+  KLAVIS_SERVER_TYPES,
+  LOBEHUB_SKILL_PROVIDERS,
+  REQUEST_AGENT_ID_HEADER,
+  REQUEST_TOPIC_ID_HEADER,
+  REQUEST_TRIGGER_HEADER,
+} from '@lobechat/const';
+import { type OfficialToolItem } from '@lobechat/context-engine';
+import { type FetchSSEOptions } from '@lobechat/fetch-sse';
+import { fetchSSE, standardizeAnimationStyle } from '@lobechat/fetch-sse';
+import type { ChatCompletionErrorPayload } from '@lobechat/model-runtime';
+import { AgentRuntimeError, responsesAPIModels } from '@lobechat/model-runtime';
+import type {
+  RuntimeInitialContext,
+  RuntimeStepContext,
+  TracePayload,
+  UIChatMessage,
 } from '@lobechat/types';
-import {
-  type PluginRequestPayload,
-  createHeadersWithPluginSettings,
-} from '@lobehub/chat-plugin-sdk';
+import { ChatErrorType, TraceTagMap } from '@lobechat/types';
 import { merge } from 'es-toolkit/compat';
 import { ModelProvider } from 'model-bank';
 
 import { DEFAULT_AGENT_CONFIG } from '@/const/settings';
 import { getSearchConfig } from '@/helpers/getSearchConfig';
-import { createAgentToolsEngine } from '@/helpers/toolEngineering';
 import { getAgentStoreState } from '@/store/agent';
 import {
   agentByIdSelectors,
   agentChatConfigSelectors,
   agentSelectors,
-  chatConfigByIdSelectors,
 } from '@/store/agent/selectors';
 import { aiProviderSelectors, getAiInfraStoreState } from '@/store/aiInfra';
 import { getChatStoreState } from '@/store/chat';
@@ -40,7 +36,6 @@ import {
   builtinToolSelectors,
   klavisStoreSelectors,
   lobehubSkillStoreSelectors,
-  pluginSelectors,
 } from '@/store/tool/selectors';
 import { getUserStoreState, useUserStore } from '@/store/user';
 import {
@@ -48,15 +43,15 @@ import {
   userGeneralSettingsSelectors,
   userProfileSelectors,
 } from '@/store/user/selectors';
-import type { ChatStreamPayload, OpenAIChatMessage } from '@/types/openai/chat';
+import { type ChatStreamPayload, type OpenAIChatMessage } from '@/types/openai/chat';
 import { createErrorResponse } from '@/utils/errorResponse';
-import { createTraceHeader, getTraceId } from '@/utils/trace';
+import { createTraceHeader } from '@/utils/trace';
 
 import { createHeaderWithAuth } from '../_auth';
 import { API_ENDPOINTS } from '../_url';
 import { findDeploymentName, isEnableFetchOnClient, resolveRuntimeProvider } from './helper';
+import { type ResolvedAgentConfig } from './mecha';
 import {
-  type ResolvedAgentConfig,
   contextEngineering,
   getTargetAgentId,
   initializeWithClientStore,
@@ -64,13 +59,23 @@ import {
 } from './mecha';
 import { type FetchOptions } from './types';
 
+const defaultProvider = ModelProvider.OpenAI;
+const providersWithDeploymentName = new Set<string>([
+  ModelProvider.Azure,
+  ModelProvider.AzureAI,
+  ModelProvider.KimiCodingPlan,
+  ModelProvider.Qwen,
+  ModelProvider.Spark,
+  ModelProvider.Volcengine,
+  ModelProvider.VolcengineCodingPlan,
+]);
 interface GetChatCompletionPayload extends Partial<Omit<ChatStreamPayload, 'messages'>> {
   agentId?: string;
   groupId?: string;
   messages: UIChatMessage[];
   /**
    * Pre-resolved agent config from AgentRuntime layer.
-   * Required to ensure config consistency and proper isSubTask filtering.
+   * Required to ensure config consistency and proper isSubAgent filtering.
    */
   resolvedAgentConfig: ResolvedAgentConfig;
   topicId?: string;
@@ -100,6 +105,7 @@ interface CreateAssistantMessageStream extends FetchSSEOptions {
   historySummary?: string;
   /** Initial context for page editor (captured at operation start) */
   initialContext?: RuntimeInitialContext;
+  metadata?: FetchOptions['metadata'];
   params: GetChatCompletionPayload;
   /** Step context for page editor (updated each step) */
   stepContext?: RuntimeStepContext;
@@ -107,6 +113,17 @@ interface CreateAssistantMessageStream extends FetchSSEOptions {
 }
 
 class ChatService {
+  private resolveAgentDocumentsTargetId = (
+    targetAgentId: string,
+    enabledToolIds: string[] = [],
+  ): string | undefined => {
+    if (enabledToolIds.includes(AgentBuilderIdentifier)) {
+      return getChatStoreState().activeAgentId || targetAgentId || undefined;
+    }
+
+    return targetAgentId || undefined;
+  };
+
   createAssistantMessage = async (
     {
       messages,
@@ -129,29 +146,33 @@ class ChatService {
 
     // =================== 1. use pre-resolved agent config =================== //
     // Config is resolved in AgentRuntime layer (internal_createAgentState)
-    // which handles isSubTask filtering and other runtime modifications
+    // which handles isSubAgent filtering, disableTools, and tools generation
 
     const targetAgentId = getTargetAgentId(agentId);
 
-    const { agentConfig, chatConfig, plugins: pluginIds } = resolvedAgentConfig;
+    // Tools are pre-generated in internal_createAgentState and passed via resolvedAgentConfig
+    // This avoids duplicate toolsEngine creation and ensures disableTools is properly handled
+    const {
+      agentConfig,
+      chatConfig,
+      enabledManifests = [],
+      enabledToolIds = [],
+      plugins,
+      tools,
+    } = resolvedAgentConfig;
 
     // Get search config with agentId for agent-specific settings
     const searchConfig = getSearchConfig(payload.model, payload.provider!, targetAgentId);
 
-    const toolsEngine = createAgentToolsEngine({
-      model: payload.model,
-      provider: payload.provider!,
-    });
-
-    const { tools, enabledToolIds, enabledManifests } = toolsEngine.generateToolsDetailed({
-      model: payload.model,
-      provider: payload.provider!,
-      toolIds: pluginIds,
-    });
-
     // =================== 1.1 process user memories =================== //
 
-    const enableUserMemories = settingsSelectors.memoryEnabled(getUserStoreState());
+    const userLevelMemoryEnabled = settingsSelectors.memoryEnabled(getUserStoreState());
+    // Agent-level memory toggle takes priority over user-level setting,
+    // matching the logic in useMemoryEnabled hook
+    const enableUserMemories = chatConfig.memory?.enabled ?? userLevelMemoryEnabled;
+    const userMemorySettings = settingsSelectors.currentMemorySettings(getUserStoreState());
+    const effectiveMemoryEffort =
+      chatConfig.memory?.effort ?? userMemorySettings.effort ?? 'medium';
 
     // =================== 1.2 build agent builder context =================== //
 
@@ -159,17 +180,31 @@ class ChatService {
     // Note: When Agent Builder is active, we need to get the context of the agent being edited,
     // which is stored in chatStore.activeAgentId, not the targetAgentId (which is the Agent Builder itself)
     const isAgentBuilderEnabled = enabledToolIds.includes(AgentBuilderIdentifier);
+    const documentsAgentId = this.resolveAgentDocumentsTargetId(targetAgentId, enabledToolIds);
     let agentBuilderContext;
+    let agentDocuments = documentsAgentId
+      ? agentSelectors.getAgentDocumentsById(documentsAgentId)(getAgentStoreState())
+      : undefined;
+
+    if (documentsAgentId && agentDocuments === undefined) {
+      try {
+        agentDocuments = await getAgentStoreState().ensureAgentDocuments(documentsAgentId);
+      } catch (error) {
+        // Agent documents are optional on the client; keep generation working if hydration fails.
+        console.error('[ChatService] Failed to ensure agent documents:', error);
+      }
+    }
 
     if (isAgentBuilderEnabled) {
       const activeAgentId = getChatStoreState().activeAgentId || '';
       const baseContext =
         agentByIdSelectors.getAgentBuilderContextById(activeAgentId)(getAgentStoreState());
+      const activeAgentConfig =
+        agentSelectors.getAgentConfigById(activeAgentId)(getAgentStoreState());
 
       // Build official tools list (builtin tools + Klavis tools)
       const toolState = getToolStoreState();
-      const enabledPlugins =
-        agentSelectors.getAgentConfigById(activeAgentId)(getAgentStoreState()).plugins || [];
+      const enabledPlugins = activeAgentConfig?.plugins || [];
 
       const officialTools: OfficialToolItem[] = [];
 
@@ -245,25 +280,30 @@ class ChatService {
     // Note: agentConfig.systemRole is already resolved by resolveAgentConfig for builtin agents
     const modelMessages = await contextEngineering({
       agentBuilderContext,
+      agentDocuments,
       agentId: targetAgentId,
-      enableHistoryCount:
-        chatConfigByIdSelectors.getEnableHistoryCountById(targetAgentId)(getAgentStoreState()),
+      // Use raw chatConfig values, not selectors with business logic that may force false
+      enableHistoryCount: chatConfig.enableHistoryCount,
       enableUserMemories,
       groupId,
-      historyCount:
-        chatConfigByIdSelectors.getHistoryCountById(targetAgentId)(getAgentStoreState()) + 2,
+      // historyCount is number of history messages; add 1 for current user message
+      historyCount: (chatConfig.historyCount ?? 20) + 1,
       // Page editor context from agent runtime
       initialContext: options?.initialContext,
       inputTemplate: chatConfig.inputTemplate,
       manifests: enabledManifests,
       messages,
       model: payload.model,
+      plugins,
       provider: payload.provider!,
       sessionId: options?.trace?.sessionId,
       stepContext: options?.stepContext,
       systemRole: agentConfig.systemRole,
       tools: enabledToolIds,
       topicId,
+      memoryContext: {
+        effort: effectiveMemoryEffort,
+      },
     });
 
     // ============  3. process extend params   ============ //
@@ -295,6 +335,7 @@ class ChatService {
     onMessageHandle,
     onErrorHandle,
     onFinish,
+    metadata,
     trace,
     historySummary,
     initialContext,
@@ -307,6 +348,7 @@ class ChatService {
       onErrorHandle,
       onFinish,
       onMessageHandle,
+      metadata,
       signal: abortController?.signal,
       stepContext,
       trace: this.mapTrace(trace, TraceTagMap.Chat),
@@ -314,24 +356,23 @@ class ChatService {
   };
 
   getChatCompletion = async (params: Partial<ChatStreamPayload>, options?: FetchOptions) => {
-    const { agentId, signal, responseAnimation, topicId } = options ?? {};
+    const { agentId, metadata, signal, responseAnimation, topicId } = options ?? {};
+    const requestTrigger = metadata?.trigger;
 
     const { provider = ModelProvider.OpenAI, ...res } = params;
 
     // =================== process model =================== //
     // ===================================================== //
     let model = res.model || DEFAULT_AGENT_CONFIG.model;
+    const deploymentName = providersWithDeploymentName.has(provider)
+      ? findDeploymentName(model, provider)
+      : undefined;
+    const shouldUseDeploymentField =
+      (provider === ModelProvider.Azure && responsesAPIModels.has(model)) ||
+      provider === ModelProvider.Spark;
 
-    // if the provider is Azure, get the deployment name as the request model
-    const providersWithDeploymentName = [
-      ModelProvider.Azure,
-      ModelProvider.Volcengine,
-      ModelProvider.AzureAI,
-      ModelProvider.Qwen,
-    ] as string[];
-
-    if (providersWithDeploymentName.includes(provider)) {
-      model = findDeploymentName(model, provider);
+    if (!shouldUseDeploymentField && deploymentName) {
+      model = deploymentName;
     }
 
     // When user explicitly disables Responses API, set apiMode to 'chatCompletion'
@@ -347,6 +388,8 @@ class ChatService {
     const chatConfig = agentChatConfigSelectors.currentChatConfig(getAgentStoreState());
 
     delete (res as any).scope;
+    // Fork flow stores market metadata in agent.params; must not reach OpenAI-compatible / Responses API
+    delete (res as any).forkedFromIdentifier;
 
     const payload = merge(
       {
@@ -354,7 +397,14 @@ class ChatService {
         stream: chatConfig.enableStreaming !== false, // Default to true if not set
         ...DEFAULT_AGENT_CONFIG.params,
       },
-      { ...res, apiMode, model },
+      {
+        ...res,
+        apiMode,
+        ...(shouldUseDeploymentField &&
+          deploymentName &&
+          deploymentName !== model && { deploymentName }),
+        model,
+      },
     );
 
     // Convert null to undefined for model params to prevent sending null values to API
@@ -368,7 +418,7 @@ class ChatService {
     /**
      * Use browser agent runtime
      */
-    let enableFetchOnClient = isEnableFetchOnClient(provider);
+    const enableFetchOnClient = isEnableFetchOnClient(provider);
 
     let fetcher: typeof fetch | undefined = undefined;
 
@@ -404,8 +454,9 @@ class ChatService {
       headers: {
         'Content-Type': 'application/json',
         ...traceHeader,
-        ...(agentId && { 'x-agent-id': agentId }),
-        ...(topicId && { 'x-topic-id': topicId }),
+        ...(agentId && { [REQUEST_AGENT_ID_HEADER]: agentId }),
+        ...(requestTrigger && { [REQUEST_TRIGGER_HEADER]: requestTrigger }),
+        ...(topicId && { [REQUEST_TOPIC_ID_HEADER]: topicId }),
       },
       provider,
     });
@@ -425,50 +476,22 @@ class ChatService {
 
     return fetchSSE(API_ENDPOINTS.chat(provider), {
       body: JSON.stringify(payload),
-      fetcher: fetcher,
+      fetcher,
       headers,
       method: 'POST',
       onAbort: options?.onAbort,
       onErrorHandle: options?.onErrorHandle,
       onFinish: options?.onFinish,
       onMessageHandle: options?.onMessageHandle,
+      requestContext: {
+        apiMode,
+        fetchOnClient: enableFetchOnClient,
+        model,
+        provider,
+      },
       responseAnimation: mergedResponseAnimation,
       signal,
     });
-  };
-
-  /**
-   * run the plugin api to get result
-   * @param params
-   * @param options
-   */
-  runPluginApi = async (params: PluginRequestPayload, options?: FetchOptions) => {
-    const s = getToolStoreState();
-
-    const settings = pluginSelectors.getPluginSettingsById(params.identifier)(s);
-    const manifest = pluginSelectors.getToolManifestById(params.identifier)(s);
-
-    const traceHeader = createTraceHeader(this.mapTrace(options?.trace, TraceTagMap.ToolCalling));
-
-    const headers = await createHeaderWithAuth({
-      headers: { ...createHeadersWithPluginSettings(settings), ...traceHeader },
-    });
-
-    const gatewayURL = manifest?.gateway ?? API_ENDPOINTS.gateway;
-
-    const res = await fetch(gatewayURL, {
-      body: JSON.stringify({ ...params, manifest }),
-      headers,
-      method: 'POST',
-      signal: options?.signal,
-    });
-
-    if (!res.ok) {
-      throw await getMessageError(res);
-    }
-
-    const text = await res.text();
-    return { text, traceId: getTraceId(res) };
   };
 
   fetchPresetTaskResult = async ({

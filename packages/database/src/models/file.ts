@@ -1,20 +1,21 @@
-import { FilesTabs, QueryFileListParams, SortType } from '@lobechat/types';
+import type { QueryFileListParams } from '@lobechat/types';
+import { FilesTabs, SortType } from '@lobechat/types';
 import { and, asc, count, desc, eq, ilike, inArray, like, notExists, or, sum } from 'drizzle-orm';
 import type { PgTransaction } from 'drizzle-orm/pg-core';
 
+import type { FileItem, NewFile, NewGlobalFile } from '../schemas';
 import {
-  FileItem,
-  NewFile,
-  NewGlobalFile,
+  asyncTasks,
   chunks,
   documentChunks,
+  documents,
   embeddings,
   fileChunks,
   files,
   globalFiles,
   knowledgeBaseFiles,
 } from '../schemas';
-import { LobeChatDatabase, Transaction } from '../type';
+import type { LobeChatDatabase, Transaction } from '../type';
 
 export class FileModel {
   private readonly userId: string;
@@ -50,14 +51,17 @@ export class FileModel {
   ): Promise<{ id: string }> => {
     const executeInTransaction = async (tx: Transaction): Promise<FileItem> => {
       if (insertToGlobalFiles) {
-        await tx.insert(globalFiles).values({
-          creator: this.userId,
-          fileType: params.fileType,
-          hashId: params.fileHash!,
-          metadata: params.metadata,
-          size: params.size,
-          url: params.url,
-        });
+        await tx
+          .insert(globalFiles)
+          .values({
+            creator: this.userId,
+            fileType: params.fileType,
+            hashId: params.fileHash!,
+            metadata: params.metadata,
+            size: params.size,
+            url: params.url,
+          })
+          .onConflictDoNothing();
       }
 
       const result = (await tx
@@ -88,6 +92,13 @@ export class FileModel {
     return this.db.insert(globalFiles).values(file).returning();
   };
 
+  updateGlobalFile = async (
+    hashId: string,
+    data: Partial<Pick<NewGlobalFile, 'metadata' | 'url'>>,
+  ) => {
+    return this.db.update(globalFiles).set(data).where(eq(globalFiles.hashId, hashId));
+  };
+
   checkHash = async (hash: string) => {
     const item = await this.db.query.globalFiles.findFirst({
       where: eq(globalFiles.hashId, hash),
@@ -109,18 +120,43 @@ export class FileModel {
       const file = await this.findById(id, tx);
       if (!file) return;
 
-      const fileHash = file.fileHash!;
+      const fileHash = file.fileHash;
 
-      // 2. Delete related chunks
+      // 1. Delete related chunks
       await this.deleteFileChunks(tx as any, [id]);
 
-      // 3. Delete file record
+      // 2. Delete mirror documents whose source is this file. Without this,
+      // documents.fileId would be set null by FK and leave orphan rows behind
+      // (still indexed by BM25, still occupying KB slots).
+      await tx
+        .delete(documents)
+        .where(
+          and(
+            eq(documents.fileId, id),
+            eq(documents.userId, this.userId),
+            eq(documents.sourceType, 'file'),
+          ),
+        );
+
+      // 3. Delete the chunk/embedding asyncTasks tied to this file. files.chunkTaskId
+      // and embeddingTaskId are `set null` on the asyncTasks side, so without this
+      // the task rows would dangle in the DB forever.
+      const taskIds = [file.chunkTaskId, file.embeddingTaskId].filter((taskId): taskId is string =>
+        Boolean(taskId),
+      );
+      if (taskIds.length > 0) {
+        await tx.delete(asyncTasks).where(inArray(asyncTasks.id, taskIds));
+      }
+
+      // 4. Delete file record
       await tx.delete(files).where(and(eq(files.id, id), eq(files.userId, this.userId)));
+
+      if (!fileHash) return;
 
       const result = await tx
         .select({ count: count() })
         .from(files)
-        .where(and(eq(files.fileHash, fileHash)));
+        .where(eq(files.fileHash, fileHash));
 
       const fileCount = result[0].count;
 
@@ -140,8 +176,9 @@ export class FileModel {
     return this.db.delete(globalFiles).where(eq(globalFiles.hashId, hashId));
   };
 
-  countUsage = async () => {
-    const result = await this.db
+  countUsage = async (trx?: Transaction) => {
+    const db = trx ?? this.db;
+    const result = await db
       .select({
         totalSize: sum(files.size),
       })
@@ -168,11 +205,31 @@ export class FileModel {
       // 2. Delete related chunks
       await this.deleteFileChunks(trx as any, ids);
 
-      // 3. Delete file records
+      // 3. Delete mirror documents (sourceType='file') so they don't linger as
+      // orphans with fileId set to null after the file row is removed.
+      await trx
+        .delete(documents)
+        .where(
+          and(
+            inArray(documents.fileId, ids),
+            eq(documents.userId, this.userId),
+            eq(documents.sourceType, 'file'),
+          ),
+        );
+
+      // 4. Delete chunk/embedding asyncTasks attached to these files.
+      const taskIds = fileList
+        .flatMap((file) => [file.chunkTaskId, file.embeddingTaskId])
+        .filter((taskId): taskId is string => Boolean(taskId));
+      if (taskIds.length > 0) {
+        await trx.delete(asyncTasks).where(inArray(asyncTasks.id, taskIds));
+      }
+
+      // 5. Delete file records
       await trx.delete(files).where(and(inArray(files.id, ids), eq(files.userId, this.userId)));
 
-      // If global files don't need to be deleted, return directly
-      if (!removeGlobalFile || hashList.length === 0) return fileList;
+      // If global files don't need to be deleted, no storage object should be removed.
+      if (!removeGlobalFile || hashList.length === 0) return [];
 
       // 4. Find hashes that are no longer referenced
       const remainingFiles = await trx
@@ -188,13 +245,15 @@ export class FileModel {
       // Find hashes to delete (those no longer used by any file)
       const hashesToDelete = hashList.filter((hash) => !usedHashes.has(hash));
 
-      if (hashesToDelete.length === 0) return fileList;
+      if (hashesToDelete.length === 0) return [];
 
       // 5. Delete global files that are no longer referenced
       await trx.delete(globalFiles).where(inArray(globalFiles.hashId, hashesToDelete));
 
-      // Return the list of deleted files
-      return fileList;
+      const hashesToDeleteSet = new Set(hashesToDelete);
+
+      // Return only files whose backing global object became unreferenced.
+      return fileList.filter((file) => file.fileHash && hashesToDeleteSet.has(file.fileHash));
     });
   };
 
@@ -381,31 +440,11 @@ export class FileModel {
         const batchChunkIds = chunkIds.slice(startIdx, startIdx + BATCH_SIZE);
         if (batchChunkIds.length === 0) continue;
 
-        // Process each batch in the correct deletion order, failures do not block the flow
+        // Process each batch in the correct deletion order.
         const batchPromise = (async () => {
-          // 1. Delete embeddings (top-level, has foreign key dependencies)
-          try {
-            await trx.delete(embeddings).where(inArray(embeddings.chunkId, batchChunkIds));
-          } catch (e) {
-            // Silent handling, does not block deletion process
-            console.warn('Failed to delete embeddings:', e);
-          }
-
-          // 2. Delete documentChunks association (if exists)
-          try {
-            await trx.delete(documentChunks).where(inArray(documentChunks.chunkId, batchChunkIds));
-          } catch (e) {
-            // Silent handling, does not block deletion process
-            console.warn('Failed to delete documentChunks:', e);
-          }
-
-          // 3. Delete chunks (core data)
-          try {
-            await trx.delete(chunks).where(inArray(chunks.id, batchChunkIds));
-          } catch (e) {
-            // Silent handling, does not block deletion process
-            console.warn('Failed to delete chunks:', e);
-          }
+          await trx.delete(embeddings).where(inArray(embeddings.chunkId, batchChunkIds));
+          await trx.delete(documentChunks).where(inArray(documentChunks.chunkId, batchChunkIds));
+          await trx.delete(chunks).where(inArray(chunks.id, batchChunkIds));
         })();
 
         batchPromises.push(batchPromise);
@@ -416,12 +455,7 @@ export class FileModel {
     }
 
     // 4. Finally delete fileChunks association table records
-    try {
-      await trx.delete(fileChunks).where(inArray(fileChunks.fileId, fileIds));
-    } catch (e) {
-      // Silent handling, does not block deletion process
-      console.warn('Failed to delete fileChunks:', e);
-    }
+    await trx.delete(fileChunks).where(inArray(fileChunks.fileId, fileIds));
 
     return chunkIds;
   };

@@ -1,51 +1,62 @@
 import type { GenerateObjectSchema } from '@lobechat/model-runtime';
-import { ActivityTypeEnum, LayersEnum, TypesEnum } from '@lobechat/types';
-import { type JSONSchema7 } from 'json-schema';
+import type { LayersEnum } from '@lobechat/types';
+import { ActivityTypeEnum, TypesEnum } from '@lobechat/types';
+import type { JSONSchema7 } from 'json-schema';
+import { z } from 'zod';
 
-export interface WithActivity {
-  associatedLocations?: {
-    address?: string;
-    extra?: string | null;
-    name?: string;
-    tags?: string[];
-    type?: string;
-  }[];
-  associatedObjects?: {
-    extra?: string | null;
-    name?: string;
-    type?: string;
-  }[];
-  associatedSubjects?: {
-    extra?: string | null;
-    name?: string;
-    type?: string;
-  }[];
-  endsAt?: string;
-  feedback?: string;
-  metadata?: Record<string, unknown>;
-  narrative: string;
-  notes?: string;
-  startsAt?: string;
-  status?: string;
-  tags?: string[];
-  timezone?: string;
-  type: ActivityTypeEnum | string;
-}
+import { MemoryTypeSchema } from './common';
 
-export interface ActivityMemoryItem {
-  details: string;
-  memoryCategory: string;
-  memoryLayer: LayersEnum.Activity;
+const ActivityAssociatedLocationSchema = z.object({
+  address: z.string().optional().nullable(),
+  extra: z.string().nullable().optional(),
+  name: z.string().optional(),
+  tags: z.array(z.string()).optional().nullable(),
+  type: z.string().optional(),
+});
+
+const ActivityAssociationSchema = z.object({
+  extra: z.string().nullable().optional(),
+  name: z.string(),
+  type: z.string().optional(),
+});
+
+export const WithActivitySchema = z.object({
+  associatedLocations: z.array(ActivityAssociatedLocationSchema).optional().nullable(),
+  associatedObjects: z.array(ActivityAssociationSchema).optional().nullable(),
+  associatedSubjects: z.array(ActivityAssociationSchema).optional().nullable(),
+  endsAt: z.string().optional().nullable(),
+  feedback: z.string().optional().nullable(),
+  metadata: z.record(z.unknown()).optional().nullable(),
+  narrative: z.string(),
+  notes: z.string().optional().nullable(),
+  startsAt: z.string().optional().nullable(),
+  status: z.string().optional().nullable(),
+  tags: z.array(z.string()).optional().nullable(),
+  timezone: z.string().optional().nullable(),
+  type: z.union([z.nativeEnum(ActivityTypeEnum), z.string()]).optional(),
+});
+
+export const ActivityMemoryItemSchema = z.object({
+  details: z.string(),
+  memoryCategory: z.string(),
+  memoryType: MemoryTypeSchema,
+  sourceIds: z.array(z.string()).optional().nullable(),
+  summary: z.string(),
+  tags: z.array(z.string()),
+  title: z.string(),
+  withActivity: WithActivitySchema,
+});
+
+export const ActivityMemoriesSchema = z.object({
+  memories: z.array(ActivityMemoryItemSchema),
+});
+
+export type WithActivity = z.infer<typeof WithActivitySchema>;
+export type ActivityMemoryItem = z.infer<typeof ActivityMemoryItemSchema> & {
+  memoryLayer?: LayersEnum.Activity;
   memoryType: TypesEnum.Activity;
-  summary: string;
-  tags: string[];
-  title: string;
-  withActivity: WithActivity;
-}
-
-export interface ActivityMemory {
-  memories: ActivityMemoryItem[];
-}
+};
+export type ActivityMemory = z.infer<typeof ActivityMemoriesSchema>;
 
 export const ActivityMemorySchema: GenerateObjectSchema = {
   description:
@@ -67,6 +78,7 @@ export const ActivityMemorySchema: GenerateObjectSchema = {
                 'Talked through renewal scope, confirmed timeline flexibility, and captured follow-ups.',
               memoryCategory: 'work',
               memoryType: 'activity',
+              sourceIds: ['message-3'],
               summary: 'Client Q2 renewal meeting with Alice (ACME)',
               tags: ['meeting', 'client', 'renewal'],
               title: 'ACME Q2 renewal meeting',
@@ -77,9 +89,7 @@ export const ActivityMemorySchema: GenerateObjectSchema = {
                     name: 'ACME HQ',
                   },
                 ],
-                associatedSubjects: [
-                  { name: 'Alice Smith', type: 'person' },
-                ],
+                associatedSubjects: [{ name: 'Alice Smith', type: 'person' }],
                 endsAt: '2024-05-03T15:00:00-04:00',
                 feedback: 'Positive momentum; Alice felt heard and open to renewal.',
                 narrative:
@@ -104,9 +114,7 @@ export const ActivityMemorySchema: GenerateObjectSchema = {
                     name: 'City Neurology Clinic',
                   },
                 ],
-                associatedSubjects: [
-                  { name: 'Dr. Kim', type: 'person' },
-                ],
+                associatedSubjects: [{ name: 'Dr. Kim', type: 'person' }],
                 feedback: 'Felt reassured; plan seems manageable.',
                 narrative:
                   'User saw Dr. Kim to review migraine frequency; decided to track sleep, hydration, and start a low-dose preventive.',
@@ -135,6 +143,12 @@ export const ActivityMemorySchema: GenerateObjectSchema = {
             summary: {
               description: 'Concise overview of this activity.',
               type: 'string',
+            },
+            sourceIds: {
+              description:
+                'Stable source message ids that support this activity. Use [] when unavailable.',
+              items: { type: 'string' },
+              type: ['array', 'null'],
             },
             tags: {
               description: 'Model-generated tags summarizing key facets of the activity.',
@@ -175,7 +189,8 @@ export const ActivityMemorySchema: GenerateObjectSchema = {
                         type: ['array', 'null'],
                       },
                       type: {
-                        description: 'Place type or category (office, clinic, restaurant, virtual).',
+                        description:
+                          'Place type or category (office, clinic, restaurant, virtual).',
                         type: 'string',
                       },
                     },
@@ -195,7 +210,8 @@ export const ActivityMemorySchema: GenerateObjectSchema = {
                         type: ['string', 'null'],
                       },
                       name: {
-                        description: 'Name or label of the object (e.g., “MacBook”, “flight UA123”).',
+                        description:
+                          'Name or label of the object (e.g., “MacBook”, “flight UA123”).',
                         type: 'string',
                       },
                       type: {
@@ -290,7 +306,21 @@ export const ActivityMemorySchema: GenerateObjectSchema = {
                   type: 'string',
                 },
               },
-              required: ['type', 'narrative', 'feedback', 'notes', 'associatedLocations', 'associatedSubjects', 'associatedObjects', 'startsAt', 'endsAt', 'status', 'tags', 'timezone', 'metadata'],
+              required: [
+                'type',
+                'narrative',
+                'feedback',
+                'notes',
+                'associatedLocations',
+                'associatedSubjects',
+                'associatedObjects',
+                'startsAt',
+                'endsAt',
+                'status',
+                'tags',
+                'timezone',
+                'metadata',
+              ],
               type: 'object',
             },
           },
@@ -300,6 +330,7 @@ export const ActivityMemorySchema: GenerateObjectSchema = {
             'details',
             'memoryType',
             'memoryCategory',
+            'sourceIds',
             'tags',
             'withActivity',
           ],
