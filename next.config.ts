@@ -1,8 +1,10 @@
+import { type NextConfig } from 'next';
+
 import { defineConfig } from './src/libs/next/config/define-config';
 
 const isVercel = !!process.env.VERCEL_ENV;
 
-const vercelConfig = {
+const vercelConfig: Pick<NextConfig, 'experimental' | 'outputFileTracingExcludes' | 'webpack'> = {
   // Vercel serverless optimization: exclude musl binaries from all routes
   // Vercel uses Amazon Linux (glibc), not Alpine Linux (musl)
   // This saves ~45MB (29MB canvas-musl + 16MB sharp-musl) per serverless function
@@ -22,6 +24,13 @@ const vercelConfig = {
   // forked worker doubles memory pressure while bringing little speedup on 2 cores.
   experimental: {
     webpackBuildWorker: false,
+  },
+  webpack(config) {
+    // Vercel Hobby builders have limited RAM; serializing webpack's filesystem
+    // cache can OOM this app near the end of `next build`.
+    config.cache = false;
+
+    return config;
   },
 };
 const nextConfig = defineConfig({
