@@ -380,13 +380,23 @@ export function defineConfig(config: CustomNextConfig) {
       },
       ...config.turbopack,
     },
+    webpack(webpackConfig, options) {
+      webpackConfig.module.rules.push({
+        test: /\.md$/i,
+        type: 'asset/source',
+      });
+
+      webpackConfig.resolve.alias = {
+        ...webpackConfig.resolve.alias,
+        'zlib-sync': false,
+      };
+
+      return config.webpack ? config.webpack(webpackConfig, options) : webpackConfig;
+    },
 
     typescript: {
       ignoreBuildErrors: true,
     },
-    ...(config.webpack && {
-      webpack: config.webpack,
-    }),
   };
 
   return nextConfig;
