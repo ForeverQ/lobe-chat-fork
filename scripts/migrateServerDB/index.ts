@@ -20,14 +20,55 @@ dotenvExpand.expand(dotenv.config({ override: true, path: `.env.${env}.local` })
 
 const migrationsFolder = join(__dirname, '../../packages/database/migrations');
 
-const runMigrations = async () => {
+const transientMigrationErrorCodes = new Set(['40P01']);
+const maxMigrationAttempts = 3;
+
+const getPostgresErrorCode = (error: unknown): string | undefined => {
+  if (!error || typeof error !== 'object') return;
+
+  const errorWithCode = error as { cause?: unknown; code?: unknown };
+
+  if (typeof errorWithCode.code === 'string') return errorWithCode.code;
+
+  return getPostgresErrorCode(errorWithCode.cause);
+};
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const migrateDatabase = async () => {
   const { serverDB } = await import('../../packages/database/src/server');
 
-  const time = Date.now();
   if (process.env.DATABASE_DRIVER === 'node') {
     await nodeMigrate(serverDB, { migrationsFolder });
   } else {
     await neonMigrate(serverDB, { migrationsFolder });
+  }
+};
+
+const runMigrations = async () => {
+  const time = Date.now();
+
+  for (let attempt = 1; attempt <= maxMigrationAttempts; attempt++) {
+    try {
+      await migrateDatabase();
+      break;
+    } catch (error) {
+      const errorCode = getPostgresErrorCode(error);
+      const canRetry =
+        errorCode && transientMigrationErrorCodes.has(errorCode) && attempt < maxMigrationAttempts;
+
+      if (!canRetry) throw error;
+
+      const delay = attempt * 5000;
+      console.warn(
+        '⚠️ database migration hit transient PostgreSQL error %s, retrying in %s ms (%s/%s)',
+        errorCode,
+        delay,
+        attempt,
+        maxMigrationAttempts,
+      );
+      await wait(delay);
+    }
   }
 
   console.log('✅ database migration pass. use: %s ms', Date.now() - time);
