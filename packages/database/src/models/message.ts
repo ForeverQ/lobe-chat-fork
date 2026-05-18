@@ -67,6 +67,7 @@ import type { LobeChatDatabase, Transaction } from '../type';
 import { sanitizeBm25Query } from '../utils/bm25';
 import { genEndDateWhere, genRangeWhere, genStartDateWhere, genWhere } from '../utils/genWhere';
 import { idGenerator } from '../utils/idGenerator';
+import { buildAnyContainsCondition, databaseSupportsBm25Search } from '../utils/searchMode';
 
 /**
  * Options for querying messages with relations
@@ -1086,11 +1087,13 @@ export class MessageModel {
   queryByKeyword = async (keyword: string) => {
     if (!keyword.trim()) return [];
 
-    const bm25Query = sanitizeBm25Query(keyword);
+    const searchCondition = databaseSupportsBm25Search(this.db)
+      ? sql`${messages.content} @@@ ${sanitizeBm25Query(keyword)}`
+      : buildAnyContainsCondition([messages.content], keyword);
     const result = await this.db
       .select()
       .from(messages)
-      .where(and(eq(messages.userId, this.userId), sql`${messages.content} @@@ ${bm25Query}`))
+      .where(and(eq(messages.userId, this.userId), searchCondition))
       .orderBy(desc(messages.createdAt));
 
     return result as DBMessageItem[];

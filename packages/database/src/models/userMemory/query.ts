@@ -37,6 +37,7 @@ import {
 } from '../../schemas';
 import type { LobeChatDatabase } from '../../type';
 import { normalizeBm25MatchQuery, SAFE_BM25_QUERY_OPTIONS } from '../../utils/bm25';
+import { buildSearchCondition, databaseSupportsBm25Search } from '../../utils/searchMode';
 
 const DEFAULT_HYBRID_SEARCH_LIMIT = 5;
 const HYBRID_SEARCH_OVERFETCH_MULTIPLIER = 3;
@@ -45,6 +46,7 @@ const DEFAULT_TEMPORAL_WINDOW_MS = 1000 * 60 * 60 * 24 * 7;
 const SHORT_TERM_ASSOCIATION_WINDOW_MS = 1000 * 60 * 60 * 24 * 3;
 
 export interface Bm25MatchFieldGroup {
+  fallbackColumns?: unknown[];
   fields: string[];
   keyColumn: AnyColumn;
 }
@@ -68,6 +70,12 @@ export const buildBm25MatchCondition = (
 
   return conditions.length > 0 ? or(...conditions) : undefined;
 };
+
+const toSearchFieldGroups = (groups: Bm25MatchFieldGroup[]) =>
+  groups.map((group) => ({
+    ...group,
+    fallbackColumns: group.fallbackColumns ?? [],
+  }));
 
 export type SearchLayerKey =
   | 'activities'
@@ -2085,6 +2093,7 @@ export class UserMemoryQueryModel {
     params: SearchMemoryParams,
   ) {
     const normalizedQuery = typeof query === 'string' ? query.trim() : '';
+    const supportsBm25 = databaseSupportsBm25Search(this.db);
     const conditions = [
       eq(userMemoriesActivities.userId, this.userId),
       eq(userMemories.userId, this.userId),
@@ -2104,13 +2113,27 @@ export class UserMemoryQueryModel {
         params.timeRange,
       ),
       normalizedQuery
-        ? buildBm25MatchCondition(normalizedQuery, [
-            { fields: ['title', 'summary', 'details'], keyColumn: userMemories.id },
-            {
-              fields: ['narrative', 'notes', 'feedback'],
-              keyColumn: userMemoriesActivities.id,
-            },
-          ])
+        ? buildSearchCondition({
+            bm25MatchQuery: normalizeBm25MatchQuery(normalizedQuery, SAFE_BM25_QUERY_OPTIONS),
+            groups: toSearchFieldGroups([
+              {
+                fallbackColumns: [userMemories.title, userMemories.summary, userMemories.details],
+                fields: ['title', 'summary', 'details'],
+                keyColumn: userMemories.id,
+              },
+              {
+                fallbackColumns: [
+                  userMemoriesActivities.narrative,
+                  userMemoriesActivities.notes,
+                  userMemoriesActivities.feedback,
+                ],
+                fields: ['narrative', 'notes', 'feedback'],
+                keyColumn: userMemoriesActivities.id,
+              },
+            ]),
+            normalizedQuery,
+            supportsBm25,
+          })
         : undefined,
       this.buildExactTagFilterCondition(userMemoriesActivities.tags, userMemories.tags, params),
     ].filter((condition): condition is SQL => Boolean(condition));
@@ -2153,6 +2176,7 @@ export class UserMemoryQueryModel {
     params: SearchMemoryParams,
   ) {
     const normalizedQuery = typeof query === 'string' ? query.trim() : '';
+    const supportsBm25 = databaseSupportsBm25Search(this.db);
     const conditions = [
       eq(userMemoriesContexts.userId, this.userId),
       eq(userMemories.userId, this.userId),
@@ -2169,13 +2193,27 @@ export class UserMemoryQueryModel {
         params.timeRange,
       ),
       normalizedQuery
-        ? buildBm25MatchCondition(normalizedQuery, [
-            { fields: ['title', 'summary', 'details'], keyColumn: userMemories.id },
-            {
-              fields: ['title', 'description', 'current_status'],
-              keyColumn: userMemoriesContexts.id,
-            },
-          ])
+        ? buildSearchCondition({
+            bm25MatchQuery: normalizeBm25MatchQuery(normalizedQuery, SAFE_BM25_QUERY_OPTIONS),
+            groups: toSearchFieldGroups([
+              {
+                fallbackColumns: [userMemories.title, userMemories.summary, userMemories.details],
+                fields: ['title', 'summary', 'details'],
+                keyColumn: userMemories.id,
+              },
+              {
+                fallbackColumns: [
+                  userMemoriesContexts.title,
+                  userMemoriesContexts.description,
+                  userMemoriesContexts.currentStatus,
+                ],
+                fields: ['title', 'description', 'current_status'],
+                keyColumn: userMemoriesContexts.id,
+              },
+            ]),
+            normalizedQuery,
+            supportsBm25,
+          })
         : undefined,
       this.buildExactTagFilterCondition(userMemoriesContexts.tags, userMemories.tags, params),
     ].filter((condition): condition is SQL => Boolean(condition));
@@ -2257,6 +2295,7 @@ export class UserMemoryQueryModel {
     params: SearchMemoryParams,
   ) {
     const normalizedQuery = typeof query === 'string' ? query.trim() : '';
+    const supportsBm25 = databaseSupportsBm25Search(this.db);
     const conditions = [
       eq(userMemoriesExperiences.userId, this.userId),
       eq(userMemories.userId, this.userId),
@@ -2273,13 +2312,29 @@ export class UserMemoryQueryModel {
         params.timeRange,
       ),
       normalizedQuery
-        ? buildBm25MatchCondition(normalizedQuery, [
-            { fields: ['title', 'summary', 'details'], keyColumn: userMemories.id },
-            {
-              fields: ['situation', 'key_learning', 'action', 'reasoning', 'possible_outcome'],
-              keyColumn: userMemoriesExperiences.id,
-            },
-          ])
+        ? buildSearchCondition({
+            bm25MatchQuery: normalizeBm25MatchQuery(normalizedQuery, SAFE_BM25_QUERY_OPTIONS),
+            groups: toSearchFieldGroups([
+              {
+                fallbackColumns: [userMemories.title, userMemories.summary, userMemories.details],
+                fields: ['title', 'summary', 'details'],
+                keyColumn: userMemories.id,
+              },
+              {
+                fallbackColumns: [
+                  userMemoriesExperiences.situation,
+                  userMemoriesExperiences.keyLearning,
+                  userMemoriesExperiences.action,
+                  userMemoriesExperiences.reasoning,
+                  userMemoriesExperiences.possibleOutcome,
+                ],
+                fields: ['situation', 'key_learning', 'action', 'reasoning', 'possible_outcome'],
+                keyColumn: userMemoriesExperiences.id,
+              },
+            ]),
+            normalizedQuery,
+            supportsBm25,
+          })
         : undefined,
       this.buildExactTagFilterCondition(userMemoriesExperiences.tags, userMemories.tags, params),
     ].filter((condition): condition is SQL => Boolean(condition));
@@ -2318,6 +2373,7 @@ export class UserMemoryQueryModel {
     params: SearchMemoryParams,
   ) {
     const normalizedQuery = typeof query === 'string' ? query.trim() : '';
+    const supportsBm25 = databaseSupportsBm25Search(this.db);
     const conditions = [
       eq(userMemoriesPreferences.userId, this.userId),
       eq(userMemories.userId, this.userId),
@@ -2334,13 +2390,26 @@ export class UserMemoryQueryModel {
         params.timeRange,
       ),
       normalizedQuery
-        ? buildBm25MatchCondition(normalizedQuery, [
-            { fields: ['title', 'summary', 'details'], keyColumn: userMemories.id },
-            {
-              fields: ['conclusion_directives', 'suggestions'],
-              keyColumn: userMemoriesPreferences.id,
-            },
-          ])
+        ? buildSearchCondition({
+            bm25MatchQuery: normalizeBm25MatchQuery(normalizedQuery, SAFE_BM25_QUERY_OPTIONS),
+            groups: toSearchFieldGroups([
+              {
+                fallbackColumns: [userMemories.title, userMemories.summary, userMemories.details],
+                fields: ['title', 'summary', 'details'],
+                keyColumn: userMemories.id,
+              },
+              {
+                fallbackColumns: [
+                  userMemoriesPreferences.conclusionDirectives,
+                  userMemoriesPreferences.suggestions,
+                ],
+                fields: ['conclusion_directives', 'suggestions'],
+                keyColumn: userMemoriesPreferences.id,
+              },
+            ]),
+            normalizedQuery,
+            supportsBm25,
+          })
         : undefined,
       this.buildExactTagFilterCondition(userMemoriesPreferences.tags, userMemories.tags, params),
     ].filter((condition): condition is SQL => Boolean(condition));
@@ -2376,6 +2445,7 @@ export class UserMemoryQueryModel {
     params: SearchMemoryParams,
   ) {
     const normalizedQuery = typeof query === 'string' ? query.trim() : '';
+    const supportsBm25 = databaseSupportsBm25Search(this.db);
     const conditions = [
       eq(userMemoriesIdentities.userId, this.userId),
       eq(userMemories.userId, this.userId),
@@ -2396,10 +2466,23 @@ export class UserMemoryQueryModel {
         params.timeRange,
       ),
       normalizedQuery
-        ? buildBm25MatchCondition(normalizedQuery, [
-            { fields: ['title', 'summary', 'details'], keyColumn: userMemories.id },
-            { fields: ['description', 'role'], keyColumn: userMemoriesIdentities.id },
-          ])
+        ? buildSearchCondition({
+            bm25MatchQuery: normalizeBm25MatchQuery(normalizedQuery, SAFE_BM25_QUERY_OPTIONS),
+            groups: toSearchFieldGroups([
+              {
+                fallbackColumns: [userMemories.title, userMemories.summary, userMemories.details],
+                fields: ['title', 'summary', 'details'],
+                keyColumn: userMemories.id,
+              },
+              {
+                fallbackColumns: [userMemoriesIdentities.description, userMemoriesIdentities.role],
+                fields: ['description', 'role'],
+                keyColumn: userMemoriesIdentities.id,
+              },
+            ]),
+            normalizedQuery,
+            supportsBm25,
+          })
         : undefined,
       this.buildExactTagFilterCondition(userMemoriesIdentities.tags, userMemories.tags, params),
     ].filter((condition): condition is SQL => Boolean(condition));

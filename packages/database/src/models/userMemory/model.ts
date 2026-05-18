@@ -48,6 +48,11 @@ import {
 import type { LobeChatDatabase } from '../../type';
 import { normalizeBm25MatchQuery, SAFE_BM25_QUERY_OPTIONS } from '../../utils/bm25';
 import { selectNonVectorColumns } from '../../utils/columns';
+import {
+  buildContainsCondition,
+  buildSearchCondition,
+  databaseSupportsBm25Search,
+} from '../../utils/searchMode';
 import { TopicModel } from '../topic';
 import type { UserMemoryHybridSearchAggregatedResult } from './query';
 import { UserMemoryQueryModel } from './query';
@@ -81,59 +86,6 @@ const coerceDate = (input: unknown): Date | null => {
   }
 
   return null;
-};
-
-const escapeLikePattern = (value: string) =>
-  value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
-
-const buildContainsCondition = (column: unknown, q?: string) => {
-  const normalized = q?.trim();
-  if (!normalized) return undefined;
-
-  return sql<boolean>`${column} ILIKE ${`%${escapeLikePattern(normalized)}%`} ESCAPE '\\'`;
-};
-
-const isPGliteDatabase = (db: LobeChatDatabase) => {
-  const client = (
-    db as unknown as {
-      $client?: {
-        dataDir?: unknown;
-        waitReady?: unknown;
-      };
-    }
-  ).$client;
-
-  return 'waitReady' in (client ?? {}) && 'dataDir' in (client ?? {});
-};
-
-const buildTextSearchCondition = (params: {
-  bm25MatchQuery: string;
-  groups: { fallbackColumns: unknown[]; fields: string[]; keyColumn: AnyColumn }[];
-  normalizedQuery: string;
-  supportsBm25: boolean;
-}) => {
-  const { bm25MatchQuery, groups, normalizedQuery, supportsBm25 } = params;
-
-  if (!normalizedQuery) return undefined;
-
-  const conditions = supportsBm25
-    ? groups
-        .map(({ fields, keyColumn }) => {
-          if (fields.length === 0) return undefined;
-
-          const matchQueries = fields.map(
-            (field) => sql`paradedb.match(${field}, ${bm25MatchQuery}, conjunction_mode => true)`,
-          );
-
-          return sql<boolean>`${keyColumn} @@@ paradedb.boolean(should => ARRAY[${sql.join(matchQueries, sql`, `)}])`;
-        })
-        .filter((condition): condition is SQL<boolean> => Boolean(condition))
-    : groups
-        .flatMap(({ fallbackColumns }) => fallbackColumns)
-        .map((column) => buildContainsCondition(column, normalizedQuery))
-        .filter((condition): condition is SQL<boolean> => Boolean(condition));
-
-  return conditions.length > 0 ? or(...conditions) : undefined;
 };
 
 const parseAssociationExtra = (
@@ -973,7 +925,7 @@ export class UserMemoryModel {
     // Removal condition.
     // Remove this fallback once the test database can execute the same BM25
     // operators/indexes as the production PostgreSQL environment.
-    const supportsBm25 = !isPGliteDatabase(this.db);
+    const supportsBm25 = databaseSupportsBm25Search(this.db);
 
     const conditions: Array<SQL | undefined> = [
       eq(userMemories.userId, this.userId),
@@ -1040,7 +992,7 @@ export class UserMemoryModel {
 
         const contextFilters: Array<SQL | undefined> = [
           whereClause,
-          buildTextSearchCondition({
+          buildSearchCondition({
             bm25MatchQuery,
             groups: [
               {
@@ -1147,7 +1099,7 @@ export class UserMemoryModel {
 
         const activityFilters: Array<SQL | undefined> = [
           whereClause,
-          buildTextSearchCondition({
+          buildSearchCondition({
             bm25MatchQuery,
             groups: [
               {
@@ -1262,7 +1214,7 @@ export class UserMemoryModel {
 
         const experienceFilters: Array<SQL | undefined> = [
           whereClause,
-          buildTextSearchCondition({
+          buildSearchCondition({
             bm25MatchQuery,
             groups: [
               {
@@ -1357,7 +1309,7 @@ export class UserMemoryModel {
 
         const identityFilters: Array<SQL | undefined> = [
           whereClause,
-          buildTextSearchCondition({
+          buildSearchCondition({
             bm25MatchQuery,
             groups: [
               {
@@ -1455,7 +1407,7 @@ export class UserMemoryModel {
 
         const preferenceFilters: Array<SQL | undefined> = [
           whereClause,
-          buildTextSearchCondition({
+          buildSearchCondition({
             bm25MatchQuery,
             groups: [
               {

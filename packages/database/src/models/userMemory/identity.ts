@@ -7,6 +7,7 @@ import type { NewUserMemoryIdentity, UserMemoryIdentity } from '../../schemas';
 import { userMemories, userMemoriesIdentities } from '../../schemas';
 import type { LobeChatDatabase } from '../../type';
 import { normalizeBm25MatchQuery, SAFE_BM25_QUERY_OPTIONS } from '../../utils/bm25';
+import { buildSearchCondition, databaseSupportsBm25Search } from '../../utils/searchMode';
 
 export class UserMemoryIdentityModel {
   private userId: string;
@@ -78,13 +79,30 @@ export class UserMemoryIdentityModel {
     const bm25MatchQuery = normalizedQuery
       ? normalizeBm25MatchQuery(normalizedQuery, SAFE_BM25_QUERY_OPTIONS)
       : '';
+    const supportsBm25 = databaseSupportsBm25Search(this.db);
 
     // Build WHERE conditions
     const conditions: Array<SQL | undefined> = [
       eq(userMemoriesIdentities.userId, this.userId),
       // Full-text search across title, description, role
       normalizedQuery
-        ? sql`(${userMemories.id} @@@ paradedb.boolean(should => ARRAY[paradedb.match('title', ${bm25MatchQuery}, conjunction_mode => true)]) OR ${userMemoriesIdentities.id} @@@ paradedb.boolean(should => ARRAY[paradedb.match('description', ${bm25MatchQuery}, conjunction_mode => true), paradedb.match('role', ${bm25MatchQuery}, conjunction_mode => true)]))`
+        ? buildSearchCondition({
+            bm25MatchQuery,
+            groups: [
+              {
+                fallbackColumns: [userMemories.title],
+                fields: ['title'],
+                keyColumn: userMemories.id,
+              },
+              {
+                fallbackColumns: [userMemoriesIdentities.description, userMemoriesIdentities.role],
+                fields: ['description', 'role'],
+                keyColumn: userMemoriesIdentities.id,
+              },
+            ],
+            normalizedQuery,
+            supportsBm25,
+          })
         : undefined,
       types && types.length > 0 ? inArray(userMemoriesIdentities.type, types) : undefined,
       // Default to 'self' relationship if not specified

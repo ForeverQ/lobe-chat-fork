@@ -17,6 +17,7 @@ import type { LobeChatDatabase } from '../type';
 import { sanitizeBm25Query } from '../utils/bm25';
 import { genEndDateWhere, genRangeWhere, genStartDateWhere, genWhere } from '../utils/genWhere';
 import { idGenerator } from '../utils/idGenerator';
+import { buildAnyContainsCondition, databaseSupportsBm25Search } from '../utils/searchMode';
 
 export class SessionModel {
   private userId: string;
@@ -638,17 +639,16 @@ export class SessionModel {
     const offset = current * pageSize;
 
     try {
-      const bm25Query = sanitizeBm25Query(keyword);
+      const searchCondition = databaseSupportsBm25Search(this.db)
+        ? sql`(${agents.title} @@@ ${sanitizeBm25Query(keyword)} OR ${agents.description} @@@ ${sanitizeBm25Query(keyword)})`
+        : buildAnyContainsCondition([agents.title, agents.description], keyword);
 
       const results = await this.db.query.agents.findMany({
         limit: pageSize,
         offset,
         // Keep deterministic ordering for keyword search results
         orderBy: [asc(agents.id)],
-        where: and(
-          eq(agents.userId, this.userId),
-          sql`(${agents.title} @@@ ${bm25Query} OR ${agents.description} @@@ ${bm25Query})`,
-        ),
+        where: and(eq(agents.userId, this.userId), searchCondition),
         with: { agentsToSessions: { columns: {}, with: { session: true } } },
       });
 

@@ -49,7 +49,19 @@ This article will detail how to deploy the server database version of LobeHub on
       ```shell
       # Serverless Postgres DB Url
       DATABASE_URL=
+
+      # Required for Neon free/serverless Postgres when pg_search is unavailable.
+      # This skips ParadeDB BM25 migrations and uses basic PostgreSQL search fallback.
+      DATABASE_SEARCH_MODE=basic
       ```
+
+      <Callout type={'warning'}>
+        Some Serverless Postgres providers, including current Neon environments, may reject the
+        `pg_search` extension used by ParadeDB BM25 search. Set `DATABASE_SEARCH_MODE=basic` when
+        using Neon if deployment fails with `extension "pg_search" is deprecated and no longer
+        allowed`. Basic mode keeps keyword search available with lower ranking quality and weaker
+        performance on large datasets.
+      </Callout>
 
       An example of filling in Vercel is as follows:
 

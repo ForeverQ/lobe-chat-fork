@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, or, sql } from 'drizzle-orm';
 
 import {
   agents,
@@ -14,6 +14,11 @@ import {
 } from '../../schemas';
 import type { LobeChatDatabase } from '../../type';
 import { sanitizeBm25Query } from '../../utils/bm25';
+import {
+  buildAnyContainsCondition,
+  buildJsonbTextContainsCondition,
+  databaseSupportsBm25Search,
+} from '../../utils/searchMode';
 
 export type SearchResultType =
   | 'page'
@@ -192,6 +197,10 @@ export class SearchRepo {
     this.db = db;
   }
 
+  private get supportsBm25() {
+    return databaseSupportsBm25Search(this.db);
+  }
+
   /**
    * Search across agents, topics, files, and pages
    */
@@ -359,6 +368,10 @@ export class SearchRepo {
     }));
   }
 
+  private mapBasicRelevance<T>(rows: T[]): (T & { relevance: number })[] {
+    return rows.map((row) => ({ ...row, relevance: 3 }));
+  }
+
   /**
    * Truncate content with ellipsis
    */
@@ -372,6 +385,51 @@ export class SearchRepo {
    * Search agents by title, description, slug, tags (BM25)
    */
   private async searchAgents(query: string, limit: number): Promise<AgentSearchResult[]> {
+    if (!this.supportsBm25) {
+      const textCondition = buildAnyContainsCondition(
+        [agents.title, agents.description, agents.slug, agents.systemRole],
+        query,
+      );
+      const tagsCondition = buildJsonbTextContainsCondition(agents.tags, query);
+      const searchCondition =
+        textCondition && tagsCondition
+          ? or(textCondition, tagsCondition)
+          : (textCondition ?? tagsCondition);
+
+      const rows = await this.db
+        .select({
+          avatar: agents.avatar,
+          backgroundColor: agents.backgroundColor,
+          createdAt: agents.createdAt,
+          description: agents.description,
+          id: agents.id,
+          slug: agents.slug,
+          tags: agents.tags,
+          title: agents.title,
+          updatedAt: agents.updatedAt,
+        })
+        .from(agents)
+        .where(
+          and(eq(agents.userId, this.userId), searchCondition),
+        )
+        .orderBy(desc(agents.updatedAt))
+        .limit(limit);
+
+      return this.mapBasicRelevance(rows).map((row) => ({
+        avatar: row.avatar,
+        backgroundColor: row.backgroundColor,
+        createdAt: row.createdAt,
+        description: row.description,
+        id: row.id,
+        relevance: row.relevance,
+        slug: row.slug,
+        tags: (row.tags as string[]) || [],
+        title: row.title || '',
+        type: 'agent' as const,
+        updatedAt: row.updatedAt,
+      }));
+    }
+
     const bm25Query = sanitizeBm25Query(query);
 
     const rows = await this.db
@@ -420,6 +478,55 @@ export class SearchRepo {
     limit: number,
     agentId?: string,
   ): Promise<TopicSearchResult[]> {
+    if (!this.supportsBm25) {
+      const rows = await this.db
+        .select({
+          agentAvatar: agents.avatar,
+          agentBackgroundColor: agents.backgroundColor,
+          agentId: topics.agentId,
+          agentMatchedId: agents.id,
+          agentTitle: agents.title,
+          content: topics.content,
+          createdAt: topics.createdAt,
+          favorite: topics.favorite,
+          id: topics.id,
+          sessionId: topics.sessionId,
+          title: topics.title,
+          updatedAt: topics.updatedAt,
+        })
+        .from(topics)
+        .leftJoin(agents, and(eq(topics.agentId, agents.id), eq(agents.userId, this.userId)))
+        .where(
+          and(
+            eq(topics.userId, this.userId),
+            agentId ? eq(topics.agentId, agentId) : undefined,
+            buildAnyContainsCondition([topics.title, topics.content, topics.description], query),
+          ),
+        )
+        .orderBy(desc(topics.updatedAt))
+        .limit(limit);
+
+      return this.mapBasicRelevance(rows).map((row) => ({
+        agent: row.agentMatchedId
+          ? {
+              avatar: row.agentAvatar,
+              backgroundColor: row.agentBackgroundColor,
+              title: row.agentTitle,
+            }
+          : null,
+        agentId: row.agentId,
+        createdAt: row.createdAt,
+        description: this.truncate(row.content),
+        favorite: row.favorite,
+        id: row.id,
+        relevance: row.relevance,
+        sessionId: row.sessionId,
+        title: row.title || '',
+        type: 'topic' as const,
+        updatedAt: row.updatedAt,
+      }));
+    }
+
     const bm25Query = sanitizeBm25Query(query);
 
     const rows = await this.db
@@ -484,6 +591,48 @@ export class SearchRepo {
     limit: number,
     agentId?: string,
   ): Promise<MessageSearchResult[]> {
+    if (!this.supportsBm25) {
+      const rows = await this.db
+        .select({
+          agentId: messages.agentId,
+          agentTitle: agents.title,
+          content: messages.content,
+          createdAt: messages.createdAt,
+          id: messages.id,
+          model: messages.model,
+          role: messages.role,
+          topicId: messages.topicId,
+          updatedAt: messages.updatedAt,
+        })
+        .from(messages)
+        .leftJoin(agents, eq(messages.agentId, agents.id))
+        .where(
+          and(
+            eq(messages.userId, this.userId),
+            ne(messages.role, 'tool'),
+            agentId ? eq(messages.agentId, agentId) : undefined,
+            buildAnyContainsCondition([messages.content], query),
+          ),
+        )
+        .orderBy(desc(messages.updatedAt))
+        .limit(limit);
+
+      return this.mapBasicRelevance(rows).map((row) => ({
+        agentId: row.agentId,
+        content: row.content || '',
+        createdAt: row.createdAt,
+        description: row.agentTitle || 'General Chat',
+        id: row.id,
+        model: row.model,
+        relevance: row.relevance,
+        role: row.role,
+        title: this.truncate(row.content) || '',
+        topicId: row.topicId,
+        type: 'message' as const,
+        updatedAt: row.updatedAt,
+      }));
+    }
+
     const bm25Query = sanitizeBm25Query(query);
 
     const rows = await this.db
@@ -534,6 +683,48 @@ export class SearchRepo {
    * so partial searches like "component" won't match. Full words or prefixes work fine.
    */
   private async searchFiles(query: string, limit: number): Promise<FileSearchResult[]> {
+    if (!this.supportsBm25) {
+      const rows = await this.db
+        .select({
+          content: documents.content,
+          createdAt: files.createdAt,
+          fileType: files.fileType,
+          id: files.id,
+          knowledgeBaseId: knowledgeBaseFiles.knowledgeBaseId,
+          name: files.name,
+          size: files.size,
+          updatedAt: files.updatedAt,
+          url: files.url,
+        })
+        .from(files)
+        .leftJoin(documents, eq(files.id, documents.fileId))
+        .leftJoin(knowledgeBaseFiles, eq(files.id, knowledgeBaseFiles.fileId))
+        .where(
+          and(
+            eq(files.userId, this.userId),
+            ne(files.fileType, 'custom/document'),
+            buildAnyContainsCondition([files.name], query),
+          ),
+        )
+        .orderBy(desc(files.updatedAt))
+        .limit(limit);
+
+      return this.mapBasicRelevance(rows).map((row) => ({
+        createdAt: row.createdAt,
+        description: this.truncate(row.content),
+        fileType: row.fileType,
+        id: row.id,
+        knowledgeBaseId: row.knowledgeBaseId,
+        name: row.name,
+        relevance: row.relevance,
+        size: row.size,
+        title: row.name,
+        type: 'file' as const,
+        updatedAt: row.updatedAt,
+        url: row.url,
+      }));
+    }
+
     const bm25Query = sanitizeBm25Query(query);
 
     const rows = await this.db
@@ -582,6 +773,45 @@ export class SearchRepo {
    * Search folders (documents with file_type=DOCUMENT_FOLDER_TYPE) (BM25)
    */
   private async searchFolders(query: string, limit: number): Promise<FolderSearchResult[]> {
+    if (!this.supportsBm25) {
+      const rows = await this.db
+        .select({
+          createdAt: documents.createdAt,
+          description: documents.description,
+          filename: documents.filename,
+          id: documents.id,
+          knowledgeBaseId: documents.knowledgeBaseId,
+          slug: documents.slug,
+          title: documents.title,
+          updatedAt: documents.updatedAt,
+        })
+        .from(documents)
+        .where(
+          and(
+            eq(documents.userId, this.userId),
+            eq(documents.fileType, DOCUMENT_FOLDER_TYPE),
+            buildAnyContainsCondition([documents.title, documents.slug, documents.description], query),
+          ),
+        )
+        .orderBy(desc(documents.updatedAt))
+        .limit(limit);
+
+      return this.mapBasicRelevance(rows).map((row) => {
+        const title = row.title || row.filename || 'Untitled';
+        return {
+          createdAt: row.createdAt,
+          description: row.description,
+          id: row.id,
+          knowledgeBaseId: row.knowledgeBaseId,
+          relevance: row.relevance,
+          slug: row.slug,
+          title,
+          type: 'folder' as const,
+          updatedAt: row.updatedAt,
+        };
+      });
+    }
+
     const bm25Query = sanitizeBm25Query(query);
 
     const rows = await this.db
@@ -627,6 +857,40 @@ export class SearchRepo {
    * Search pages (documents with file_type='custom/document') (BM25)
    */
   private async searchPages(query: string, limit: number): Promise<PageSearchResult[]> {
+    if (!this.supportsBm25) {
+      const rows = await this.db
+        .select({
+          createdAt: documents.createdAt,
+          filename: documents.filename,
+          id: documents.id,
+          title: documents.title,
+          updatedAt: documents.updatedAt,
+        })
+        .from(documents)
+        .where(
+          and(
+            eq(documents.userId, this.userId),
+            eq(documents.fileType, 'custom/document'),
+            buildAnyContainsCondition([documents.title, documents.slug, documents.content], query),
+          ),
+        )
+        .orderBy(desc(documents.updatedAt))
+        .limit(limit);
+
+      return this.mapBasicRelevance(rows).map((row) => {
+        const title = row.title || row.filename || 'Untitled';
+        return {
+          createdAt: row.createdAt,
+          description: null,
+          id: row.id,
+          relevance: row.relevance,
+          title,
+          type: 'page' as const,
+          updatedAt: row.updatedAt,
+        };
+      });
+    }
+
     const bm25Query = sanitizeBm25Query(query);
 
     const rows = await this.db
@@ -676,6 +940,38 @@ export class SearchRepo {
     if (!query || query.trim() === '') return [];
     if (!knowledgeBaseIds || knowledgeBaseIds.length === 0) return [];
 
+    if (!this.supportsBm25) {
+      const rows = await this.db
+        .select({
+          content: documents.content,
+          filename: documents.filename,
+          id: documents.id,
+          knowledgeBaseId: documents.knowledgeBaseId,
+          title: documents.title,
+          updatedAt: documents.updatedAt,
+        })
+        .from(documents)
+        .where(
+          and(
+            eq(documents.userId, this.userId),
+            eq(documents.fileType, 'custom/document'),
+            inArray(documents.knowledgeBaseId, knowledgeBaseIds),
+            buildAnyContainsCondition([documents.title, documents.slug, documents.content], query),
+          ),
+        )
+        .orderBy(desc(documents.updatedAt))
+        .limit(limit);
+
+      return this.mapBasicRelevance(rows).map((row) => ({
+        documentId: row.id,
+        knowledgeBaseId: row.knowledgeBaseId ?? '',
+        relevance: row.relevance,
+        snippet: this.truncate(row.content, 300) ?? '',
+        title: row.title || row.filename || 'Untitled',
+        updatedAt: row.updatedAt,
+      }));
+    }
+
     const bm25Query = sanitizeBm25Query(query);
 
     const rows = await this.db
@@ -714,6 +1010,41 @@ export class SearchRepo {
    * Search memories by title, summary, details (BM25)
    */
   private async searchMemories(query: string, limit: number): Promise<MemorySearchResult[]> {
+    if (!this.supportsBm25) {
+      const rows = await this.db
+        .select({
+          createdAt: userMemories.createdAt,
+          id: userMemories.id,
+          memoryLayer: userMemories.memoryLayer,
+          summary: userMemories.summary,
+          title: userMemories.title,
+          updatedAt: userMemories.updatedAt,
+        })
+        .from(userMemories)
+        .where(
+          and(
+            eq(userMemories.userId, this.userId),
+            buildAnyContainsCondition(
+              [userMemories.title, userMemories.summary, userMemories.details],
+              query,
+            ),
+          ),
+        )
+        .orderBy(desc(userMemories.updatedAt))
+        .limit(limit);
+
+      return this.mapBasicRelevance(rows).map((row) => ({
+        createdAt: row.createdAt,
+        description: this.truncate(row.summary),
+        id: row.id,
+        memoryLayer: row.memoryLayer,
+        relevance: row.relevance,
+        title: row.title || 'Untitled Memory',
+        type: 'memory' as const,
+        updatedAt: row.updatedAt,
+      }));
+    }
+
     const bm25Query = sanitizeBm25Query(query);
 
     const rows = await this.db
@@ -752,6 +1083,40 @@ export class SearchRepo {
    * Search chat groups by title and description (BM25)
    */
   private async searchChatGroups(query: string, limit: number): Promise<ChatGroupSearchResult[]> {
+    if (!this.supportsBm25) {
+      const rows = await this.db
+        .select({
+          avatar: chatGroups.avatar,
+          backgroundColor: chatGroups.backgroundColor,
+          createdAt: chatGroups.createdAt,
+          description: chatGroups.description,
+          id: chatGroups.id,
+          title: chatGroups.title,
+          updatedAt: chatGroups.updatedAt,
+        })
+        .from(chatGroups)
+        .where(
+          and(
+            eq(chatGroups.userId, this.userId),
+            buildAnyContainsCondition([chatGroups.title, chatGroups.description], query),
+          ),
+        )
+        .orderBy(desc(chatGroups.updatedAt))
+        .limit(limit);
+
+      return this.mapBasicRelevance(rows).map((row) => ({
+        avatar: row.avatar,
+        backgroundColor: row.backgroundColor,
+        createdAt: row.createdAt,
+        description: row.description,
+        id: row.id,
+        relevance: row.relevance,
+        title: row.title || '',
+        type: 'chatGroup' as const,
+        updatedAt: row.updatedAt,
+      }));
+    }
+
     const bm25Query = sanitizeBm25Query(query);
 
     const rows = await this.db
@@ -795,6 +1160,38 @@ export class SearchRepo {
     query: string,
     limit: number,
   ): Promise<KnowledgeBaseSearchResult[]> {
+    if (!this.supportsBm25) {
+      const rows = await this.db
+        .select({
+          avatar: knowledgeBases.avatar,
+          createdAt: knowledgeBases.createdAt,
+          description: knowledgeBases.description,
+          id: knowledgeBases.id,
+          name: knowledgeBases.name,
+          updatedAt: knowledgeBases.updatedAt,
+        })
+        .from(knowledgeBases)
+        .where(
+          and(
+            eq(knowledgeBases.userId, this.userId),
+            buildAnyContainsCondition([knowledgeBases.name, knowledgeBases.description], query),
+          ),
+        )
+        .orderBy(desc(knowledgeBases.updatedAt))
+        .limit(limit);
+
+      return this.mapBasicRelevance(rows).map((row) => ({
+        avatar: row.avatar,
+        createdAt: row.createdAt,
+        description: row.description,
+        id: row.id,
+        relevance: row.relevance,
+        title: row.name,
+        type: 'knowledgeBase' as const,
+        updatedAt: row.updatedAt,
+      }));
+    }
+
     const bm25Query = sanitizeBm25Query(query);
 
     const rows = await this.db

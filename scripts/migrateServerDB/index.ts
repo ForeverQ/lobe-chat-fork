@@ -1,4 +1,6 @@
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import * as dotenv from 'dotenv';
 import dotenvExpand from 'dotenv-expand';
@@ -35,13 +37,41 @@ const getPostgresErrorCode = (error: unknown): string | undefined => {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const prepareMigrationsFolder = async () => {
+  const { BASIC_SEARCH_MIGRATION_TAGS, shouldUseBasicSearch } = await import(
+    '../../packages/database/src/utils/searchMode'
+  );
+
+  if (!shouldUseBasicSearch()) return migrationsFolder;
+
+  const temporaryFolder = await mkdtemp(join(tmpdir(), 'lobe-migrations-'));
+  await cp(migrationsFolder, temporaryFolder, { recursive: true });
+
+  for (const tag of BASIC_SEARCH_MIGRATION_TAGS) {
+    await rm(join(temporaryFolder, `${tag}.sql`), { force: true });
+  }
+
+  const journalPath = join(temporaryFolder, 'meta/_journal.json');
+  const journal = JSON.parse(await readFile(journalPath, 'utf8')) as {
+    entries: { tag: string }[];
+  };
+
+  journal.entries = journal.entries.filter((entry) => !BASIC_SEARCH_MIGRATION_TAGS.has(entry.tag));
+  await writeFile(journalPath, JSON.stringify(journal, null, 2));
+
+  console.info('ℹ️ basic database search enabled; skipped pg_search/BM25 migrations');
+
+  return temporaryFolder;
+};
+
 const migrateDatabase = async () => {
   const { serverDB } = await import('../../packages/database/src/server');
+  const resolvedMigrationsFolder = await prepareMigrationsFolder();
 
   if (process.env.DATABASE_DRIVER === 'node') {
-    await nodeMigrate(serverDB, { migrationsFolder });
+    await nodeMigrate(serverDB, { migrationsFolder: resolvedMigrationsFolder });
   } else {
-    await neonMigrate(serverDB, { migrationsFolder });
+    await neonMigrate(serverDB, { migrationsFolder: resolvedMigrationsFolder });
   }
 };
 

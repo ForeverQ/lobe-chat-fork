@@ -13,6 +13,7 @@ import type { LobeChatDatabase } from '../type';
 import { sanitizeBm25Query } from '../utils/bm25';
 import { genEndDateWhere, genRangeWhere, genStartDateWhere, genWhere } from '../utils/genWhere';
 import { idGenerator } from '../utils/idGenerator';
+import { buildAnyContainsCondition, databaseSupportsBm25Search } from '../utils/searchMode';
 
 type OnboardingSessionMetadataPatch = Partial<NonNullable<ChatTopicMetadata['onboardingSession']>>;
 type TopicMetadataPatch = Omit<Partial<ChatTopicMetadata>, 'onboardingSession'> & {
@@ -289,7 +290,8 @@ export class TopicModel {
   queryByKeyword = async (keyword: string, containerId?: string | null): Promise<TopicItem[]> => {
     if (!keyword.trim()) return [];
 
-    const bm25Query = sanitizeBm25Query(keyword);
+    const supportsBm25 = databaseSupportsBm25Search(this.db);
+    const bm25Query = supportsBm25 ? sanitizeBm25Query(keyword) : '';
 
     // Run title and message content searches in parallel
     const [topicsByTitle, topicIdsByMessages] = await Promise.all([
@@ -301,7 +303,9 @@ export class TopicModel {
           and(
             eq(topics.userId, this.userId),
             this.matchContainer(containerId),
-            sql`${topics.title} @@@ ${bm25Query}`,
+            supportsBm25
+              ? sql`${topics.title} @@@ ${bm25Query}`
+              : buildAnyContainsCondition([topics.title], keyword),
           ),
         )
         .orderBy(desc(topics.updatedAt)),
@@ -313,7 +317,9 @@ export class TopicModel {
         .where(
           and(
             eq(messages.userId, this.userId),
-            sql`${messages.content} @@@ ${bm25Query}`,
+            supportsBm25
+              ? sql`${messages.content} @@@ ${bm25Query}`
+              : buildAnyContainsCondition([messages.content], keyword),
             eq(topics.userId, this.userId),
             this.matchContainer(containerId),
           ),

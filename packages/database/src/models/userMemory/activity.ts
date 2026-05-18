@@ -6,6 +6,7 @@ import type { NewUserMemoryActivity, UserMemoryActivity } from '../../schemas';
 import { userMemories, userMemoriesActivities } from '../../schemas';
 import type { LobeChatDatabase } from '../../type';
 import { normalizeBm25MatchQuery, SAFE_BM25_QUERY_OPTIONS } from '../../utils/bm25';
+import { buildSearchCondition, databaseSupportsBm25Search } from '../../utils/searchMode';
 
 export class UserMemoryActivityModel {
   private userId: string;
@@ -72,11 +73,32 @@ export class UserMemoryActivityModel {
     const bm25MatchQuery = normalizedQuery
       ? normalizeBm25MatchQuery(normalizedQuery, SAFE_BM25_QUERY_OPTIONS)
       : '';
+    const supportsBm25 = databaseSupportsBm25Search(this.db);
 
     const conditions: Array<SQL | undefined> = [
       eq(userMemoriesActivities.userId, this.userId),
       normalizedQuery
-        ? sql`(${userMemories.id} @@@ paradedb.boolean(should => ARRAY[paradedb.match('title', ${bm25MatchQuery}, conjunction_mode => true)]) OR ${userMemoriesActivities.id} @@@ paradedb.boolean(should => ARRAY[paradedb.match('narrative', ${bm25MatchQuery}, conjunction_mode => true), paradedb.match('notes', ${bm25MatchQuery}, conjunction_mode => true), paradedb.match('feedback', ${bm25MatchQuery}, conjunction_mode => true)]))`
+        ? buildSearchCondition({
+            bm25MatchQuery,
+            groups: [
+              {
+                fallbackColumns: [userMemories.title],
+                fields: ['title'],
+                keyColumn: userMemories.id,
+              },
+              {
+                fallbackColumns: [
+                  userMemoriesActivities.narrative,
+                  userMemoriesActivities.notes,
+                  userMemoriesActivities.feedback,
+                ],
+                fields: ['narrative', 'notes', 'feedback'],
+                keyColumn: userMemoriesActivities.id,
+              },
+            ],
+            normalizedQuery,
+            supportsBm25,
+          })
         : undefined,
       types && types.length > 0 ? inArray(userMemoriesActivities.type, types) : undefined,
       status && status.length > 0 ? inArray(userMemoriesActivities.status, status) : undefined,

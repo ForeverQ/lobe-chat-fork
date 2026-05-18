@@ -16,6 +16,7 @@ import {
 } from '../../schemas';
 import { type LobeChatDatabase } from '../../type';
 import { sanitizeBm25Query } from '../../utils/bm25';
+import { buildAnyContainsCondition, databaseSupportsBm25Search } from '../../utils/searchMode';
 
 // Re-export types for backward compatibility
 export type {
@@ -203,7 +204,8 @@ export class HomeRepository {
   async searchAgents(keyword: string): Promise<SidebarAgentItem[]> {
     if (!keyword.trim()) return [];
 
-    const bm25Query = sanitizeBm25Query(keyword);
+    const supportsBm25 = databaseSupportsBm25Search(this.db);
+    const bm25Query = supportsBm25 ? sanitizeBm25Query(keyword) : '';
 
     // Run agent and chat group searches in parallel
     const [agentResults, chatGroupResults] = await Promise.all([
@@ -227,7 +229,9 @@ export class HomeRepository {
           and(
             eq(agents.userId, this.userId),
             not(eq(agents.virtual, true)),
-            sql`(${agents.title} @@@ ${bm25Query} OR ${agents.description} @@@ ${bm25Query})`,
+            supportsBm25
+              ? sql`(${agents.title} @@@ ${bm25Query} OR ${agents.description} @@@ ${bm25Query})`
+              : buildAnyContainsCondition([agents.title, agents.description], keyword),
           ),
         )
         .orderBy(desc(agents.updatedAt)),
@@ -246,7 +250,9 @@ export class HomeRepository {
         .where(
           and(
             eq(chatGroups.userId, this.userId),
-            sql`(${chatGroups.title} @@@ ${bm25Query} OR ${chatGroups.description} @@@ ${bm25Query})`,
+            supportsBm25
+              ? sql`(${chatGroups.title} @@@ ${bm25Query} OR ${chatGroups.description} @@@ ${bm25Query})`
+              : buildAnyContainsCondition([chatGroups.title, chatGroups.description], keyword),
           ),
         )
         .orderBy(desc(chatGroups.updatedAt)),

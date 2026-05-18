@@ -6,6 +6,7 @@ import type { NewUserMemoryExperience, UserMemoryExperience } from '../../schema
 import { userMemories, userMemoriesExperiences } from '../../schemas';
 import type { LobeChatDatabase } from '../../type';
 import { normalizeBm25MatchQuery, SAFE_BM25_QUERY_OPTIONS } from '../../utils/bm25';
+import { buildSearchCondition, databaseSupportsBm25Search } from '../../utils/searchMode';
 
 export class UserMemoryExperienceModel {
   private userId: string;
@@ -77,13 +78,34 @@ export class UserMemoryExperienceModel {
     const bm25MatchQuery = normalizedQuery
       ? normalizeBm25MatchQuery(normalizedQuery, SAFE_BM25_QUERY_OPTIONS)
       : '';
+    const supportsBm25 = databaseSupportsBm25Search(this.db);
 
     // Build WHERE conditions
     const conditions: Array<SQL | undefined> = [
       eq(userMemoriesExperiences.userId, this.userId),
       // Full-text search across title, situation, keyLearning, action
       normalizedQuery
-        ? sql`(${userMemories.id} @@@ paradedb.boolean(should => ARRAY[paradedb.match('title', ${bm25MatchQuery}, conjunction_mode => true)]) OR ${userMemoriesExperiences.id} @@@ paradedb.boolean(should => ARRAY[paradedb.match('situation', ${bm25MatchQuery}, conjunction_mode => true), paradedb.match('key_learning', ${bm25MatchQuery}, conjunction_mode => true), paradedb.match('action', ${bm25MatchQuery}, conjunction_mode => true)]))`
+        ? buildSearchCondition({
+            bm25MatchQuery,
+            groups: [
+              {
+                fallbackColumns: [userMemories.title],
+                fields: ['title'],
+                keyColumn: userMemories.id,
+              },
+              {
+                fallbackColumns: [
+                  userMemoriesExperiences.situation,
+                  userMemoriesExperiences.keyLearning,
+                  userMemoriesExperiences.action,
+                ],
+                fields: ['situation', 'key_learning', 'action'],
+                keyColumn: userMemoriesExperiences.id,
+              },
+            ],
+            normalizedQuery,
+            supportsBm25,
+          })
         : undefined,
       types && types.length > 0 ? inArray(userMemoriesExperiences.type, types) : undefined,
       tags && tags.length > 0

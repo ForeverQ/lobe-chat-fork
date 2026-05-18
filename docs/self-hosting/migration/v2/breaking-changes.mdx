@@ -78,4 +78,9 @@ LobeHub 2.0 recommends using **PostgreSQL 17** or higher.
 
 This is because LobeHub 2.0 uses the [pg\_search](https://github.com/paradedb/paradedb/tree/main/pg_search) extension for full-text search capabilities. If you use Serverless Postgres services like Neon, the pg\_search extension is only available on PostgreSQL 17.
 
+If your Serverless Postgres provider rejects `pg_search` during deployment, set
+`DATABASE_SEARCH_MODE=basic`. This skips the ParadeDB BM25 migrations and uses basic PostgreSQL
+keyword search fallback. Search remains available, but ranking quality and performance on large
+datasets are lower than the BM25 path.
+
 If you self-host your database with Docker, we recommend using the `paradedb/paradedb:latest-pg17` image.
