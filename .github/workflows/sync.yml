@@ -37,7 +37,7 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
 
-          git remote add upstream https://github.com/lobehub/lobe-chat.git
+          git remote add upstream https://github.com/lobehub/lobehub.git
           git fetch upstream canary
           git checkout next
 
