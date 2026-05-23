@@ -41,9 +41,7 @@ jobs:
           git fetch upstream canary
           git checkout next
 
-          if ! git merge --ff-only upstream/canary; then
-            git merge upstream/canary --no-edit
-          fi
+          git merge upstream/canary --no-edit
 
           git push origin next
 
