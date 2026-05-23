@@ -3,7 +3,6 @@ name: Upstream Sync
 permissions:
   contents: write
   issues: write
-  actions: write
 
 on:
   schedule:
@@ -17,32 +16,86 @@ jobs:
     if: ${{ github.event.repository.fork }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Clean issue notice
-        uses: actions-cool/issues-helper@v3
-        with:
-          actions: 'close-issues'
-          labels: '🚨 Sync Fail'
+        continue-on-error: true
+        run: |
+          gh issue list --label '🚨 Sync Fail' --state open --json number --jq '.[].number' | while read -r issue_number; do
+            if [ -n "$issue_number" ]; then
+              gh issue close "$issue_number" --comment 'Closing stale sync failure issue after new sync attempt.'
+            fi
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Sync upstream changes
         id: sync
-        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
-        with:
-          upstream_sync_repo: lobehub/lobehub
-          upstream_sync_branch: canary
-          target_sync_branch: next
-          target_repo_token: ${{ secrets.GITHUB_TOKEN }} # automatically generated, no need to set
-          test_mode: false
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream https://github.com/lobehub/lobe-chat.git
+          else
+            git remote add upstream https://github.com/lobehub/lobe-chat.git
+          fi
+
+          git fetch origin next
+          git fetch upstream canary
+          git checkout -B next origin/next
+
+          if ! git merge upstream/canary --no-edit; then
+            conflicted_files="$(git diff --name-only --diff-filter=U)"
+
+            if [ "$conflicted_files" = '.github/workflows/sync.yml' ]; then
+              echo 'Resolving sync workflow conflict by keeping the fork workflow.'
+              git checkout --ours .github/workflows/sync.yml
+              git add .github/workflows/sync.yml
+              git commit --no-edit
+            else
+              echo 'Merge conflict while syncing upstream/canary into next.'
+              echo 'Conflicted files:'
+              echo "$conflicted_files"
+
+              if [ -f .git/MERGE_HEAD ]; then
+                git merge --abort
+              fi
+              exit 1
+            fi
+          fi
+
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/next)" ]; then
+            echo 'No upstream changes to push.'
+          else
+            git push origin next
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Sync check
         if: failure()
-        uses: actions-cool/issues-helper@v3
-        with:
-          actions: 'create-issue'
-          title: '🚨 同步失败 | Sync Fail'
-          labels: '🚨 Sync Fail'
-          body: |
+        continue-on-error: true
+        run: |
+          gh label create '🚨 Sync Fail' --color FF4D4F --description 'Upstream sync workflow failure' || true
+          if gh issue create \
+            --title '🚨 同步失败 | Sync Fail' \
+            --label '🚨 Sync Fail' \
+            --body "$ISSUE_BODY"; then
+            exit 0
+          fi
+
+          echo 'Creating labeled issue failed; retrying without label.'
+          gh issue create \
+            --title '🚨 同步失败 | Sync Fail' \
+            --body "$ISSUE_BODY" || echo 'Unable to create sync failure issue.'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_BODY: |
             Due to a change in the workflow file of the [LobeChat][lobechat] upstream repository, GitHub has automatically suspended the scheduled automatic update. You need to manually sync your fork. Please refer to the detailed [Tutorial][tutorial-en-US] for instructions.
 
             由于 [LobeChat][lobechat] 上游仓库的 workflow 文件变更，导致 GitHub 自动暂停了本次自动更新，你需要手动 Sync Fork 一次，请查看 [详细教程][tutorial-zh-CN]
