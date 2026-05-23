@@ -37,13 +37,19 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
 
-          git remote add upstream https://github.com/lobehub/lobehub.git 2>/dev/null || git remote set-url upstream https://github.com/lobehub/lobehub.git
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream https://github.com/lobehub/lobehub.git
+          else
+            git remote add upstream https://github.com/lobehub/lobehub.git
+          fi
           git fetch upstream canary
           git checkout next
 
           if ! git merge upstream/canary --no-edit; then
             echo 'Merge conflict while syncing upstream/canary into next.'
-            git merge --abort || true
+            if [ -f .git/MERGE_HEAD ]; then
+              git merge --abort
+            fi
             exit 1
           fi
 
