@@ -35,6 +35,19 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 
     background: ${cssVar.colorFillSecondary};
   `,
+  countChip: css`
+    flex-shrink: 0;
+
+    padding-block: 1px;
+    padding-inline: 6px;
+    border-radius: 999px;
+
+    font-family: ${cssVar.fontFamilyCode};
+    font-size: 12px;
+    color: ${cssVar.colorTextSecondary};
+
+    background: ${cssVar.colorFillTertiary};
+  `,
   ring: css`
     transform: rotate(-90deg);
     flex-shrink: 0;
@@ -157,22 +170,33 @@ export const TaskInspector = memo<BuiltinInspectorProps<TaskInspectorArgs, TaskP
     const stats = useMemo(() => computeStats(items), [items]);
     const allDone = stats.total > 0 && stats.completed === stats.total;
 
-    // TaskCreate: chip always identifies the task being added, not the
-    // accumulated todo count. Drop the aggregate path entirely so the
-    // chip stays informative whether or not pluginState is populated yet.
+    // TaskCreate: chip identifies the task being added, not the accumulated
+    // count — keep `Creating task: <subject>` as the label so per-row signal
+    // stays sharp. The ProgressRing is rendered from the cumulative
+    // pluginState snapshot; the trailing `completed/total` chip makes the
+    // accumulation visible across rows (the ring alone stays empty while
+    // every new task is still `todo`, so total wouldn't otherwise show).
+    // Verb flips to past tense once the call finishes — the chip persists
+    // in chat history and "Creating task" frozen on a settled row reads as
+    // if it's still running (see ui.md principle 4).
     if (apiName === ClaudeCodeApiName.TaskCreate) {
       const subject = ((args || partialArgs) as TaskCreateArgs | undefined)?.subject;
-      const text = subject
-        ? `${t('builtins.lobe-claude-code.task.createLabel')}${subject}`
-        : t('builtins.lobe-claude-code.task.createLabel');
+      const inFlight = isArgumentsStreaming || isLoading;
+      const label = t(
+        inFlight
+          ? 'builtins.lobe-claude-code.task.create.loading'
+          : 'builtins.lobe-claude-code.task.create.completed',
+      );
+      const text = subject ? `${label}${subject}` : label;
       return (
-        <div
-          className={cx(
-            inspectorTextStyles.root,
-            (isArgumentsStreaming || isLoading) && shinyTextStyles.shinyText,
+        <div className={cx(inspectorTextStyles.root, inFlight && shinyTextStyles.shinyText)}>
+          <ProgressRing stats={stats} />
+          {stats.total > 0 && (
+            <span className={styles.countChip}>
+              {stats.completed}/{stats.total}
+            </span>
           )}
-        >
-          {text}
+          <span style={{ marginInlineStart: 6 }}>{text}</span>
         </div>
       );
     }
@@ -184,6 +208,9 @@ export const TaskInspector = memo<BuiltinInspectorProps<TaskInspectorArgs, TaskP
     // is the resume-gap fallback when the snapshot hasn't been built yet.
     // Cryptic `#N` is intentionally NOT user-facing — fall back to the bare
     // verb if subject is missing (rare; happens before first pluginState).
+    // Leading slot is the same ProgressRing as TaskCreate so the left edge
+    // of a mixed create/update column reads as one continuous progress
+    // gauge — the verb in the label carries the per-row status signal.
     // TaskUpdate without `status` (metadata-only edit) falls through to the
     // aggregate path — no single-word verb describes those.
     if (apiName === ClaudeCodeApiName.TaskUpdate) {
@@ -209,7 +236,15 @@ export const TaskInspector = memo<BuiltinInspectorProps<TaskInspectorArgs, TaskP
               (isArgumentsStreaming || isLoading) && shinyTextStyles.shinyText,
             )}
           >
-            {subject ? `${verb}: ${subject}` : verb}
+            <ProgressRing stats={stats} />
+            {stats.total > 0 && (
+              <span className={styles.countChip}>
+                {stats.completed}/{stats.total}
+              </span>
+            )}
+            <span style={{ marginInlineStart: stats.total > 0 ? 6 : 0 }}>
+              {subject ? `${verb}: ${subject}` : verb}
+            </span>
           </div>
         );
       }
@@ -220,22 +255,26 @@ export const TaskInspector = memo<BuiltinInspectorProps<TaskInspectorArgs, TaskP
     // TodoWriteInspector's `isArgumentsStreaming && stats.total === 0` branch.
     if (stats.total === 0) {
       const resolvedArgs = (args || partialArgs) as TaskInspectorArgs | undefined;
+      const inFlight = isArgumentsStreaming || isLoading;
       const fallback = (() => {
         if (apiName === ClaudeCodeApiName.TaskUpdate) {
           const taskId = (resolvedArgs as TaskUpdateArgs | undefined)?.taskId;
-          return taskId
-            ? t('builtins.lobe-claude-code.task.updateLabel', { taskId })
-            : t('builtins.lobe-claude-code.todoWrite.todos');
+          if (!taskId) return t('builtins.lobe-claude-code.todoWrite.todos');
+          return t(
+            inFlight
+              ? 'builtins.lobe-claude-code.task.update.loading'
+              : 'builtins.lobe-claude-code.task.update.completed',
+            { taskId },
+          );
         }
-        return t('builtins.lobe-claude-code.task.listLabel');
+        return t(
+          inFlight
+            ? 'builtins.lobe-claude-code.task.list.loading'
+            : 'builtins.lobe-claude-code.task.list.completed',
+        );
       })();
       return (
-        <div
-          className={cx(
-            inspectorTextStyles.root,
-            (isArgumentsStreaming || isLoading) && shinyTextStyles.shinyText,
-          )}
-        >
+        <div className={cx(inspectorTextStyles.root, inFlight && shinyTextStyles.shinyText)}>
           {fallback}
         </div>
       );

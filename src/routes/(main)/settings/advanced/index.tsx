@@ -35,14 +35,14 @@ const Page = memo(() => {
   const [setSettings, isUserStateInit] = useUserStore((s) => [s.setSettings, s.isUserStateInit]);
   const [loading, setLoading] = useState(false);
 
-  const [isPreferenceInit, enableInputMarkdown, enableGatewayMode, updateLab] = useUserStore(
-    (s) => [
+  const [isPreferenceInit, enableInputMarkdown, enableGatewayMode, enablePlatformAgent, updateLab] =
+    useUserStore((s) => [
       preferenceSelectors.isPreferenceInit(s),
       labPreferSelectors.enableInputMarkdown(s),
       labPreferSelectors.enableGatewayMode(s),
+      labPreferSelectors.enablePlatformAgent(s),
       s.updateLab,
-    ],
-  );
+    ]);
 
   const hasGatewayUrl = useServerConfigStore((s) => !!s.serverConfig.agentGatewayUrl);
 
@@ -75,7 +75,7 @@ const Page = memo(() => {
       },
     ],
     extra: loading && <Icon spin icon={Loader2Icon} size={16} style={{ opacity: 0.5 }} />,
-    title: t('tab.advanced'),
+    title: t('tab.advanced.toolsAndDiagnostics.title'),
   };
 
   const channelOptions = [
@@ -93,7 +93,7 @@ const Page = memo(() => {
         label: t('tab.advanced.updateChannel.title'),
       },
     ],
-    title: t('tab.advanced.updateChannel.title'),
+    title: t('tab.advanced.appUpdates.title'),
   };
 
   const labItems: FormItemProps[] = [
@@ -123,6 +123,19 @@ const Page = memo(() => {
             className: styles.labItem,
             desc: tLabs('features.gatewayMode.desc'),
             label: tLabs('features.gatewayMode.title'),
+            minWidth: undefined,
+          } satisfies FormItemProps,
+          {
+            children: (
+              <Switch
+                checked={enablePlatformAgent}
+                loading={!isPreferenceInit}
+                onChange={(checked: boolean) => updateLab({ enablePlatformAgent: checked })}
+              />
+            ),
+            className: styles.labItem,
+            desc: tLabs('features.platformAgent.desc'),
+            label: tLabs('features.platformAgent.title'),
             minWidth: undefined,
           } satisfies FormItemProps,
         ]
