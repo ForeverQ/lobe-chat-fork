@@ -1,5 +1,6 @@
 import { buildAgentSkillIdentifier } from '@lobechat/const';
 import { ActionIcon, Center, Empty, Flexbox, Text } from '@lobehub/ui';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { SkillsIcon } from '@lobehub/ui/icons';
 import { App } from 'antd';
 import { createStaticStyles, cx } from 'antd-style';
@@ -10,7 +11,6 @@ import { FileTextIcon, GlobeIcon, Trash2Icon } from 'lucide-react';
 import type { CSSProperties, MouseEvent } from 'react';
 import { memo, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useMatch, useNavigate } from 'react-router-dom';
 
 import NeuralNetworkLoading from '@/components/NeuralNetworkLoading';
 import { DocumentExplorerTree } from '@/features/AgentDocumentsExplorer';
@@ -30,8 +30,6 @@ import { chatPortalSelectors } from '@/store/chat/selectors';
 
 import ProjectLevelSkills from './ProjectLevelSkills';
 import UserLevelSkills, { useUserSkills } from './UserLevelSkills';
-
-const PAGE_ROUTE_PATTERN = '/agent/:aid/:topicId/page/:docId?';
 
 dayjs.extend(relativeTime);
 
@@ -115,13 +113,11 @@ interface DocumentItemProps {
 const DocumentItem = memo<DocumentItemProps>(
   ({ agentId, document, hideDelete = false, mutate }) => {
     const { t } = useTranslation(['chat', 'common']);
-    const { message, modal } = App.useApp();
+    const { message } = App.useApp();
     const [deleting, setDeleting] = useState(false);
     const openDocument = useChatStore((s) => s.openDocument);
     const closeDocument = useChatStore((s) => s.closeDocument);
     const portalDocumentId = useChatStore(chatPortalSelectors.portalDocumentId);
-    const navigate = useNavigate();
-    const pageMatch = useMatch(PAGE_ROUTE_PATTERN);
 
     const title = document.title || document.filename || '';
     const description = document.description ?? undefined;
@@ -134,27 +130,19 @@ const DocumentItem = memo<DocumentItemProps>(
         })
       : null;
 
-    const activeDocumentId = pageMatch ? pageMatch.params.docId : portalDocumentId;
-    const isActive = activeDocumentId === document.documentId;
+    const isActive = portalDocumentId === document.documentId;
 
     const handleOpen = () => {
       if (!document.documentId) return;
-      if (pageMatch?.params.aid && pageMatch.params.topicId) {
-        navigate(
-          `/agent/${pageMatch.params.aid}/${pageMatch.params.topicId}/page/${document.documentId}`,
-        );
-        return;
-      }
-      openDocument(document.documentId);
+      openDocument(document.documentId, document.id);
     };
 
     const handleDelete = (e: MouseEvent) => {
       e.stopPropagation();
-      modal.confirm({
+      confirmModal({
         cancelText: t('cancel', { ns: 'common' }),
-        centered: true,
         content: t('workingPanel.resources.deleteConfirm', { ns: 'chat' }),
-        okButtonProps: { danger: true, type: 'primary' },
+        okButtonProps: { danger: true },
         okText: t('delete', { ns: 'common' }),
         onOk: async () => {
           setDeleting(true);
@@ -164,7 +152,6 @@ const DocumentItem = memo<DocumentItemProps>(
               agentId,
               documentId: document.documentId,
               id: document.id,
-              topicId: pageMatch?.params.topicId,
             });
             await mutate();
             message.success(t('workingPanel.resources.deleteSuccess', { ns: 'chat' }));
@@ -272,8 +259,6 @@ const AgentDocumentsGroup = memo<AgentDocumentsGroupProps>(({ style, workingDire
     agentId ? chatConfigByIdSelectors.isLocalSystemEnabledById(agentId)(s) : false,
   );
   const openDocument = useChatStore((s) => s.openDocument);
-  const navigate = useNavigate();
-  const pageMatch = useMatch(PAGE_ROUTE_PATTERN);
   const [filter, setFilter] = useState<ResourceFilter>('skills');
 
   const showProjectSkills = isLocalEnabled && !!workingDirectory;
@@ -313,14 +298,6 @@ const AgentDocumentsGroup = memo<AgentDocumentsGroupProps>(({ style, workingDire
     [skillBundleViews],
   );
 
-  const openDocumentByRoute = (documentId: string) => {
-    if (pageMatch?.params.aid && pageMatch.params.topicId) {
-      navigate(`/agent/${pageMatch.params.aid}/${pageMatch.params.topicId}/page/${documentId}`);
-      return;
-    }
-    openDocument(documentId);
-  };
-
   if (!agentId) return null;
 
   if (isLoading) {
@@ -345,14 +322,18 @@ const AgentDocumentsGroup = memo<AgentDocumentsGroupProps>(({ style, workingDire
       onOpenFile={(item, relativePath) => {
         const view = skillBundleViews.find((v) => v.bundle.documentId === item.id);
         const docId = view?.pathToDocumentId.get(relativePath);
-        if (docId) openDocumentByRoute(docId);
+        if (!docId) return;
+        const row = data.find((d) => d.documentId === docId);
+        openDocument(docId, row?.id);
       }}
       onOpenSkill={(item) => {
         // Open the SKILL.md (skills/index child) when present; fall back to
         // the bundle itself (orphan bundles surface for recovery).
         const view = skillBundleViews.find((v) => v.bundle.documentId === item.id);
         const indexChild = data.find((doc) => doc.parentId === item.id && doc.isSkillIndex);
-        openDocumentByRoute(indexChild?.documentId ?? view?.bundle.documentId ?? item.id);
+        const targetDocId = indexChild?.documentId ?? view?.bundle.documentId ?? item.id;
+        const targetRow = data.find((d) => d.documentId === targetDocId);
+        openDocument(targetDocId, targetRow?.id);
       }}
       onSkillDragStart={(item, event) => {
         // The runtime resolves these via the `agent-skills:<filename>`

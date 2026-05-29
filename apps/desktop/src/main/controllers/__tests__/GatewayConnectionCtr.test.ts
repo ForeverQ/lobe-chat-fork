@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { App } from '@/core/App';
 import GatewayConnectionService from '@/services/gatewayConnectionSrv';
+import ImessageBridgeService from '@/services/imessageBridgeSrv';
 
 import GatewayConnectionCtr from '../GatewayConnectionCtr';
 import HeterogeneousAgentCtr from '../HeterogeneousAgentCtr';
@@ -34,6 +35,7 @@ const { ipcMainHandleMock, MockGatewayClient } = vi.hoisted(() => {
     });
 
     sendToolCallResponse = vi.fn();
+    sendMessageApiResponse = vi.fn();
     sendAgentRunAck = vi.fn();
 
     constructor(options: any) {
@@ -64,6 +66,19 @@ const { ipcMainHandleMock, MockGatewayClient } = vi.hoisted(() => {
           identifier: 'test-tool',
         },
         type: 'tool_call_request',
+      });
+    }
+
+    simulateMessageApiRequest(
+      platform: string,
+      apiName: string,
+      payload: Record<string, unknown>,
+      requestId = 'msg-req-1',
+    ) {
+      this.emit('message_api_request', {
+        api: { apiName, payload, platform },
+        requestId,
+        type: 'message_api_request',
       });
     }
 
@@ -160,6 +175,10 @@ vi.mock('@lobechat/device-gateway-client', () => ({
   GatewayClient: MockGatewayClient,
 }));
 
+vi.mock('@/services/imessageBridgeSrv', () => ({
+  default: class ImessageBridgeService {},
+}));
+
 vi.mock('execa', () => ({
   execa: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
 }));
@@ -200,11 +219,17 @@ const mockShellCommandCtr = {
 
 const mockHeterogeneousAgentCtr = {
   sendPrompt: vi.fn().mockResolvedValue(undefined),
+  spawnLhHeteroExec: vi.fn(),
   startSession: vi.fn().mockResolvedValue({ sessionId: 'mock-session-id' }),
 } as unknown as HeterogeneousAgentCtr;
 
+const mockImessageBridgeSrv = {
+  handleGatewayMessageApi: vi.fn().mockResolvedValue({ ok: true }),
+} as unknown as ImessageBridgeService;
+
 const mockRemoteServerConfigCtr = {
   getAccessToken: vi.fn().mockResolvedValue('mock-access-token'),
+  getRemoteServerUrl: vi.fn().mockResolvedValue('https://server.example.com'),
   isRemoteServerConfigured: vi.fn().mockResolvedValue(true),
   refreshAccessToken: vi.fn().mockResolvedValue({ success: true }),
 } as unknown as RemoteServerConfigCtr;
@@ -224,6 +249,7 @@ const mockApp = {
   }),
   getService: vi.fn((Cls) => {
     if (Cls === GatewayConnectionService) return mockGatewayConnectionSrv;
+    if (Cls === ImessageBridgeService) return mockImessageBridgeSrv;
     return null;
   }),
   storeManager: { get: mockStoreGet, set: mockStoreSet },
@@ -580,6 +606,66 @@ describe('GatewayConnectionCtr', () => {
     });
   });
 
+  describe('message API routing', () => {
+    async function connectAndOpen() {
+      ctr.afterAppReady();
+      await vi.advanceTimersByTimeAsync(0);
+      const client = MockGatewayClient.lastInstance!;
+      client.simulateConnected();
+      return client;
+    }
+
+    it('should route iMessage message API requests to the iMessage bridge service', async () => {
+      vi.mocked(mockImessageBridgeSrv.handleGatewayMessageApi).mockResolvedValueOnce({
+        guid: 'sent-1',
+      });
+      const client = await connectAndOpen();
+
+      client.simulateMessageApiRequest(
+        'imessage',
+        'sendText',
+        {
+          applicationId: 'home-mac-mini',
+          chatGuid: 'iMessage;-;chat-1',
+          message: 'hello',
+        },
+        'msg-req-42',
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockImessageBridgeSrv.handleGatewayMessageApi).toHaveBeenCalledWith('sendText', {
+        applicationId: 'home-mac-mini',
+        chatGuid: 'iMessage;-;chat-1',
+        message: 'hello',
+      });
+      expect(client.sendMessageApiResponse).toHaveBeenCalledWith({
+        requestId: 'msg-req-42',
+        result: {
+          content: JSON.stringify({ guid: 'sent-1' }),
+          success: true,
+        },
+      });
+    });
+
+    it('should send message_api_response with error for unsupported platforms', async () => {
+      const client = await connectAndOpen();
+
+      client.simulateMessageApiRequest('unsupported', 'sendText', {}, 'msg-req-err');
+      await vi.advanceTimersByTimeAsync(0);
+
+      const errorMsg =
+        'Message API "unsupported/sendText" is not available on this device. It may not be supported in the current desktop version.';
+      expect(client.sendMessageApiResponse).toHaveBeenCalledWith({
+        requestId: 'msg-req-err',
+        result: {
+          content: errorMsg,
+          error: errorMsg,
+          success: false,
+        },
+      });
+    });
+  });
+
   // ─── Auth Expired ───
 
   describe('auth_expired handling', () => {
@@ -631,26 +717,23 @@ describe('GatewayConnectionCtr', () => {
     }
 
     beforeEach(() => {
-      vi.mocked(mockHeterogeneousAgentCtr.startSession).mockClear();
-      vi.mocked(mockHeterogeneousAgentCtr.sendPrompt).mockClear();
+      vi.mocked(mockHeterogeneousAgentCtr.spawnLhHeteroExec).mockClear();
     });
 
-    it.each([
-      ['openclaw', 'openclaw'],
-      ['hermes', 'hermes'],
-      ['codex', 'codex'],
-      ['claude-code', 'claude'],
-    ] as const)('uses command "%s" for agentType "%s"', async (agentType, expectedCommand) => {
-      const client = await connectAndOpen();
-      client.simulateAgentRunRequest(agentType);
-      await vi.advanceTimersByTimeAsync(0);
+    it.each(['openclaw', 'hermes', 'codex', 'claude-code'] as const)(
+      'forwards agentType "%s" to spawnLhHeteroExec',
+      async (agentType) => {
+        const client = await connectAndOpen();
+        client.simulateAgentRunRequest(agentType);
+        await vi.advanceTimersByTimeAsync(0);
 
-      expect(mockHeterogeneousAgentCtr.startSession).toHaveBeenCalledWith(
-        expect.objectContaining({ agentType, command: expectedCommand }),
-      );
-    });
+        expect(mockHeterogeneousAgentCtr.spawnLhHeteroExec).toHaveBeenCalledWith(
+          expect.objectContaining({ agentType }),
+        );
+      },
+    );
 
-    it('sends accepted ack and fires sendPrompt', async () => {
+    it('sends accepted ack and spawns lh hetero exec', async () => {
       const client = await connectAndOpen();
       client.simulateAgentRunRequest('openclaw', 'op-xyz');
       await vi.advanceTimersByTimeAsync(0);
@@ -659,15 +742,37 @@ describe('GatewayConnectionCtr', () => {
         operationId: 'op-xyz',
         status: 'accepted',
       });
-      expect(mockHeterogeneousAgentCtr.sendPrompt).toHaveBeenCalledWith(
-        expect.objectContaining({ operationId: 'op-xyz', sessionId: 'mock-session-id' }),
+      expect(mockHeterogeneousAgentCtr.spawnLhHeteroExec).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentType: 'openclaw',
+          jwt: 'mock-jwt',
+          operationId: 'op-xyz',
+          prompt: 'hello',
+          serverUrl: 'https://server.example.com',
+          topicId: 'topic-1',
+        }),
       );
     });
 
-    it('sends rejected ack when startSession throws', async () => {
-      vi.mocked(mockHeterogeneousAgentCtr.startSession).mockRejectedValueOnce(
-        new Error('binary not found'),
-      );
+    it('sends rejected ack when remote server URL is not configured', async () => {
+      vi.mocked(mockRemoteServerConfigCtr.getRemoteServerUrl).mockResolvedValueOnce('');
+
+      const client = await connectAndOpen();
+      client.simulateAgentRunRequest('openclaw', 'op-fail');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(client.sendAgentRunAck).toHaveBeenCalledWith({
+        operationId: 'op-fail',
+        reason: 'Remote server URL not configured',
+        status: 'rejected',
+      });
+      expect(mockHeterogeneousAgentCtr.spawnLhHeteroExec).not.toHaveBeenCalled();
+    });
+
+    it('sends rejected ack when spawnLhHeteroExec throws', async () => {
+      vi.mocked(mockHeterogeneousAgentCtr.spawnLhHeteroExec).mockImplementationOnce(() => {
+        throw new Error('binary not found');
+      });
 
       const client = await connectAndOpen();
       client.simulateAgentRunRequest('openclaw', 'op-fail');

@@ -22,10 +22,16 @@ import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { AgentRuntimeService } from '@/server/services/agentRuntime';
 import { AiAgentService } from '@/server/services/aiAgent';
 import { AiChatService } from '@/server/services/aiChat';
+import { getFileProxyUrl } from '@/server/services/file';
 import { HeterogeneousAgentService } from '@/server/services/heterogeneousAgent';
 import { TaskLifecycleService } from '@/server/services/taskLifecycle';
 
 const log = debug('lobe-server:ai-agent-router');
+
+const createUiMessageFileUrlResolver = () => {
+  return async (path: string | null, file: { fileType: string; id?: string | null }) =>
+    file.id ? getFileProxyUrl(file.id) : (path ?? '');
+};
 
 const extractTaskErrorMessage = (error: unknown): string | undefined => {
   if (!error || typeof error !== 'object') return undefined;
@@ -146,12 +152,6 @@ const ExecAgentSchema = z
       .optional(),
     /** Whether to auto-start execution after creating operation */
     autoStart: z.boolean().optional().default(true),
-    /**
-     * Runtime of the client initiating this request.
-     * 'desktop' enables `executor: 'client'` tools (local-system, stdio MCP)
-     * to be dispatched over the Agent Gateway WS.
-     */
-    clientRuntime: z.enum(['desktop', 'web']).optional(),
     /** Explicit device ID to bind to the topic and activate for this run */
     deviceId: z.string().optional(),
     /** Optional existing message IDs to include in context */
@@ -385,10 +385,14 @@ const AgentStreamEventSchema = z.object({
 /**
  * Schema for `aiAgent.heteroIngest` — accepts a batch of producer-side
  * `AgentStreamEvent`s from `lh hetero exec`. `topicId` is required (operationId
- * → topic reverse-lookup is unreliable per LOBE-8516 design decision).
+ * → topic reverse-lookup is unreliable per design decision).
  */
 const HeteroIngestSchema = z.object({
   agentType: z.enum(['claude-code', 'codex']),
+  /** Initial assistant placeholder message id forwarded from the sandbox env var.
+   * When present, `loadOrCreateState` uses it directly and skips the DB read of
+   * topic.metadata.runningOperation, eliminating the replica-lag race condition. */
+  assistantMessageId: z.string().min(1).optional(),
   events: z.array(AgentStreamEventSchema).min(1),
   operationId: z.string().min(1),
   topicId: z.string().min(1),
@@ -498,14 +502,17 @@ export const aiAgentRouter = router({
         log('createClientGroupAgentTaskThread: created user message %s', userMessage.id);
 
         // 3. Query thread messages and main chat messages in parallel
+        const messageQueryOptions = {
+          postProcessUrl: createUiMessageFileUrlResolver(),
+        };
         const [threadMessages, messages] = await Promise.all([
           // Thread messages (messages within this thread)
           // DON'T pass agentId - thread query fetches parent messages via sourceMessageId
           // which may have different agentIds (supervisor vs worker in group chat)
-          ctx.messageModel.query({ threadId: thread.id, topicId }),
+          ctx.messageModel.query({ threadId: thread.id, topicId }, messageQueryOptions),
           // Main chat messages (messages without threadId)
           // Only filter by groupId + topicId (not agentId) to include all agents' messages
-          ctx.messageModel.query({ groupId, topicId }),
+          ctx.messageModel.query({ groupId, topicId }, messageQueryOptions),
         ]);
 
         log(
@@ -588,12 +595,15 @@ export const aiAgentRouter = router({
         log('createClientTaskThread: created user message %s', userMessage.id);
 
         // 3. Query thread messages and main chat messages in parallel
+        const messageQueryOptions = {
+          postProcessUrl: createUiMessageFileUrlResolver(),
+        };
         const [threadMessages, messages] = await Promise.all([
           // Thread messages (messages within this thread)
-          ctx.messageModel.query({ agentId, threadId: thread.id, topicId }),
+          ctx.messageModel.query({ agentId, threadId: thread.id, topicId }, messageQueryOptions),
           // Main chat messages (messages without threadId, includes updated taskDetail)
           // Pass both agentId and groupId - query() prioritizes groupId when present
-          ctx.messageModel.query({ agentId, groupId, topicId }),
+          ctx.messageModel.query({ agentId, groupId, topicId }, messageQueryOptions),
         ]);
 
         log(
@@ -633,7 +643,6 @@ export const aiAgentRouter = router({
       prompt,
       appContext,
       autoStart = true,
-      clientRuntime,
       deviceId,
       existingMessageIds = [],
       fileIds,
@@ -651,7 +660,6 @@ export const aiAgentRouter = router({
         agentId,
         appContext,
         autoStart,
-        clientRuntime,
         deviceId,
         existingMessageIds,
         fileIds,
@@ -1057,7 +1065,12 @@ export const aiAgentRouter = router({
       }
 
       // 6. Query thread messages for result content or current activity
-      const threadMessages = await ctx.messageModel.query({ threadId });
+      const threadMessages = await ctx.messageModel.query(
+        { threadId },
+        {
+          postProcessUrl: createUiMessageFileUrlResolver(),
+        },
+      );
       const sortedMessages = threadMessages.sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
       );
@@ -1178,7 +1191,7 @@ export const aiAgentRouter = router({
    * unchanged. Phase 2a: pub/sub only — no DB persistence (phase 2b adds it).
    */
   heteroIngest: heteroAgentProcedure.input(HeteroIngestSchema).mutation(async ({ input, ctx }) => {
-    const { agentType, events, operationId, topicId } = input;
+    const { agentType, assistantMessageId, events, operationId, topicId } = input;
 
     log(
       'heteroIngest: topic=%s op=%s type=%s count=%d',
@@ -1194,6 +1207,7 @@ export const aiAgentRouter = router({
       // the shared `AgentStreamEvent` type or the service signature.
       await ctx.heterogeneousAgentService.heteroIngest({
         agentType,
+        assistantMessageId,
         events: events as AgentStreamEvent[],
         operationId,
         topicId,

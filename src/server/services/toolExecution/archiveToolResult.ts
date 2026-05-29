@@ -8,7 +8,9 @@ import {
   truncateToolResult,
 } from '@/server/utils/truncateToolResult';
 
-const TOOL_RESULTS_DIR = './.tool-results';
+import { TOOL_RESULTS_DIR_NAME } from './constants';
+
+const TOOL_RESULTS_DIR = `./${TOOL_RESULTS_DIR_NAME}`;
 
 export interface ToolResultArchiveOutcome {
   archived: boolean;
@@ -29,7 +31,7 @@ interface ArchiveToolResultParams {
 }
 
 const buildArchivePath = (topicId: string, toolCallId: string) =>
-  `${TOOL_RESULTS_DIR}/${topicId}_${toolCallId}.md`;
+  `${TOOL_RESULTS_DIR}/${topicId}_${toolCallId}.txt`;
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error || 'Unknown archive error');
