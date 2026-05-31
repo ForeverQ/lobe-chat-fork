@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   update-i18n:
+    if: github.repository == 'lobehub/lobe-chat'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

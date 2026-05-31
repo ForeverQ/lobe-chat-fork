@@ -7,6 +7,7 @@ on:
 
 jobs:
   auto-close-duplicates:
+    if: github.repository == 'lobehub/lobe-chat'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

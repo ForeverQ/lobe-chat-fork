@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   translate-comments:
+    if: github.repository == 'lobehub/lobe-chat'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

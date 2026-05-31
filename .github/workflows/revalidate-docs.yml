@@ -6,12 +6,12 @@ on:
   push:
     branches:
       - main
-      - next
     paths:
       - 'docs/**'
 
 jobs:
   revalidate:
+    if: github.repository == 'lobehub/lobe-chat'
     name: Revalidate Docs
     runs-on: ubuntu-latest
     steps:

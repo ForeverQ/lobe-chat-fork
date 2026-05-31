@@ -17,6 +17,7 @@ on:
 
 jobs:
   lighthouse-badger-advanced:
+    if: github.repository == 'lobehub/lobe-chat'
     name: ${{ matrix.NAME }}
     runs-on: ubuntu-24.04
     timeout-minutes: 8

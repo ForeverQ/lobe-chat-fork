@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   lock-closed-issues:
+    if: github.repository == 'lobehub/lobe-chat'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

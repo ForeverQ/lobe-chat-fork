@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   add-tests:
+    if: github.repository == 'lobehub/lobe-chat'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
