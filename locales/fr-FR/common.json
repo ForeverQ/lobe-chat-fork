@@ -234,7 +234,7 @@
   "exportType.allAgentWithMessage": "Exporter tous les agents et les messages",
   "exportType.globalSetting": "Exporter les paramètres globaux",
   "feedback": "Retour",
-  "feedback.emailContact": "Vous pouvez également nous envoyer un e-mail à {{email}}",
+  "feedback.emailContact": "Vous pouvez également nous envoyer un e-mail à <email>{{email}}</email>",
   "feedback.errors.fileTooLarge": "Le fichier dépasse 5 Mo",
   "feedback.errors.submitFailed": "Échec de l’envoi. Veuillez réessayer.",
   "feedback.errors.teamNotFound": "Erreur de configuration",
@@ -480,6 +480,9 @@
   "userPanel.setting": "Paramètres",
   "userPanel.upgradePlan": "Mettre à niveau le plan",
   "userPanel.usages": "Statistiques d'utilisation",
+  "userPanel.workspaceCredits": "Crédits de l'espace de travail",
+  "userPanel.workspaceSetting": "Paramètres de l'espace de travail",
+  "userPanel.workspaceUsages": "Utilisation de l'espace de travail",
   "version": "Version",
   "zoom": "Zoom"
 }

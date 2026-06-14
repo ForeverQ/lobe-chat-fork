@@ -1,9 +1,9 @@
 import { and, desc, eq, inArray, ne, or, sql } from 'drizzle-orm';
 
 import {
+  DOCUMENT_FOLDER_TYPE,
   agents,
   chatGroups,
-  DOCUMENT_FOLDER_TYPE,
   documents,
   files,
   knowledgeBaseFiles,
@@ -19,6 +19,7 @@ import {
   buildJsonbTextContainsCondition,
   databaseSupportsBm25Search,
 } from '../../utils/searchMode';
+import { buildWorkspaceWhere } from '../../utils/workspace';
 
 export type SearchResultType =
   | 'page'
@@ -204,10 +205,16 @@ const RECENCY_CANDIDATE_MULTIPLIER = 4;
 export class SearchRepo {
   private userId: string;
   private db: LobeChatDatabase;
+  private workspaceId?: string;
 
-  constructor(db: LobeChatDatabase, userId: string) {
+  constructor(db: LobeChatDatabase, userId: string, workspaceId?: string) {
     this.userId = userId;
     this.db = db;
+    this.workspaceId = workspaceId;
+  }
+
+  private get scope() {
+    return { userId: this.userId, workspaceId: this.workspaceId };
   }
 
   private get supportsBm25() {
@@ -423,9 +430,7 @@ export class SearchRepo {
           updatedAt: agents.updatedAt,
         })
         .from(agents)
-        .where(
-          and(eq(agents.userId, this.userId), searchCondition),
-        )
+        .where(and(buildWorkspaceWhere(this.scope, agents), searchCondition))
         .orderBy(desc(agents.updatedAt))
         .limit(limit);
 
@@ -462,7 +467,7 @@ export class SearchRepo {
       .from(agents)
       .where(
         and(
-          eq(agents.userId, this.userId),
+          buildWorkspaceWhere(this.scope, agents),
           sql`(${agents.title} @@@ ${bm25Query} OR ${agents.description} @@@ ${bm25Query} OR ${agents.slug} @@@ ${bm25Query} OR ${agents.tags} @@@ ${bm25Query} OR ${agents.systemRole} @@@ ${bm25Query})`,
         ),
       )
@@ -509,10 +514,13 @@ export class SearchRepo {
           updatedAt: topics.updatedAt,
         })
         .from(topics)
-        .leftJoin(agents, and(eq(topics.agentId, agents.id), eq(agents.userId, this.userId)))
+        .leftJoin(
+          agents,
+          and(eq(topics.agentId, agents.id), buildWorkspaceWhere(this.scope, agents)),
+        )
         .where(
           and(
-            eq(topics.userId, this.userId),
+            buildWorkspaceWhere(this.scope, topics),
             agentId ? eq(topics.agentId, agentId) : undefined,
             buildAnyContainsCondition([topics.title, topics.content, topics.description], query),
           ),
@@ -565,10 +573,10 @@ export class SearchRepo {
         updatedAt: topics.updatedAt,
       })
       .from(topics)
-      .leftJoin(agents, and(eq(topics.agentId, agents.id), eq(agents.userId, this.userId)))
+      .leftJoin(agents, and(eq(topics.agentId, agents.id), buildWorkspaceWhere(this.scope, agents)))
       .where(
         and(
-          eq(topics.userId, this.userId),
+          buildWorkspaceWhere(this.scope, topics),
           agentId ? eq(topics.agentId, agentId) : undefined,
           sql`(${topics.title} @@@ ${bm25Query} OR ${topics.content} @@@ ${bm25Query} OR ${topics.description} @@@ ${bm25Query})`,
         ),
@@ -625,7 +633,7 @@ export class SearchRepo {
         .leftJoin(agents, eq(messages.agentId, agents.id))
         .where(
           and(
-            eq(messages.userId, this.userId),
+            buildWorkspaceWhere(this.scope, messages),
             ne(messages.role, 'tool'),
             agentId ? eq(messages.agentId, agentId) : undefined,
             buildAnyContainsCondition([messages.content], query),
@@ -669,7 +677,7 @@ export class SearchRepo {
       .leftJoin(agents, eq(messages.agentId, agents.id))
       .where(
         and(
-          eq(messages.userId, this.userId),
+          buildWorkspaceWhere(this.scope, messages),
           ne(messages.role, 'tool'),
           agentId ? eq(messages.agentId, agentId) : undefined,
           sql`${messages.content} @@@ ${bm25Query}`,
@@ -721,7 +729,7 @@ export class SearchRepo {
         .leftJoin(knowledgeBaseFiles, eq(files.id, knowledgeBaseFiles.fileId))
         .where(
           and(
-            eq(files.userId, this.userId),
+            buildWorkspaceWhere(this.scope, files),
             ne(files.fileType, 'custom/document'),
             buildAnyContainsCondition([files.name], query),
           ),
@@ -765,7 +773,7 @@ export class SearchRepo {
       .leftJoin(knowledgeBaseFiles, eq(files.id, knowledgeBaseFiles.fileId))
       .where(
         and(
-          eq(files.userId, this.userId),
+          buildWorkspaceWhere(this.scope, files),
           ne(files.fileType, 'custom/document'),
           sql`${files.name} @@@ ${bm25Query}`,
         ),
@@ -808,9 +816,12 @@ export class SearchRepo {
         .from(documents)
         .where(
           and(
-            eq(documents.userId, this.userId),
+            buildWorkspaceWhere(this.scope, documents),
             eq(documents.fileType, DOCUMENT_FOLDER_TYPE),
-            buildAnyContainsCondition([documents.title, documents.slug, documents.description], query),
+            buildAnyContainsCondition(
+              [documents.title, documents.slug, documents.description],
+              query,
+            ),
           ),
         )
         .orderBy(desc(documents.updatedAt))
@@ -849,7 +860,7 @@ export class SearchRepo {
       .from(documents)
       .where(
         and(
-          eq(documents.userId, this.userId),
+          buildWorkspaceWhere(this.scope, documents),
           eq(documents.fileType, DOCUMENT_FOLDER_TYPE),
           sql`(${documents.title} @@@ ${bm25Query} OR ${documents.slug} @@@ ${bm25Query} OR ${documents.description} @@@ ${bm25Query})`,
         ),
@@ -889,7 +900,7 @@ export class SearchRepo {
         .from(documents)
         .where(
           and(
-            eq(documents.userId, this.userId),
+            buildWorkspaceWhere(this.scope, documents),
             eq(documents.fileType, 'custom/document'),
             buildAnyContainsCondition([documents.title, documents.slug, documents.content], query),
           ),
@@ -925,7 +936,7 @@ export class SearchRepo {
       .from(documents)
       .where(
         and(
-          eq(documents.userId, this.userId),
+          buildWorkspaceWhere(this.scope, documents),
           eq(documents.fileType, 'custom/document'),
           sql`(${documents.title} @@@ ${bm25Query} OR ${documents.slug} @@@ ${bm25Query} OR ${documents.content} @@@ ${bm25Query})`,
         ),
@@ -983,7 +994,7 @@ export class SearchRepo {
         .from(documents)
         .where(
           and(
-            eq(documents.userId, this.userId),
+            buildWorkspaceWhere(this.scope, documents),
             eq(documents.fileType, 'custom/document'),
             inArray(documents.knowledgeBaseId, knowledgeBaseIds),
             buildAnyContainsCondition([documents.title, documents.slug, documents.content], query),
@@ -1006,7 +1017,7 @@ export class SearchRepo {
 
     const matchClause = sql`(${documents.title} @@@ ${bm25Query} OR ${documents.slug} @@@ ${bm25Query} OR ${documents.content} @@@ ${bm25Query})`;
     const folderClause = ne(documents.fileType, DOCUMENT_FOLDER_TYPE);
-    const userClause = eq(documents.userId, this.userId);
+    const userClause = buildWorkspaceWhere(this.scope, documents);
 
     const inlineRowsPromise = this.db
       .select({
@@ -1047,7 +1058,7 @@ export class SearchRepo {
         knowledgeBaseFiles,
         and(
           eq(knowledgeBaseFiles.fileId, documents.fileId),
-          eq(knowledgeBaseFiles.userId, this.userId),
+          buildWorkspaceWhere(this.scope, knowledgeBaseFiles),
           inArray(knowledgeBaseFiles.knowledgeBaseId, knowledgeBaseIds),
         ),
       )
@@ -1171,7 +1182,7 @@ export class SearchRepo {
         .from(chatGroups)
         .where(
           and(
-            eq(chatGroups.userId, this.userId),
+            buildWorkspaceWhere(this.scope, chatGroups),
             buildAnyContainsCondition([chatGroups.title, chatGroups.description], query),
           ),
         )
@@ -1207,7 +1218,7 @@ export class SearchRepo {
       .from(chatGroups)
       .where(
         and(
-          eq(chatGroups.userId, this.userId),
+          buildWorkspaceWhere(this.scope, chatGroups),
           sql`(${chatGroups.title} @@@ ${bm25Query} OR ${chatGroups.description} @@@ ${bm25Query})`,
         ),
       )
@@ -1247,7 +1258,7 @@ export class SearchRepo {
         .from(knowledgeBases)
         .where(
           and(
-            eq(knowledgeBases.userId, this.userId),
+            buildWorkspaceWhere(this.scope, knowledgeBases),
             buildAnyContainsCondition([knowledgeBases.name, knowledgeBases.description], query),
           ),
         )
@@ -1281,7 +1292,7 @@ export class SearchRepo {
       .from(knowledgeBases)
       .where(
         and(
-          eq(knowledgeBases.userId, this.userId),
+          buildWorkspaceWhere(this.scope, knowledgeBases),
           sql`(${knowledgeBases.name} @@@ ${bm25Query} OR ${knowledgeBases.description} @@@ ${bm25Query})`,
         ),
       )

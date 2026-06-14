@@ -115,6 +115,17 @@ export const AgentRuntimeErrorType = {
   InvalidVertexCredentials: 'InvalidVertexCredentials',
   StreamChunkError: 'StreamChunkError',
   /**
+   * The model returned an empty completion — no text content, no tool calls,
+   * and ~0 output tokens — typically after a stalled tool loop where it
+   * effectively gives up. Retryable: re-issuing the same request usually
+   * yields a real response. Without this code the harness silently finalized
+   * to `done` and persisted a blank assistant message (empty bubble). See
+   * This addresses the "empty completion" failure mode: after a stalled
+   * tool loop the model may give up and emit a blank turn with ~0 output
+   * tokens, no text, and no tool calls.
+   */
+  ModelEmptyCompletion: 'ModelEmptyCompletion',
+  /**
    * A persistence-layer query / transaction failed (Drizzle "Failed query:
    * …"). Harness-side: the DB write/read or txn could not complete and
    * surfaced as an unhandled error instead of being retried / degraded.
@@ -126,6 +137,15 @@ export const AgentRuntimeErrorType = {
    * DB, …). Harness-side infra — the agent state layer, not the LLM provider.
    */
   StateStorePersistError: 'StateStorePersistError',
+  /**
+   * A state-store (Redis / Upstash) READ failed: either a blocking read
+   * (XREAD / BLPOP, consuming the agent event stream or waiting on a tool
+   * result) was aborted because the caller disconnected ("ERR caller gone"), or
+   * the operation's agent state could not be loaded ("Agent state not found for
+   * operation …"). System-side read failure, kept distinct from the write-side
+   * StateStorePersistError; counts as a failure.
+   */
+  StateStoreReadError: 'StateStoreReadError',
   /**
    * A context-engine pipeline processor threw while building the prompt
    * context ("Processor [<name>] execution failed"). Harness-side bug in the

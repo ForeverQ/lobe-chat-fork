@@ -1,6 +1,6 @@
 ---
 name: skills-audit
-description: Weekly audit of `.agents/skills/*/SKILL.md` — surfaces duplicate / overlapping / stale skills, inconsistent descriptions, broken cross-references, and merge/delete candidates. Run as a recurring health-check, not during normal feature work.
+description: 'Audit .agents/skills SKILL.md files. Use for recurring checks of duplicate, overlapping, stale, inconsistent, or broken skills and merge/delete candidates.'
 disable-model-invocation: true
 argument-hint: '[--verbose | --apply]'
 ---
@@ -50,7 +50,7 @@ Common false positives (do NOT merge):
 - `db-migrations` vs `drizzle` — distinct workflows (migration files vs schema authoring).
 - `microcopy` vs `i18n` — content vs mechanics.
 - `agent-runtime-hooks` vs `agent-tracing` vs `agent-signal` — different surfaces of the agent system.
-- `testing` vs `local-testing` vs `cli-backend-testing` — different test types.
+- `testing` vs `agent-testing` — different test types.
 
 ### 4 — Description format consistency
 

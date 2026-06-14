@@ -1,18 +1,19 @@
 'use client';
 
 import { isDesktop } from '@lobechat/const';
-import { ActionIcon, Button, Flexbox, Icon, Input, Tag, Text } from '@lobehub/ui';
+import type { DeviceListItem } from '@lobechat/types';
+import { ActionIcon, Button, Flexbox, Icon, Input, SortableList, Tag, Text } from '@lobehub/ui';
 import { createStaticStyles, cssVar } from 'antd-style';
 import dayjs from 'dayjs';
-import { FolderOpenIcon, XIcon } from 'lucide-react';
+import { FolderOpenIcon, FolderPlusIcon, XIcon } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { nextRecentCwds } from '@/features/ChatInput/RuntimeConfig/deviceCwd';
+import DirIcon from '@/features/ChatInput/ControlBar/DirIcon';
 import { lambdaQuery } from '@/libs/trpc/client';
 import { electronSystemService } from '@/services/electron/system';
+import { nextWorkingDirs } from '@/store/device';
 
-import type { DeviceListItem } from './DeviceItem';
 import { getDeviceIcon } from './getDeviceIcon';
 
 const styles = createStaticStyles(({ css }) => ({
@@ -35,29 +36,19 @@ const styles = createStaticStyles(({ css }) => ({
   `,
   path: css`
     overflow: hidden;
+    flex: 1;
+
+    min-width: 0;
 
     font-family: ${cssVar.fontFamilyCode};
     font-size: 12px;
+    color: ${cssVar.colorTextSecondary};
     text-overflow: ellipsis;
     white-space: nowrap;
   `,
-  recentRow: css`
+  recentItem: css`
     padding-block: 6px;
     padding-inline: 8px;
-    border-radius: ${cssVar.borderRadius};
-
-    &:hover {
-      background: ${cssVar.colorFillTertiary};
-    }
-  `,
-  removeBtn: css`
-    cursor: pointer;
-    flex: none;
-    color: ${cssVar.colorTextQuaternary};
-
-    &:hover {
-      color: ${cssVar.colorText};
-    }
   `,
 }));
 
@@ -85,17 +76,30 @@ const DeviceDetailPanel = memo<DeviceDetailPanelProps>(({ device, isCurrent, onC
   // row per connection; an empty array means offline.
   const channels = device.channels ?? [];
 
-  const isDirty = name !== (device.friendlyName ?? '') || cwd !== (device.defaultCwd ?? '');
+  // Every edit persists immediately — there is no Save button. Name and the
+  // default cwd commit on blur; recent-dir add / remove / reorder commit on the
+  // spot.
+  const commitName = () => {
+    const next = name.trim() || null;
+    if (next === (device.friendlyName ?? null)) return;
+    update.mutate({ deviceId: device.deviceId, friendlyName: next });
+  };
 
-  const handleSave = async () => {
-    const trimmed = cwd.trim();
-    await update.mutateAsync({
+  const commitCwd = (value: string, repoType?: 'git' | 'github') => {
+    const trimmed = value.trim();
+    update.mutate({
       defaultCwd: trimmed || null,
       deviceId: device.deviceId,
-      friendlyName: name.trim() || null,
-      // Setting a default cwd also seeds the recent list.
-      recentCwds: trimmed ? nextRecentCwds(trimmed, device.recentCwds) : device.recentCwds,
+      // Setting a default cwd also seeds the working-dirs list.
+      workingDirs: trimmed
+        ? nextWorkingDirs({ path: trimmed, repoType }, device.workingDirs)
+        : device.workingDirs,
     });
+  };
+
+  const handleCwdBlur = () => {
+    if (cwd.trim() === (device.defaultCwd ?? '')) return;
+    commitCwd(cwd);
   };
 
   const handleBrowse = async () => {
@@ -103,13 +107,41 @@ const DeviceDetailPanel = memo<DeviceDetailPanelProps>(({ device, isCurrent, onC
       defaultPath: cwd.trim() || undefined,
       title: t('devices.edit.defaultCwd'),
     });
-    if (result?.path) setCwd(result.path);
+    if (result?.path) {
+      setCwd(result.path);
+      commitCwd(result.path, result.repoType);
+    }
+  };
+
+  const handleAddRecent = async () => {
+    const result = await electronSystemService.selectFolder({
+      title: t('devices.detail.addDir'),
+    });
+    if (result?.path) {
+      update.mutate({
+        deviceId: device.deviceId,
+        workingDirs: nextWorkingDirs(
+          { path: result.path, repoType: result.repoType },
+          device.workingDirs,
+        ),
+      });
+    }
   };
 
   const handleRemoveRecent = (path: string) => {
     update.mutate({
       deviceId: device.deviceId,
-      recentCwds: device.recentCwds.filter((p) => p !== path),
+      workingDirs: device.workingDirs.filter((d) => d.path !== path),
+    });
+  };
+
+  const handleReorderRecent = (items: { id: string }[]) => {
+    // SortableList items are keyed by path; map ids back to their entries so the
+    // detected repoType survives a reorder.
+    const byPath = new Map(device.workingDirs.map((d) => [d.path, d]));
+    update.mutate({
+      deviceId: device.deviceId,
+      workingDirs: items.map((item) => byPath.get(item.id) ?? { path: item.id }),
     });
   };
 
@@ -161,7 +193,9 @@ const DeviceDetailPanel = memo<DeviceDetailPanelProps>(({ device, isCurrent, onC
         <Input
           placeholder={t('devices.edit.friendlyNamePlaceholder')}
           value={name}
+          onBlur={commitName}
           onChange={(e) => setName(e.target.value)}
+          onPressEnter={commitName}
         />
       </Flexbox>
 
@@ -172,7 +206,9 @@ const DeviceDetailPanel = memo<DeviceDetailPanelProps>(({ device, isCurrent, onC
           <Input
             placeholder={t('devices.edit.defaultCwdPlaceholder')}
             value={cwd}
+            onBlur={handleCwdBlur}
             onChange={(e) => setCwd(e.target.value)}
+            onPressEnter={handleCwdBlur}
           />
           {canBrowse && (
             <Button icon={<Icon icon={FolderOpenIcon} />} onClick={handleBrowse}>
@@ -185,39 +221,41 @@ const DeviceDetailPanel = memo<DeviceDetailPanelProps>(({ device, isCurrent, onC
       {/* ─── Recent directories ─── */}
       <Flexbox gap={6}>
         <span className={styles.label}>{t('devices.detail.recentDirs')}</span>
-        {device.recentCwds.length === 0 ? (
+        {device.workingDirs.length === 0 ? (
           <Text style={{ fontSize: 12 }} type={'secondary'}>
             {t('devices.detail.noRecent')}
           </Text>
         ) : (
-          device.recentCwds.map((path) => (
-            <Flexbox horizontal align={'center'} className={styles.recentRow} gap={8} key={path}>
-              <Text
-                className={styles.path}
-                style={{ color: cssVar.colorTextSecondary, cursor: 'pointer', flex: 1 }}
-                onClick={() => setCwd(path)}
-              >
-                {path}
-              </Text>
-              <Icon
-                className={styles.removeBtn}
-                icon={XIcon}
-                size={14}
-                onClick={() => handleRemoveRecent(path)}
-              />
-            </Flexbox>
-          ))
+          <SortableList
+            items={device.workingDirs.map((d) => ({ id: d.path, repoType: d.repoType }))}
+            renderItem={(item: { id: string; repoType?: 'git' | 'github' }) => (
+              <SortableList.Item className={styles.recentItem} id={item.id} variant={'filled'}>
+                <SortableList.DragHandle />
+                <DirIcon repoType={item.repoType} />
+                <Text className={styles.path} title={item.id}>
+                  {item.id}
+                </Text>
+                <ActionIcon
+                  icon={XIcon}
+                  size={'small'}
+                  onClick={() => handleRemoveRecent(item.id)}
+                />
+              </SortableList.Item>
+            )}
+            onChange={handleReorderRecent}
+          />
+        )}
+        {canBrowse && (
+          <Button
+            block
+            icon={<Icon icon={FolderPlusIcon} />}
+            variant={'filled'}
+            onClick={handleAddRecent}
+          >
+            {t('devices.detail.addDir')}
+          </Button>
         )}
       </Flexbox>
-
-      {/* ─── Save ─── */}
-      {isDirty && (
-        <Flexbox horizontal justify={'flex-end'}>
-          <Button loading={update.isPending} type={'primary'} onClick={handleSave}>
-            {t('devices.edit.save')}
-          </Button>
-        </Flexbox>
-      )}
     </Flexbox>
   );
 });

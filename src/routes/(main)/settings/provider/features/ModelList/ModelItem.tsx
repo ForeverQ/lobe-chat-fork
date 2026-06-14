@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { ModelInfoTags } from '@/components/ModelSelect';
 import NewModelBadge from '@/components/ModelSelect/NewModelBadge';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { usePermission } from '@/hooks/usePermission';
 import { aiModelSelectors, useAiInfraStore } from '@/store/aiInfra';
 import { formatPriceByCurrency } from '@/utils/format';
 import {
@@ -20,7 +21,7 @@ import {
   getTextOutputUnitRate,
 } from '@/utils/pricing';
 
-import ModelConfigModal from './ModelConfigModal';
+import { createModelConfigModal } from './ModelConfigModal';
 import { ProviderSettingsContext } from './ProviderSettingsContext';
 
 const styles = createStaticStyles(({ css, cx }) => {
@@ -80,7 +81,8 @@ const ModelItem = memo<ModelItemProps>(
     type,
   }) => {
     const { t } = useTranslation(['modelProvider', 'components', 'models', 'common']);
-    const { modelEditable } = use(ProviderSettingsContext);
+    const { modelEditable, showDeployName } = use(ProviderSettingsContext);
+    const { allowed: canManageProvider, reason } = usePermission('manage_provider_key');
 
     const [activeAiProvider, isModelLoading, toggleModelEnabled, removeAiModel] = useAiInfraStore(
       (s) => [
@@ -92,7 +94,6 @@ const ModelItem = memo<ModelItemProps>(
     );
 
     const [checked, setChecked] = useState(enabled);
-    const [showConfig, setShowConfig] = useState(false);
 
     const formatPricing = (): string[] => {
       if (!pricing) return [];
@@ -176,9 +177,11 @@ const ModelItem = memo<ModelItemProps>(
     const EnableSwitch = canToggle ? (
       <Switch
         checked={checked}
+        disabled={!canManageProvider}
         loading={isModelLoading}
         size={'small'}
         onChange={async (e) => {
+          if (!canManageProvider) return;
           setChecked(e);
           await toggleModelEnabled({ enabled: e, id, source, type });
         }}
@@ -190,31 +193,38 @@ const ModelItem = memo<ModelItemProps>(
       ((style?: React.CSSProperties) => (
         <Flexbox horizontal className={styles.config} style={style}>
           <ActionIcon
+            disabled={!canManageProvider}
             icon={LucidePencil}
             size={'small'}
-            title={t('providerModels.item.config')}
+            title={canManageProvider ? t('providerModels.item.config') : reason}
             onClick={(e) => {
               e.stopPropagation();
-              setShowConfig(true);
+              if (!canManageProvider) return;
+              createModelConfigModal({ id, showDeployName });
             }}
           />
           {source !== AiModelSourceEnum.Builtin && (
             <ActionIcon
+              disabled={!canManageProvider}
               icon={TrashIcon}
               size={'small'}
-              title={t('providerModels.item.delete.title')}
+              title={canManageProvider ? t('providerModels.item.delete.title') : reason}
               onClick={() => {
+                if (!canManageProvider) return;
                 confirmModal({
+                  cancelText: t('cancel', { ns: 'common' }),
+                  content: t('providerModels.item.delete.confirm', {
+                    displayName: displayName || id,
+                  }),
                   okButtonProps: {
                     danger: true,
                   },
+                  okText: t('delete', { ns: 'common' }),
                   onOk: async () => {
                     await removeAiModel(id, activeAiProvider!);
                     message.success(t('providerModels.item.delete.success'));
                   },
-                  title: t('providerModels.item.delete.confirm', {
-                    displayName: displayName || id,
-                  }),
+                  title: t('providerModels.item.delete.title'),
                 });
               }}
             />
@@ -304,12 +314,7 @@ const ModelItem = memo<ModelItemProps>(
       </Flexbox>
     );
 
-    return (
-      <>
-        {dom}
-        {showConfig && <ModelConfigModal id={id} open={showConfig} setOpen={setShowConfig} />}
-      </>
-    );
+    return dom;
   },
 );
 

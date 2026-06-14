@@ -29,6 +29,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
+import { useActiveWorkspaceSlug } from '@/business/client/hooks/useActiveWorkspaceSlug';
 import { getRouteById } from '@/config/routes';
 import { useGlobalStore } from '@/store/global';
 import { systemStatusSelectors } from '@/store/global/selectors';
@@ -40,7 +41,7 @@ import { SIDEBAR_ACCORDION_KEYS, SIDEBAR_SPACER_ID } from '@/store/global/select
 
 const ACCORDION_GROUP_ID = 'accordion-group';
 
-interface SidebarItemConfig {
+export interface SidebarItemConfig {
   alwaysVisible?: boolean;
   id: string;
   labelKey: string;
@@ -58,10 +59,28 @@ const ALL_SIDEBAR_ITEMS: SidebarItemConfig[] = [
   { id: 'memory', labelKey: 'tab.memory', routeId: 'memory' },
 ];
 
+export const getAvailableSidebarItems = (isWorkspaceMode: boolean): SidebarItemConfig[] =>
+  ALL_SIDEBAR_ITEMS.filter((item) => !(isWorkspaceMode && item.id === 'memory'));
+
 const ITEM_MAP = new Map(ALL_SIDEBAR_ITEMS.map((item) => [item.id, item]));
 
 const isAccordionKey = (id: string) => SIDEBAR_ACCORDION_KEYS.has(id);
 const isSpacer = (id: string) => id === SIDEBAR_SPACER_ID;
+
+const mergeAvailableSidebarItems = (
+  currentItems: string[],
+  nextAvailableItems: string[],
+  availableItemIds: Set<string>,
+): string[] => {
+  let nextAvailableIndex = 0;
+  const nextItems = currentItems.map((id) => {
+    if (!availableItemIds.has(id)) return id;
+
+    return nextAvailableItems[nextAvailableIndex++] ?? id;
+  });
+
+  return [...nextItems, ...nextAvailableItems.slice(nextAvailableIndex)];
+};
 
 // ---------------------------------------------------------------------------
 // Styles
@@ -168,8 +187,8 @@ const SortableItem = memo<{
 });
 
 // ---------------------------------------------------------------------------
-// SpacerSortableItem — represents the flex spacer slot; draggable like any
-// other item but rendered as a divider with an "Anchor below to bottom" label.
+// SpacerSortableItem — represents the flex spacer slot when it is not bound to
+// the accordion group; draggable like any other item.
 // ---------------------------------------------------------------------------
 
 const SpacerSortableItem = memo(() => {
@@ -204,6 +223,21 @@ const SpacerSortableItem = memo(() => {
       >
         <Icon icon={GripVertical} size={14} style={{ color: cssVar.colorTextQuaternary }} />
       </Flexbox>
+      <Icon icon={ArrowDownToLine} size={14} style={{ color: cssVar.colorTextQuaternary }} />
+      <div className={styles.spacerLine} />
+      <Text style={{ fontSize: 12 }} type={'secondary'}>
+        {t('navPanel.bottomDivider' as any)}
+      </Text>
+      <div className={styles.spacerLine} />
+    </Flexbox>
+  );
+});
+
+const BoundSpacerItem = memo(() => {
+  const { t } = useTranslation('common');
+
+  return (
+    <Flexbox horizontal align={'center'} className={styles.item} gap={8}>
       <Icon icon={ArrowDownToLine} size={14} style={{ color: cssVar.colorTextQuaternary }} />
       <div className={styles.spacerLine} />
       <Text style={{ fontSize: 12 }} type={'secondary'}>
@@ -285,8 +319,12 @@ const OverlayItem = memo<{ id: string }>(({ id }) => {
 // ---------------------------------------------------------------------------
 
 /** Flatten outer list (with ACCORDION_GROUP_ID placeholder) + inner accordion items → full list. */
-const flattenItems = (outer: string[], inner: string[]): string[] =>
-  outer.flatMap((id) => (id === ACCORDION_GROUP_ID ? inner : [id]));
+const flattenItems = (outer: string[], inner: string[], bindSpacerToAccordion: boolean): string[] =>
+  outer.flatMap((id) =>
+    id === ACCORDION_GROUP_ID
+      ? [...inner, ...(bindSpacerToAccordion ? [SIDEBAR_SPACER_ID] : [])]
+      : [id],
+  );
 
 const CustomizeSidebarContent = memo(() => {
   const [storeItems, hiddenSections, updateSystemStatus] = useGlobalStore((s) => [
@@ -294,21 +332,33 @@ const CustomizeSidebarContent = memo(() => {
     systemStatusSelectors.hiddenSidebarSections(s),
     s.updateSystemStatus,
   ]);
+  const isWorkspaceMode = !!useActiveWorkspaceSlug();
+  const availableItemIds = useMemo(
+    () => new Set(getAvailableSidebarItems(isWorkspaceMode).map((item) => item.id)),
+    [isWorkspaceMode],
+  );
+  const filteredStoreItems = useMemo(
+    () => storeItems.filter((id) => availableItemIds.has(id)),
+    [storeItems, availableItemIds],
+  );
 
   // Local state for drag operations — only persisted on dragEnd
-  const [items, setItems] = useState<string[]>(storeItems);
+  const [items, setItems] = useState<string[]>(filteredStoreItems);
   const [activeId, setActiveId] = useState<string | null>(null);
 
   // Sync local state when store changes (e.g. reset)
   useEffect(() => {
-    setItems(storeItems);
-  }, [storeItems]);
+    setItems(filteredStoreItems);
+  }, [filteredStoreItems]);
 
   // Derive outer (with group placeholder) and inner (accordion items)
-  const { innerItems, outerItems } = useMemo(() => {
+  const { bindSpacerToAccordion, innerItems, outerItems } = useMemo(() => {
+    const hasAccordion = items.some(isAccordionKey);
+    const shouldBindSpacer = hasAccordion && items.includes(SIDEBAR_SPACER_ID);
     const outer: string[] = [];
     const inner: string[] = [];
     let insertedGroup = false;
+
     for (const id of items) {
       if (isAccordionKey(id)) {
         inner.push(id);
@@ -316,11 +366,14 @@ const CustomizeSidebarContent = memo(() => {
           outer.push(ACCORDION_GROUP_ID);
           insertedGroup = true;
         }
+      } else if (isSpacer(id) && shouldBindSpacer) {
+        continue;
       } else {
         outer.push(id);
       }
     }
-    return { innerItems: inner, outerItems: outer };
+
+    return { bindSpacerToAccordion: shouldBindSpacer, innerItems: inner, outerItems: outer };
   }, [items]);
 
   const sensors = useSensors(
@@ -374,25 +427,42 @@ const CustomizeSidebarContent = memo(() => {
         const oldIdx = innerItems.indexOf(activeKey);
         const newIdx = innerItems.indexOf(overKey);
         if (oldIdx === -1 || newIdx === -1) return;
-        next = flattenItems(outerItems, arrayMove(innerItems, oldIdx, newIdx));
+        next = flattenItems(
+          outerItems,
+          arrayMove(innerItems, oldIdx, newIdx),
+          bindSpacerToAccordion,
+        );
       } else {
         // Outer reorder (pages/community/... or the whole accordion group)
         const oldIdx = outerItems.indexOf(activeKey);
         const newIdx = outerItems.indexOf(overKey);
         if (oldIdx === -1 || newIdx === -1) return;
-        next = flattenItems(arrayMove(outerItems, oldIdx, newIdx), innerItems);
+        next = flattenItems(
+          arrayMove(outerItems, oldIdx, newIdx),
+          innerItems,
+          bindSpacerToAccordion,
+        );
       }
 
       setItems(next);
-      updateSystemStatus({ sidebarItems: next });
+      updateSystemStatus({
+        sidebarItems: mergeAvailableSidebarItems(storeItems, next, availableItemIds),
+      });
     },
-    [innerItems, outerItems, updateSystemStatus],
+    [
+      availableItemIds,
+      bindSpacerToAccordion,
+      innerItems,
+      outerItems,
+      storeItems,
+      updateSystemStatus,
+    ],
   );
 
   const handleDragCancel = useCallback(() => {
     setActiveId(null);
-    setItems(storeItems);
-  }, [storeItems]);
+    setItems(filteredStoreItems);
+  }, [filteredStoreItems]);
 
   const renderItem = (id: string) =>
     isSpacer(id) ? (
@@ -417,6 +487,7 @@ const CustomizeSidebarContent = memo(() => {
                 <SortableContext items={innerItems} strategy={verticalListSortingStrategy}>
                   {innerItems.map(renderItem)}
                 </SortableContext>
+                {bindSpacerToAccordion && <BoundSpacerItem />}
               </AccordionGroup>
             ) : (
               renderItem(id)

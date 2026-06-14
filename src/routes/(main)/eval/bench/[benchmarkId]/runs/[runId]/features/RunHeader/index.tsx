@@ -18,9 +18,10 @@ import {
 } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useNavigate } from 'react-router-dom';
 
-import RunEditModal from '@/routes/(main)/eval/bench/[benchmarkId]/features/RunEditModal';
+import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
+import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
+import { createRunEditModal } from '@/routes/(main)/eval/bench/[benchmarkId]/features/RunEditModal';
 import StatusBadge from '@/routes/(main)/eval/features/StatusBadge';
 import { useEvalStore } from '@/store/eval';
 
@@ -117,7 +118,7 @@ interface RunHeaderProps {
 const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
   const { t } = useTranslation('eval');
   const { message } = App.useApp();
-  const navigate = useNavigate();
+  const navigate = useWorkspaceAwareNavigate();
   const abortRun = useEvalStore((s) => s.abortRun);
   const deleteRun = useEvalStore((s) => s.deleteRun);
   const startRun = useEvalStore((s) => s.startRun);
@@ -125,7 +126,6 @@ const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
   const canStart = run.status === 'idle' || run.status === 'failed' || run.status === 'aborted';
   const [starting, setStarting] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
 
   const snapshot = run.config?.agentSnapshot;
   const agentTitle = run.targetAgent?.title || t('run.detail.agent.unnamed');
@@ -197,10 +197,10 @@ const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
   return (
     <Flexbox gap={16}>
       {/* Back link */}
-      <Link className={styles.backLink} to={`/eval/bench/${benchmarkId}`}>
+      <WorkspaceLink className={styles.backLink} to={`/eval/bench/${benchmarkId}`}>
         <ArrowLeft size={16} />
         {t('run.detail.backToBenchmark')}
-      </Link>
+      </WorkspaceLink>
 
       {/* Header Card */}
       <Card styles={{ body: { padding: 20 } }}>
@@ -222,13 +222,13 @@ const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
             {/* Meta info row */}
             <Flexbox horizontal align="center" className={styles.metaRow} gap={8}>
               {run.dataset && (
-                <Link
+                <WorkspaceLink
                   className={styles.datasetLink}
                   target="_blank"
                   to={`/eval/bench/${benchmarkId}/datasets/${run.dataset.id}`}
                 >
                   {run.dataset.name}
-                </Link>
+                </WorkspaceLink>
               )}
               {run.targetAgentId && (
                 <>
@@ -278,7 +278,7 @@ const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
               icon={Pencil}
               size="small"
               title={t('run.actions.edit')}
-              onClick={() => setEditOpen(true)}
+              onClick={() => createRunEditModal({ run })}
             />
             {isActive && (
               <ActionIcon
@@ -358,8 +358,6 @@ const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
           </Flexbox>
         )}
       </Card>
-
-      <RunEditModal open={editOpen} run={run} onClose={() => setEditOpen(false)} />
     </Flexbox>
   );
 });

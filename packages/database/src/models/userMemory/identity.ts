@@ -18,6 +18,10 @@ export class UserMemoryIdentityModel {
     this.db = db;
   }
 
+  private memoryWhere(table: { userId: any }) {
+    return eq(table.userId, this.userId);
+  }
+
   create = async (params: Omit<NewUserMemoryIdentity, 'userId'>) => {
     const [result] = await this.db
       .insert(userMemoriesIdentities)
@@ -30,10 +34,7 @@ export class UserMemoryIdentityModel {
   delete = async (id: string) => {
     return this.db.transaction(async (tx) => {
       const identity = await tx.query.userMemoriesIdentities.findFirst({
-        where: and(
-          eq(userMemoriesIdentities.id, id),
-          eq(userMemoriesIdentities.userId, this.userId),
-        ),
+        where: and(eq(userMemoriesIdentities.id, id), this.memoryWhere(userMemoriesIdentities)),
       });
 
       if (!identity || !identity.userMemoryId) {
@@ -43,25 +44,21 @@ export class UserMemoryIdentityModel {
       // Delete the base user memory (cascade will handle the identity)
       await tx
         .delete(userMemories)
-        .where(
-          and(eq(userMemories.id, identity.userMemoryId), eq(userMemories.userId, this.userId)),
-        );
+        .where(and(eq(userMemories.id, identity.userMemoryId), this.memoryWhere(userMemories)));
 
       return { success: true };
     });
   };
 
   deleteAll = async () => {
-    return this.db
-      .delete(userMemoriesIdentities)
-      .where(eq(userMemoriesIdentities.userId, this.userId));
+    return this.db.delete(userMemoriesIdentities).where(this.memoryWhere(userMemoriesIdentities));
   };
 
   query = async (limit = 50) => {
     return this.db.query.userMemoriesIdentities.findMany({
       limit,
       orderBy: [desc(userMemoriesIdentities.capturedAt)],
-      where: eq(userMemoriesIdentities.userId, this.userId),
+      where: this.memoryWhere(userMemoriesIdentities),
     });
   };
 
@@ -83,7 +80,7 @@ export class UserMemoryIdentityModel {
 
     // Build WHERE conditions
     const conditions: Array<SQL | undefined> = [
-      eq(userMemoriesIdentities.userId, this.userId),
+      this.memoryWhere(userMemoriesIdentities),
       // Full-text search across title, description, role
       normalizedQuery
         ? buildSearchCondition({
@@ -131,7 +128,7 @@ export class UserMemoryIdentityModel {
     // JOIN condition
     const joinCondition = and(
       eq(userMemories.id, userMemoriesIdentities.userMemoryId),
-      eq(userMemories.userId, this.userId),
+      this.memoryWhere(userMemories),
     );
 
     // Execute queries in parallel
@@ -173,7 +170,7 @@ export class UserMemoryIdentityModel {
 
   findById = async (id: string) => {
     return this.db.query.userMemoriesIdentities.findFirst({
-      where: and(eq(userMemoriesIdentities.id, id), eq(userMemoriesIdentities.userId, this.userId)),
+      where: and(eq(userMemoriesIdentities.id, id), this.memoryWhere(userMemoriesIdentities)),
     });
   };
 
@@ -181,9 +178,7 @@ export class UserMemoryIdentityModel {
     return this.db
       .update(userMemoriesIdentities)
       .set({ ...value, updatedAt: new Date() })
-      .where(
-        and(eq(userMemoriesIdentities.id, id), eq(userMemoriesIdentities.userId, this.userId)),
-      );
+      .where(and(eq(userMemoriesIdentities.id, id), this.memoryWhere(userMemoriesIdentities)));
   };
 
   /**
@@ -205,7 +200,7 @@ export class UserMemoryIdentityModel {
       .from(userMemoriesIdentities)
       .where(
         and(
-          eq(userMemoriesIdentities.userId, this.userId),
+          this.memoryWhere(userMemoriesIdentities),
           // Only include self identities (relationship is 'self' or null/not set)
           or(
             eq(userMemoriesIdentities.relationship, RelationshipEnum.Self),

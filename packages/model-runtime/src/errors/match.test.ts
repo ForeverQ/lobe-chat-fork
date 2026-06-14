@@ -17,6 +17,19 @@ describe('matchErrorPattern', () => {
     );
   });
 
+  it('classifies ollamacloud "context window exceeds limit" as ExceededContextWindow, not ProviderBizError', () => {
+    // ollamacloud surfaces context-window overflow as a generic 400 that the
+    // upstream labels ProviderBizError. The ECW message pattern sits before the
+    // 400 / ProviderBizError catch-alls, so the message wins regardless.
+    expect(
+      matchErrorPattern({
+        errorType: AgentRuntimeErrorType.ProviderBizError,
+        message: '400 "invalid params, context window exceeds limit (ref: 0x123)"',
+        provider: 'ollamacloud',
+      })?.code,
+    ).toBe(AgentRuntimeErrorType.ExceededContextWindow);
+  });
+
   it('disambiguates 429-class rate limit from balance-class quota', () => {
     expect(matchErrorPattern({ message: 'rate_limit_exceeded' })?.code).toBe(
       AgentRuntimeErrorType.RateLimitExceeded,
@@ -79,6 +92,28 @@ describe('matchErrorPattern', () => {
     expect(
       matchErrorPattern({ message: 'ERR max request size exceeded. Limit: 10485760 bytes' })?.code,
     ).toBe(AgentRuntimeErrorType.StateStorePersistError);
+  });
+
+  it('classifies the Upstash readonly-upgrade write rejection as StateStorePersistError', () => {
+    expect(
+      matchErrorPattern({
+        message: 'READONLY Writes are temporarily rejected due to server upgrade',
+      })?.code,
+    ).toBe(AgentRuntimeErrorType.StateStorePersistError);
+  });
+
+  it('classifies a caller-gone blocking-read abort as StateStoreReadError', () => {
+    expect(matchErrorPattern({ message: 'ERR caller gone' })?.code).toBe(
+      AgentRuntimeErrorType.StateStoreReadError,
+    );
+  });
+
+  it('classifies a missing-agent-state read as StateStoreReadError', () => {
+    expect(
+      matchErrorPattern({
+        message: 'Agent state not found for operation op_1781276404066_agt_x_tpc_y_z',
+      })?.code,
+    ).toBe(AgentRuntimeErrorType.StateStoreReadError);
   });
 
   it('classifies harness JS runtime crashes as AgentRuntimeError', () => {

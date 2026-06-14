@@ -418,6 +418,18 @@ export const ERROR_CODE_SPECS: SpecMap = {
     description:
       'Context-engine pipeline processor crashed ("Processor [<name>] execution failed").',
   },
+  [AgentRuntimeErrorType.StateStoreReadError]: {
+    code: AgentRuntimeErrorType.StateStoreReadError,
+    numericId: 7007,
+    category: 'stream',
+    severity: 'error',
+    attribution: 'system',
+    httpStatus: 500,
+    retryable: false,
+    countAsFailure: true,
+    description:
+      'State-store (Redis / Upstash) read failed: a blocking read (XREAD / BLPOP) aborted because the caller disconnected ("ERR caller gone"), or the operation\'s agent state could not be loaded ("Agent state not found for operation …"). System-side — counts as a failure.',
+  },
 
   // ─── 8xxx Provider (catch-all) ────────────────────────────────────────
   [AgentRuntimeErrorType.AgentRuntimeError]: {
@@ -569,6 +581,24 @@ export const ERROR_CODE_SPECS: SpecMap = {
     countAsFailure: true,
     isFallback: true,
     description: 'Bare upstream HTTP error with no further context (e.g. "400 status code").',
+  },
+  [AgentRuntimeErrorType.ModelEmptyCompletion]: {
+    code: AgentRuntimeErrorType.ModelEmptyCompletion,
+    numericId: 8014,
+    category: 'provider',
+    severity: 'warning',
+    // The provider returned a successful (HTTP 200) but empty response — its
+    // own behavior, not our bug and not a timeout. Mirrors the image analog
+    // `ProviderNoImageGenerated` (provider attribution, status 471).
+    attribution: 'provider',
+    httpStatus: 471,
+    // Retryable — re-issuing the same request usually yields a real response.
+    // The call_llm retry loop relies on this flag to re-attempt empty turns
+    // before they ever surface as a terminal error.
+    retryable: true,
+    countAsFailure: true,
+    description:
+      'Model returned an empty completion (no content, no tool calls, ~0 output tokens), usually after a stalled tool loop.',
   },
 
   // ─── 9xxx Config ──────────────────────────────────────────────────────
