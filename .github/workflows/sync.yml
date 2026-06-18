@@ -28,9 +28,9 @@ jobs:
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
           if git remote get-url upstream >/dev/null 2>&1; then
-            git remote set-url upstream https://github.com/lobehub/lobe-chat.git
+            git remote set-url upstream https://github.com/lobehub/lobehub.git
           else
-            git remote add upstream https://github.com/lobehub/lobe-chat.git
+            git remote add upstream https://github.com/lobehub/lobehub.git
           fi
 
           git fetch origin next
