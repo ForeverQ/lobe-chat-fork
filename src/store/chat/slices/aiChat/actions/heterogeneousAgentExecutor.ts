@@ -38,10 +38,9 @@ import { threadService } from '@/services/thread';
 import { type ChatStore, useChatStore } from '@/store/chat/store';
 import { resolveNotificationNavigatePath } from '@/store/chat/utils/desktopNotification';
 import { markdownToTxt } from '@/utils/markdownToTxt';
-import { addUsageToOperationMetrics } from '@/utils/operationUsageMetrics';
 
 import { messageMapKey } from '../../../utils/messageMapKey';
-import { mergeQueuedMessages } from '../../operation/types';
+import { mergeQueuedMessages, reconstructUploadFilesFromQueue } from '../../operation/types';
 import { createGatewayEventHandler } from './gatewayEventHandler';
 
 /** Mirrors `idGenerator('threads', 16)` on the server so sync-allocated ids have the same shape. */
@@ -1197,19 +1196,11 @@ export const executeHeterogeneousAgent = async (
       // ─── step_complete with turn_metadata: per-step usage + model/provider ───
       // The reducer writes usage/model/provider onto the current step's
       // assistant (main) or the subagent's in-thread assistant (delegated).
-      // `result_usage` (grand total) is ignored by the reducer. Main usage also
-      // feeds the operation's usage-metrics tray — a renderer-only side effect
-      // the reducer doesn't model, so it stays here. Not forwarded (bookkeeping).
+      // `result_usage` (grand total) is ignored by the reducer. The operation
+      // usage tray derives its total from these per-message usages directly
+      // (OpStatusTray → calculateOperationUsageMetrics), so there is no separate
+      // accumulation here. Not forwarded (bookkeeping).
       if (event.type === 'step_complete' && event.data?.phase === 'turn_metadata') {
-        if (!event.data.subagent && event.data.usage) {
-          const operation = get().operations[operationId];
-          get().updateOperationMetadata(operationId, {
-            usageMetrics: addUsageToOperationMetrics(
-              operation?.metadata?.usageMetrics,
-              event.data.usage,
-            ),
-          });
-        }
         persistQueue = persistQueue.then(() => reduceAndApplyMain(event));
         return;
       }
@@ -1217,7 +1208,7 @@ export const executeHeterogeneousAgent = async (
       // ─── stream_start with newStep: new LLM turn ───
       // The reducer flushes the prior turn's content/reasoning/model and opens
       // a new assistant chained off the last tool message (the shared chain rule
-      // incl. the `lastToolMsgIdEver` toolless-step rescue — the 断链 fix). We
+      // incl. the `lastToolMsgIdEver` toolless-step rescue — the chain-break fix). We
       // then forward the event (carrying the new assistant id) for live UI.
       if (event.type === 'stream_start' && event.data?.newStep) {
         // Defer same-batch stream_chunk / tool events through persistQueue so the
@@ -1291,7 +1282,7 @@ export const executeHeterogeneousAgent = async (
       // — otherwise the handler reads `assistant.tools[]` while a parallel
       // `persistToolBatch` is still mid-flight and `replaceMessages` clobbers
       // the in-memory cumulative tools[] with a shorter snapshot. That's the
-      // "7 → 6 次技能调用" rollback users see on parallel CC tool batches.
+      // "7 → 6 tool-calls" rollback users see on parallel CC tool batches.
       //
       // Other forwards (text / reasoning / tools_calling dispatches) stay
       // synchronous so live streaming UX isn't gated on DB round-trips.
@@ -1479,7 +1470,11 @@ export const executeHeterogeneousAgent = async (
 
         const merged = mergeQueuedMessages(remainingQueued);
         const mergedFiles =
-          merged.files.length > 0 ? merged.files.map((id) => ({ id }) as any) : undefined;
+          merged.filesPreview.length > 0
+            ? reconstructUploadFilesFromQueue(merged.filesPreview)
+            : merged.files.length > 0
+              ? (merged.files.map((id) => ({ id })) as any)
+              : undefined;
 
         setTimeout(() => {
           useChatStore

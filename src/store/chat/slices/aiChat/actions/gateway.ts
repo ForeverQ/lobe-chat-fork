@@ -18,11 +18,12 @@ import { topicSelectors } from '@/store/chat/selectors';
 import type { ChatStore } from '@/store/chat/store';
 import type { StoreSetter } from '@/store/types';
 import { useUserStore } from '@/store/user';
+import { settingsSelectors } from '@/store/user/selectors';
 
 import { createGatewayEventHandler } from './gatewayEventHandler';
 
 /**
- * When the agent runs against the local machine ("本机"), resolve this desktop's
+ * When the agent runs against the local machine, resolve this desktop's
  * own gateway deviceId so it can be passed as the run's `deviceId`. The server
  * then presets `activeDeviceId` and injects `lobe-local-system` into the very
  * first LLM payload — skipping the extra `activateDevice` round-trip the model
@@ -41,7 +42,14 @@ import { createGatewayEventHandler } from './gatewayEventHandler';
 const resolveLocalDeviceId = async (agentId?: string): Promise<string | undefined> => {
   if (!isDesktop || !agentId) return undefined;
 
-  const isLocal = chatConfigByIdSelectors.isLocalSystemEnabledById(agentId)(getAgentStoreState());
+  const agentState = getAgentStoreState();
+  // Chat mode means "no execution environment" — never resolve a device, even
+  // when the target is `local`. The server enforces this too (it auto-activates
+  // a single online device), but skipping the deviceId round-trip here avoids
+  // sending an id the server would only discard.
+  if (chatConfigByIdSelectors.isChatModeById(agentId)(agentState)) return undefined;
+
+  const isLocal = chatConfigByIdSelectors.isLocalSystemEnabledById(agentId)(agentState);
   if (!isLocal) return undefined;
 
   try {
@@ -261,14 +269,25 @@ export class GatewayActionImpl {
 
   /**
    * Check if Gateway mode is available and enabled.
-   * Returns true if both server config and user lab toggle are set.
+   * Returns true when the server supports Gateway mode and the agent config
+   * has not disabled it. `disableGatewayMode: undefined` means enabled.
    */
-  isGatewayModeEnabled = (): boolean => {
-    const agentGatewayUrl =
-      window.global_serverConfigStore?.getState()?.serverConfig?.agentGatewayUrl;
-    const enableGatewayMode = useUserStore.getState().preference.lab?.enableGatewayMode;
+  isGatewayModeEnabled = (agentId?: string): boolean => {
+    const serverConfig = window.global_serverConfigStore?.getState()?.serverConfig;
+    const agentState = getAgentStoreState();
+    const resolvedAgentId = agentId ?? agentState.activeAgentId;
+    const agentDisableGatewayMode = resolvedAgentId
+      ? chatConfigByIdSelectors.getChatConfigById(resolvedAgentId)(agentState).disableGatewayMode
+      : undefined;
+    const defaultDisableGatewayMode = settingsSelectors.defaultAgentConfig(useUserStore.getState())
+      .chatConfig?.disableGatewayMode;
+    const disableGatewayMode = agentDisableGatewayMode ?? defaultDisableGatewayMode;
 
-    return !!agentGatewayUrl && !!enableGatewayMode;
+    return (
+      !!serverConfig?.agentGatewayUrl &&
+      !!serverConfig.enableGatewayMode &&
+      disableGatewayMode !== true
+    );
   };
 
   /**
@@ -369,6 +388,13 @@ export class GatewayActionImpl {
           agentDocumentId: context.agentDocumentId,
           defaultTaskAssigneeAgentId: context.defaultTaskAssigneeAgentId,
           documentId: context.documentId,
+          // When AgentBuilder runs, context.agentId is the builtin builder agent.
+          // The actual editing target is chatStore.activeAgentId (kept in sync by
+          // AgentBuilderProvider). Pass it so the server can route tool calls to
+          // the correct agent rather than the builder itself.
+          ...(context.scope === 'agent_builder' && {
+            editingAgentId: this.#get().activeAgentId ?? undefined,
+          }),
           groupId: context.groupId,
           ...(initialTopicMetadata && { initialTopicMetadata }),
           scope: context.scope,
@@ -604,13 +630,22 @@ export class GatewayActionImpl {
       .flat()
       .find((m) => m.id === assistantMessageId);
 
+    // `createdAt` is typed as a number but, after a DB rehydrate, it can arrive
+    // as a Date / ISO string (the message service casts rows `as unknown` without
+    // converting). Normalize to epoch ms here so the elapsed-time math stays a
+    // number — passing a string/Invalid Date straight through makes
+    // `Date.now() - startTime` resolve to NaN and renders as "NaN:NaN".
+    const startTime = assistantMessage?.createdAt
+      ? new Date(assistantMessage.createdAt).getTime()
+      : undefined;
+
     // Create a local operation for UI loading state, stashing the server op id
     // so intervention flows can find it after reconnect as well.
     const { operationId: gatewayOpId } = this.#get().startOperation({
       context,
       metadata: {
         serverOperationId: operationId,
-        ...(assistantMessage?.createdAt ? { startTime: assistantMessage.createdAt } : {}),
+        ...(Number.isFinite(startTime) ? { startTime } : {}),
       },
       type: 'execServerAgentRuntime',
     });

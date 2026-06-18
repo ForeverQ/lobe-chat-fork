@@ -1,4 +1,22 @@
-import type { DeviceExecutionTarget, LobeAgentAgencyConfig, RuntimeEnvMode } from '@lobechat/types';
+import type {
+  DeviceExecutionTarget,
+  LobeAgentAgencyConfig,
+  LobeAgentChatConfig,
+  RuntimeEnvMode,
+} from '@lobechat/types';
+
+/**
+ * The agent's tool mode — explicit `chatConfig.toolMode` wins; otherwise derive
+ * from `enableAgentMode` (undefined = agent). `chat` = no execution
+ * environment (plain chat); `custom` = toolset is exactly the agent's plugins.
+ *
+ * Single source of truth so client (selectors), server tools engine, and
+ * `resolveExecutionPlan` all agree on what counts as chat mode.
+ */
+export const resolveToolMode = (
+  chatConfig: LobeAgentChatConfig | undefined,
+): 'agent' | 'chat' | 'custom' =>
+  chatConfig?.toolMode ?? (chatConfig?.enableAgentMode === false ? 'chat' : 'agent');
 
 export interface ResolveExecutionTargetOptions {
   /**
@@ -19,10 +37,10 @@ export interface ResolveExecutionTargetOptions {
  * Single source of truth for where an agent executes — one global
  * `agencyConfig.executionTarget` drives both desktop and web.
  *
- * - `none`    → 无设备 (no execution environment; plain chat)
- * - `local`   → 本机 (this machine, in-process; desktop only)
- * - `sandbox` → 云端沙箱 (server cloud sandbox)
- * - `device`  → 远程设备 (dispatched to `boundDeviceId`)
+ * - `none`    → no execution environment (plain chat)
+ * - `local`   → this machine (in-process; desktop only)
+ * - `sandbox` → server cloud sandbox
+ * - `device`  → remote device (dispatched to `boundDeviceId`)
  *
  * `local` and `device` stay DISTINCT even when the bound device is this very
  * machine: `device` dispatches through the server gateway, so progress streams
@@ -102,7 +120,7 @@ export type ExecutionPlanUnroutedReason =
  * read it instead of re-resolving `agencyConfig.executionTarget`.
  */
 export type ExecutionPlan = { target: DeviceExecutionTarget } &
-  /** route execution / device tools to this device (includes 本机 — the local machine is a registered device) */
+  /** route execution / device tools to this device (the local machine is a registered device) */
   (| { deviceId: string; kind: 'device' }
     /**
      * Device-targeted but no routable device right now. The run proceeds without
@@ -129,6 +147,16 @@ export interface ResolveExecutionPlanParams {
    * Defaults to `true` (first-party callers).
    */
   canUseDevice?: boolean;
+  /**
+   * The agent's chat config. Chat mode (`resolveToolMode` → `chat`) means "no
+   * execution environment" — plain chat. It is orthogonal to `executionTarget`:
+   * the UI toggle only writes `enableAgentMode` and never touches the target, so
+   * a stored/default `local` target would otherwise still resolve a device and
+   * `buildStepToolDelta` would re-inject local-system. The plan honours chat
+   * mode at the source (degraded to `none`) — except for hetero agents, which
+   * always need a runtime.
+   */
+  chatConfig?: LobeAgentChatConfig;
   isDesktop: boolean;
   isHetero?: boolean;
   /**
@@ -165,11 +193,19 @@ export const resolveExecutionPlan = (params: ResolveExecutionPlanParams): Execut
   const {
     agencyConfig,
     canUseDevice = true,
+    chatConfig,
     isDesktop,
     isHetero,
     onlineDeviceIds,
     requestedDeviceId,
   } = params;
+
+  // Chat mode = no execution environment (plain chat). It's orthogonal to the
+  // execution target, so collapse the whole plan to `none` here — this is the
+  // single point that stops a default/stored `local` target from resolving a
+  // device and letting `buildStepToolDelta` re-inject local-system. Hetero
+  // agents always need a runtime, so they never take this path.
+  if (resolveToolMode(chatConfig) === 'chat' && !isHetero) return { kind: 'none', target: 'none' };
 
   const target = resolveExecutionTarget(agencyConfig, { isDesktop, isHetero });
   const wantsDevice = !!requestedDeviceId || target === 'device' || target === 'local';

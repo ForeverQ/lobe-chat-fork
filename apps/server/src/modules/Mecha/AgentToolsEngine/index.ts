@@ -28,7 +28,11 @@ import { ToolsEngine } from '@lobechat/context-engine';
 import { type RuntimeEnvMode, type RuntimePlatform } from '@lobechat/types';
 import debug from 'debug';
 
-import { executionTargetToRuntimeMode, resolveExecutionTarget } from '@/helpers/executionTarget';
+import {
+  executionTargetToRuntimeMode,
+  resolveExecutionTarget,
+  resolveToolMode,
+} from '@/helpers/executionTarget';
 import {
   buildAllowedBuiltinTools,
   DEVICE_TOOL_IDENTIFIERS,
@@ -86,7 +90,7 @@ export const createServerToolsEngine = (
   // Combine all manifests, then drop anything whose identifier the caller
   // has explicitly forbidden for this turn. The post-merge filter closes
   // the second half of the wall: an installed plugin or a
-  // Skill/Klavis manifest claiming `lobe-remote-device` would otherwise
+  // Skill/Composio manifest claiming `lobe-remote-device` would otherwise
   // slip through `buildAllowedBuiltinTools` (which only touches the
   // builtin source).
   const combinedManifests = [...pluginManifests, ...builtinManifests, ...additionalManifests];
@@ -170,9 +174,7 @@ export const createServerAgentToolsEngine = (
   const isSearchEnabled = searchMode !== 'off';
   // Tool mode: explicit `toolMode` wins; otherwise derive from `enableAgentMode`
   // (undefined = agent). `custom` = toolset is exactly the agent's plugins.
-  const toolMode: 'agent' | 'chat' | 'custom' =
-    agentConfig.chatConfig?.toolMode ??
-    (agentConfig.chatConfig?.enableAgentMode === false ? 'chat' : 'agent');
+  const toolMode = resolveToolMode(agentConfig.chatConfig ?? undefined);
   const isChatMode = toolMode === 'chat';
   const isCustomMode = toolMode === 'custom';
 
@@ -231,12 +233,20 @@ export const createServerAgentToolsEngine = (
     // Only auto-enable in bot conversations; otherwise let user's plugin selection take effect
     ...(isBotConversation && { [MessageManifest.identifier]: true }),
     // Remote-device proxy: shown only for device-capable targets when the
-    // server has a proxy but no specific device is auto-activated yet (user
-    // must pick). External bot senders never reach it: the plan degrades
-    // denied targets to `none` (→ not deviceCapable) and the physical
-    // manifest walls drop it for `canUseDevice=false` turns.
+    // server has a proxy, no specific device is auto-activated yet, AND the
+    // user has NOT explicitly selected a device. Once a device is explicitly
+    // selected (`boundDeviceId`), the run is locked to it: we never expose the
+    // activate-device tool, so the model can never switch to another machine —
+    // not even when the selected device is offline (the run stays unrouted
+    // until that device comes back, rather than silently hopping elsewhere).
+    // External bot senders never reach it: the plan degrades denied targets to
+    // `none` (→ not deviceCapable) and the physical manifest walls drop it for
+    // `canUseDevice=false` turns.
     [RemoteDeviceManifest.identifier]:
-      deviceCapable && hasDeviceProxy && !deviceContext?.autoActivated,
+      deviceCapable &&
+      hasDeviceProxy &&
+      !deviceContext?.autoActivated &&
+      !deviceContext?.boundDeviceId,
     [AgentDocumentsManifest.identifier]: hasAgentDocuments,
     [WebBrowsingManifest.identifier]: isSearchEnabled,
   };
@@ -256,7 +266,7 @@ export const createServerAgentToolsEngine = (
       : isChatMode
         ? chatModeAllowedToolIds
         : defaultToolIds,
-    // Post-merge wall: a plugin or Skill/Klavis manifest claiming a
+    // Post-merge wall: a plugin or Skill/Composio manifest claiming a
     // device identifier survives `buildAllowedBuiltinTools` (which only
     // filters the builtin source). Excluding the identifiers here drops
     // them from the combined `manifestSchemas` so the activator cannot

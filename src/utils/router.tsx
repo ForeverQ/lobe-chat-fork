@@ -1,6 +1,7 @@
 'use client';
 
-import { ThemeProvider } from '@lobehub/ui';
+import { ConfigProvider, ThemeProvider } from '@lobehub/ui';
+import * as m from 'motion/react-m';
 import { type ComponentType, type ReactElement } from 'react';
 import { lazy, memo, Suspense, useLayoutEffect } from 'react';
 import type { RouteObject } from 'react-router-dom';
@@ -17,6 +18,7 @@ import ErrorCapture from '@/components/Error';
 import Loading from '@/components/Loading/BrandTextLoading';
 import { useIsDark } from '@/hooks/useIsDark';
 import SPAGlobalProvider from '@/layout/SPAGlobalProvider';
+import AppLayer from '@/spa/AppLayer';
 import { useGlobalStore } from '@/store/global';
 import { createNavigationRef } from '@/store/global/initialState';
 import { isChunkLoadError, notifyChunkError } from '@/utils/chunkError';
@@ -113,7 +115,9 @@ export const ErrorBoundary = ({ resetPath }: ErrorBoundaryProps) => {
       defaultThemeMode={appearance}
       theme={{ cssVar: { key: 'lobe-vars' } }}
     >
-      <ErrorCapture error={error} resetPath={resetPath} />
+      <ConfigProvider motion={m}>
+        <ErrorCapture error={error} resetPath={resetPath} />
+      </ConfigProvider>
     </ThemeProvider>
   );
 };
@@ -143,7 +147,9 @@ const RouterRoot = memo(() => (
   <SPAGlobalProvider>
     <BusinessGlobalProvider>
       <NavigatorRegistrar />
-      <Outlet />
+      <AppLayer>
+        <Outlet />
+      </AppLayer>
     </BusinessGlobalProvider>
   </SPAGlobalProvider>
 ));
