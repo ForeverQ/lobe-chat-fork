@@ -99,7 +99,7 @@ export function useDailyBriefRecommendationsUI(
 ): DailyBriefRecommendationsUIState {
   const { count } = options;
   const recommendationCount = count ?? TASK_TEMPLATE_RECOMMEND_COUNT;
-  const { i18n, t } = useTranslation('taskTemplate');
+  const { i18n, t } = useTranslation('common');
   const locale = i18n.resolvedLanguage || i18n.language;
   const { message } = App.useApp();
   const isLogin = useUserStore(authSelectors.isLogin);
@@ -112,6 +112,7 @@ export function useDailyBriefRecommendationsUI(
   const [refreshSeed, setRefreshSeed] = useSessionStorageState<string>(REFRESH_SEED_STORAGE_KEY, {
     defaultValue: '',
   });
+
   const recommendationRequest = useMemo(
     () =>
       resolveDailyBriefRecommendationRequest({
@@ -133,7 +134,7 @@ export function useDailyBriefRecommendationsUI(
         })
     : null;
 
-  const { data, isLoading, isValidating, mutate } = useSWR(
+  const { data, error, isLoading, isValidating, mutate } = useSWR(
     recommendationRequest.key,
     recommendationFetcher,
     {
@@ -161,6 +162,10 @@ export function useDailyBriefRecommendationsUI(
     waitedForInterestsRef.current = false;
     void mutate();
   }, [interestKeys, mutate, recommendationRequest.key]);
+
+  useEffect(() => {
+    if (error) console.error('[taskTemplate:listDailyRecommend]', error);
+  }, [error]);
 
   const handleRefresh = useCallback(() => {
     setRefreshSeed(nextRefreshSeed());
@@ -193,7 +198,7 @@ export function useDailyBriefRecommendationsUI(
         await taskTemplateService.dismiss(templateId);
       } catch (error) {
         console.error('[taskTemplate:dismiss]', error);
-        message.error(t('action.dismiss.error'));
+        message.error(t('taskTemplate.action.dismiss.error'));
         mutate();
       }
     },
@@ -209,9 +214,11 @@ export function useDailyBriefRecommendationsUI(
     return sources;
   }, [templates]);
   const useFetchUserComposioConnections = useToolStore((s) => s.useFetchUserComposioConnections);
-  const useFetchLobehubSkillConnections = useToolStore((s) => s.useFetchLobehubSkillConnections);
+  const useFetchLobehubConnectorConnections = useToolStore(
+    (s) => s.useFetchLobehubSkillConnections,
+  );
   useFetchUserComposioConnections(requiredSources.has('composio'));
-  useFetchLobehubSkillConnections(requiredSources.has('lobehub'));
+  useFetchLobehubConnectorConnections(requiredSources.has('lobehub'));
 
   const displayMode = resolveDailyBriefRecommendationDisplayMode({
     canFetchRecommendations,
@@ -222,6 +229,7 @@ export function useDailyBriefRecommendationsUI(
     isValidating,
     isWaitingForInterestsFetch: interestKeys !== null && waitedForInterestsRef.current,
   });
+  if (error) return { mode: 'hidden' };
   if (displayMode === 'hidden') return { mode: 'hidden' };
   if (displayMode === 'skeleton') return { mode: 'skeleton', skeletonCount: recommendationCount };
 
