@@ -80,6 +80,7 @@ export interface TopicSearchResult extends BaseSearchResult {
   } | null;
   agentId: string | null;
   favorite: boolean | null;
+  groupId: string | null;
   sessionId: string | null;
   type: 'topic';
 }
@@ -102,6 +103,7 @@ export interface FolderSearchResult extends BaseSearchResult {
 export interface MessageSearchResult extends BaseSearchResult {
   agentId: string | null;
   content: string;
+  groupId: string | null;
   model: string | null;
   role: string;
   topicId: string | null;
@@ -575,6 +577,7 @@ export class SearchRepo {
         content: topics.content,
         createdAt: topics.createdAt,
         favorite: topics.favorite,
+        groupId: topics.groupId,
         id: topics.id,
         score: sql<number>`paradedb.score(${topics.id})`,
         sessionId: topics.sessionId,
@@ -611,6 +614,7 @@ export class SearchRepo {
         createdAt: row.createdAt,
         description: this.truncate(row.content),
         favorite: row.favorite,
+        groupId: row.groupId,
         id: row.id,
         relevance: row.relevance,
         sessionId: row.sessionId,
@@ -681,6 +685,7 @@ export class SearchRepo {
         agentTitle: agents.title,
         content: messages.content,
         createdAt: messages.createdAt,
+        groupId: messages.groupId,
         id: messages.id,
         model: messages.model,
         role: messages.role,
@@ -710,6 +715,7 @@ export class SearchRepo {
           normalizeInboxAgentTitle(row.agentTitle, {
             slug: row.agentSlug,
           }) || 'General Chat',
+        groupId: row.groupId,
         id: row.id,
         model: row.model,
         relevance: row.relevance,
