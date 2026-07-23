@@ -14,7 +14,6 @@ interface CustomNextConfig {
   redirects?: Redirect[];
   serverExternalPackages?: NextConfig['serverExternalPackages'];
   turbopack?: NextConfig['turbopack'];
-  webpack?: NextConfig['webpack'];
 }
 
 export function defineConfig(config: CustomNextConfig) {
@@ -394,19 +393,6 @@ export function defineConfig(config: CustomNextConfig) {
         },
       },
       ...config.turbopack,
-    },
-    webpack(webpackConfig, options) {
-      webpackConfig.module.rules.push({
-        test: /\.md$/i,
-        type: 'asset/source',
-      });
-
-      webpackConfig.resolve.alias = {
-        ...webpackConfig.resolve.alias,
-        'zlib-sync': false,
-      };
-
-      return config.webpack ? config.webpack(webpackConfig, options) : webpackConfig;
     },
 
     typescript: {
