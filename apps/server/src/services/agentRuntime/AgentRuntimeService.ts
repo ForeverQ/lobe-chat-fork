@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type {
   Agent,
   AgentRuntimeContext,
@@ -6,6 +8,7 @@ import type {
 } from '@lobechat/agent-runtime';
 import {
   AgentRuntime,
+  extractActivatedToolIdsFromMessages,
   findInMessages,
   GeneralChatAgent,
   isParkedStatus,
@@ -29,6 +32,7 @@ import {
 import {
   type ChatToolPayload,
   type ExecSubAgentParams,
+  type ExecSubAgentResult,
   type ExecVirtualSubAgentParams,
   type UIChatMessage,
 } from '@lobechat/types';
@@ -42,6 +46,7 @@ import { appEnv } from '@/envs/app';
 import { type AgentRuntimeCoordinatorOptions } from '@/server/modules/AgentRuntime';
 import { AgentRuntimeCoordinator, createStreamEventManager } from '@/server/modules/AgentRuntime';
 import { formatErrorForState } from '@/server/modules/AgentRuntime/formatErrorForState';
+import { hasNonPersistedMessage } from '@/server/modules/AgentRuntime/messagePersistence';
 import {
   createRuntimeExecutors,
   type RuntimeExecutorContext,
@@ -83,8 +88,9 @@ import {
 } from './types';
 
 if (process.env.VERCEL) {
-  // eslint-disable-next-line no-console
-  debug.log = console.log.bind(console);
+  // Route debug output to stdout (`console.info`) instead of stderr, which
+  // Vercel would otherwise surface as error-level logs.
+  debug.log = console.info.bind(console);
 }
 
 const log = debug('lobe-server:agent-runtime-service');
@@ -111,6 +117,9 @@ const ASYNC_TOOL_VERIFY_MAX_ATTEMPTS = 5;
 /** Hard ceiling on a single backoff delay so late attempts don't overshoot. */
 const ASYNC_TOOL_VERIFY_MAX_DELAY_MS = 240_000;
 
+const STEP_LOCK_TTL_SECONDS = 120;
+const STEP_LOCK_HEARTBEAT_MS = 30_000;
+
 /**
  * Exponential backoff delay for the Nth (1-based) watchdog re-check:
  * 15s, 30s, 60s, 120s, 240s, capped at {@link ASYNC_TOOL_VERIFY_MAX_DELAY_MS}.
@@ -120,6 +129,9 @@ const asyncToolVerifyDelayMs = (attempt: number): number =>
     ASYNC_TOOL_VERIFY_DELAY_MS * 2 ** (Math.max(1, attempt) - 1),
     ASYNC_TOOL_VERIFY_MAX_DELAY_MS,
   );
+
+const createStepLockOwner = (operationId: string, stepIndex: number): string =>
+  `${operationId}:${stepIndex}:${process.pid}:${Date.now()}:${randomUUID()}`;
 
 /**
  * Format error for storage in message pluginError metadata.
@@ -192,13 +204,13 @@ export interface AgentRuntimeDelegate {
    * (AiAgentService.execSubAgent → execAgent: agent-config resolution, tool
    * engine, context engineering, createOperation).
    */
-  execSubAgent?: (params: ExecSubAgentParams) => Promise<unknown>;
+  execSubAgent?: (params: ExecSubAgentParams) => Promise<ExecSubAgentResult>;
   /**
    * Fork a `lobe-agent.callSubAgent` virtual child run. The child is marked as a
    * sub-agent and owns the completion bridge that backfills the parent tool
    * placeholder before resuming the parked parent operation.
    */
-  execVirtualSubAgent?: (params: ExecVirtualSubAgentParams) => Promise<unknown>;
+  execVirtualSubAgent?: (params: ExecVirtualSubAgentParams) => Promise<ExecSubAgentResult>;
 }
 
 export interface AgentRuntimeServiceOptions {
@@ -337,6 +349,34 @@ export class AgentRuntimeService {
     this.setupLocalExecutionCallback();
   }
 
+  private startStepLockHeartbeat(
+    operationId: string,
+    stepIndex: number,
+    ownerId: string,
+  ): () => void {
+    const timer = setInterval(() => {
+      this.coordinator
+        .refreshStepLock(operationId, stepIndex, STEP_LOCK_TTL_SECONDS, ownerId)
+        .then((refreshed) => {
+          if (!refreshed) {
+            log(
+              '[%s][%d] Step lock heartbeat did not refresh; ownership may have changed',
+              operationId,
+              stepIndex,
+            );
+          }
+        })
+        .catch((error) => {
+          log('[%s][%d] Step lock heartbeat failed: %O', operationId, stepIndex, error);
+        });
+    }, STEP_LOCK_HEARTBEAT_MS);
+
+    const timerWithUnref = timer as { unref?: () => void };
+    timerWithUnref.unref?.();
+
+    return () => clearInterval(timer);
+  }
+
   /**
    * Setup execution callback for LocalQueueServiceImpl
    * This breaks the circular dependency by using callback injection
@@ -392,6 +432,7 @@ export class AgentRuntimeService {
   async createOperation(params: OperationCreationParams): Promise<OperationCreationResult> {
     const {
       activeDeviceId,
+      activeDeviceScope,
       operationId,
       initialContext,
       agentConfig,
@@ -477,7 +518,21 @@ export class AgentRuntimeService {
       );
 
       // Initialize operation state - create state before saving
+      const activatableToolIds = new Set(operationToolSet.activatableToolIds ?? []);
+      const restoredActivatedToolIds = extractActivatedToolIdsFromMessages(initialMessages)?.filter(
+        (id) => activatableToolIds.has(id),
+      );
+      const activatedStepTools = restoredActivatedToolIds?.length
+        ? restoredActivatedToolIds.map((id) => ({
+            activatedAtStep: initialStepCount,
+            id,
+            manifest: operationToolSet.manifestMap[id],
+            source: 'discovery' as const,
+          }))
+        : undefined;
+
       const initialState = {
+        activatedStepTools,
         createdAt: new Date().toISOString(),
         // Store initialContext for executeSync to use
         initialContext,
@@ -486,6 +541,7 @@ export class AgentRuntimeService {
         messages: initialMessages,
         metadata: {
           activeDeviceId,
+          activeDeviceScope,
           agentConfig,
           agentGroup,
           botContext,
@@ -528,7 +584,7 @@ export class AgentRuntimeService {
       // For an in-group broadcast/speak member, mirror its Gateway stream events
       // onto the supervisor op's channel (parentOperationId) so they flow down the
       // supervisor's existing WebSocket — the client subscribes to one connection,
-      // not one per member (single-connection multiplexing, LOBE-10868).
+      // not one per member (single-connection multiplexing).
       const mirrorToOperationId =
         appContext?.orchestrationRole === 'member' ? (parentOperationId ?? undefined) : undefined;
       await this.coordinator.createAgentOperation(operationId, {
@@ -625,7 +681,19 @@ export class AgentRuntimeService {
    * bootstrap before the topic row has been committed) so callers can skip
    * the `uiMessages` field entirely instead of pushing an empty array.
    */
-  async queryUiMessages(agentState: AgentState): Promise<UIChatMessage[] | undefined> {
+  async queryUiMessages(
+    agentState: AgentState,
+    options?: {
+      /**
+       * Skip the Work-summary assembly for mid-stream (step_start) snapshots —
+       * each step would otherwise re-run the per-type Work queries. Terminal
+       * (agent_runtime_end) snapshots keep works so the settled message list
+       * carries the round's Work chips. The client preserves previously
+       * rendered works when applying a skipped snapshot (`preserveWorks`).
+       */
+      skipWorks?: boolean;
+    },
+  ): Promise<UIChatMessage[] | undefined> {
     const agentId: string | undefined = agentState?.metadata?.agentId;
     const topicId: string | undefined = agentState?.metadata?.topicId;
     // groupId scopes group conversations. Without it the query falls into the
@@ -635,7 +703,12 @@ export class AgentRuntimeService {
     if (!agentId || !topicId) return undefined;
 
     try {
-      return await this.messageService.queryMessages({ agentId, groupId, topicId });
+      return await this.messageService.queryMessages({
+        agentId,
+        groupId,
+        skipWorks: options?.skipWorks,
+        topicId,
+      });
     } catch (error) {
       // Stream events must never fail the step. If the DB hiccups, fall back
       // to letting the client refresh as before.
@@ -699,8 +772,42 @@ export class AgentRuntimeService {
     }
 
     // ===== Distributed lock: prevent duplicate execution from QStash retries =====
-    const claimed = await this.coordinator.tryClaimStep(operationId, stepIndex, 35);
+    const stepLockOwner = createStepLockOwner(operationId, stepIndex);
+    const claimed = await this.coordinator.tryClaimStep(
+      operationId,
+      stepIndex,
+      STEP_LOCK_TTL_SECONDS,
+      stepLockOwner,
+    );
     if (!claimed) {
+      let currentState: AgentState | null | undefined = null;
+      try {
+        currentState = await this.coordinator.loadAgentState(operationId);
+      } catch (error) {
+        log(
+          '[%s][%d] Failed to load state while handling step lock conflict: %O',
+          operationId,
+          stepIndex,
+          error,
+        );
+      }
+
+      const currentStepCount = currentState?.stepCount;
+      if (currentState && typeof currentStepCount === 'number' && currentStepCount > stepIndex) {
+        log(
+          '[%s][%d] Step lock conflict is stale (stepCount=%d), skipping',
+          operationId,
+          stepIndex,
+          currentStepCount,
+        );
+        return {
+          nextStepScheduled: false,
+          state: currentState,
+          stepResult: null,
+          success: true,
+        };
+      }
+
       log(
         '[%s][%d] Step lock conflict — another instance is executing this step, returning locked',
         operationId,
@@ -713,6 +820,12 @@ export class AgentRuntimeService {
         success: false,
       };
     }
+
+    const stopStepLockHeartbeat = this.startStepLockHeartbeat(
+      operationId,
+      stepIndex,
+      stepLockOwner,
+    );
 
     // Hoisted so the error-path snapshot finalize can record an
     // approximate startedAt for the failing step. The inner `startAt` at the
@@ -745,7 +858,7 @@ export class AgentRuntimeService {
           throw new Error(`Agent state not found for operation ${operationId}`);
         }
 
-        const stepStartUiMessages = await this.queryUiMessages(agentState);
+        const stepStartUiMessages = await this.queryUiMessages(agentState, { skipWorks: true });
         await this.streamManager.publishStreamEvent(operationId, {
           data: {
             ...(stepStartUiMessages !== undefined && { uiMessages: stepStartUiMessages }),
@@ -759,10 +872,18 @@ export class AgentRuntimeService {
           externalRetryCount,
         };
 
+        // Rehydrate `messages` from the DB at every step entry. Each step is a
+        // separate invocation that loads state fresh from Redis, so this makes
+        // the DB the single source of truth for the conversation on every path
+        // — not just the async-tool / human-intervention resumes that already
+        // refresh below. With this in place the Redis-persisted state no longer
+        // needs to carry the (potentially multi-MB) `messages` array, which is
+        // what trips Upstash's 10MB single-request limit and drops the op.
+        await this.rehydrateStateMessagesFromDB(agentState);
+
         // Enrich invoke_agent span with agent identity now that state is loaded.
         const stateAgentConfig = agentState.metadata?.agentConfig as
-          | { description?: string | null; title?: string | null }
-          | undefined;
+          { description?: string | null; title?: string | null } | undefined;
         const stateModel =
           agentState.modelRuntimeConfig?.model ?? agentState.metadata?.modelRuntimeConfig?.model;
         const stateProvider =
@@ -1029,6 +1150,8 @@ export class AgentRuntimeService {
           type: 'step_complete',
         });
 
+        await this.publishSubAgentProgress(stepResult.newState, stepIndex);
+
         // Build enhanced step completion log & presentation data
         const { presentation: stepPresentationData, summary: stepSummary } = buildStepPresentation(
           stepResult,
@@ -1246,6 +1369,7 @@ export class AgentRuntimeService {
             error: newStateError
               ? {
                   attribution: newStateError.attribution,
+                  body: newStateError.body,
                   category: newStateError.category,
                   countAsFailure: newStateError.countAsFailure,
                   httpStatus: newStateError.httpStatus,
@@ -1356,6 +1480,7 @@ export class AgentRuntimeService {
         completionReason: 'error',
         error: {
           attribution: formattedError.attribution,
+          body: formattedError.body,
           category: formattedError.category,
           countAsFailure: formattedError.countAsFailure,
           httpStatus: formattedError.httpStatus,
@@ -1365,17 +1490,19 @@ export class AgentRuntimeService {
           severity: formattedError.severity,
           type: String(formattedError.type),
         },
-        failedStep: { startedAt: stepStartAt, stepIndex },
+        failedStep: {
+          startedAt: stepStartAt,
+          stepIndex,
+          stepType: formattedError.category === 'provider' ? 'call_llm' : 'call_tool',
+        },
         state: finalStateWithError,
       });
 
       throw error;
     } finally {
       invokeAgentSpan.end();
-      // Release lock so legitimate retries or next operations can proceed.
-      // If Vercel force-kills the process, this won't execute — the lock
-      // auto-expires after TTL (35s), allowing QStash retries to self-heal.
-      await this.coordinator.releaseStepLock(operationId, stepIndex);
+      stopStepLockHeartbeat();
+      await this.coordinator.releaseStepLock(operationId, stepIndex, stepLockOwner);
     }
   }
 
@@ -1930,6 +2057,50 @@ export class AgentRuntimeService {
   }
 
   /**
+   * Stream a `callSubAgent` child's running totals to the client, once per step.
+   *
+   * Addressed to the PARENT's operationId, not the child's: the client opens one
+   * WebSocket per operation and never subscribes to the child's channel. The
+   * parent's channel is still live because parking at `waiting_for_async_tool`
+   * deliberately does not publish a stream-end event (see
+   * `AgentRuntimeCoordinator.STREAM_END_STATUSES`).
+   *
+   * Rides `step_complete` rather than a new event type because `AgentStreamEventType`
+   * is a closed union shared with the out-of-repo gateway worker; `phase` is the
+   * established discriminator and unknown phases are ignored by older clients.
+   *
+   * The three stat fields are read from exactly the same state paths that
+   * `completeSubAgentBridge` uses for its final backfill, so the live numbers
+   * converge on the persisted ones instead of jumping when the run ends.
+   *
+   * Best-effort: a publish failure must not fail the sub-agent's step.
+   */
+  private async publishSubAgentProgress(state: AgentState, stepIndex: number): Promise<void> {
+    const anchor = state?.metadata?.subAgentProgress as
+      { parentOperationId: string; toolMessageId: string } | undefined;
+    if (!anchor?.parentOperationId || !anchor.toolMessageId) return;
+
+    try {
+      await this.streamManager.publishStreamEvent(anchor.parentOperationId, {
+        data: {
+          model: state?.modelRuntimeConfig?.model,
+          phase: 'subagent_progress',
+          toolMessageId: anchor.toolMessageId,
+          totalCost: state?.cost?.total,
+          totalInputTokens: state?.usage?.llm?.tokens?.input,
+          totalOutputTokens: state?.usage?.llm?.tokens?.output,
+          totalTokens: state?.usage?.llm?.tokens?.total,
+          totalToolCalls: state?.usage?.tools?.totalCalls,
+        },
+        stepIndex,
+        type: 'step_complete',
+      });
+    } catch (error) {
+      log('[%s] failed to publish sub-agent progress (non-fatal): %O', state?.operationId, error);
+    }
+  }
+
+  /**
    * Sub-agent completion bridge for the server `callSubAgent` deferred-tool
    * path. Runs when a child sub-agent op reaches a terminal state — invoked
    * in-process by the child's `onComplete` hook handler (local mode) or via
@@ -1971,6 +2142,23 @@ export class AgentRuntimeService {
     // `updateToolMessage` swallows transaction errors into `success: false`,
     // so the flag must be checked — an unfulfilled message would hold the
     // parent's barrier forever while the callback acked with 200.
+    //
+    // A state loaded via the fallback above arrives without `messages` (the
+    // persisted Redis blob no longer carries them — see
+    // AgentStateManager.serializeStateForPersist), so rehydrate from the DB
+    // before reading the sub-agent's final answer. An in-process
+    // params.finalState already carries them and skips this.
+    if (!failed && finalState && !Array.isArray(finalState.messages)) {
+      try {
+        finalState.messages = await this.refreshMessagesFromDB(finalState);
+      } catch (error) {
+        console.error(
+          '[%s] sub-agent bridge: failed to refresh messages from DB: %O',
+          operationId,
+          error,
+        );
+      }
+    }
     const messages = Array.isArray(finalState?.messages) ? finalState.messages : [];
     const lastAssistant = [...messages]
       .reverse()
@@ -1990,6 +2178,14 @@ export class AgentRuntimeService {
         model: finalState?.modelRuntimeConfig?.model,
         status: failed ? 'error' : 'completed',
         threadId,
+        // The child's spend rides on this anchor row so the parent's usage tray can
+        // account for it. The tray sums per-MESSAGE usage, and the child's own
+        // assistant messages live in an isolation thread the parent never loads —
+        // this row is the only place the child's cost surfaces in the parent's own
+        // message list.
+        totalCost: finalState?.cost?.total,
+        totalInputTokens: finalState?.usage?.llm?.tokens?.input,
+        totalOutputTokens: finalState?.usage?.llm?.tokens?.output,
         totalToolCalls: finalState?.usage?.tools?.totalCalls,
         totalTokens: finalState?.usage?.llm?.tokens?.total,
       },
@@ -2141,6 +2337,22 @@ export class AgentRuntimeService {
     );
 
     // 1. Backfill this member's anchor.
+    // The member's textual answer is only read in delegate mode below; a state
+    // loaded via the fallback above arrives without `messages` (dropped from
+    // the persisted Redis blob — see AgentStateManager.serializeStateForPersist),
+    // so rehydrate from the DB when we actually need them. An in-process
+    // params.finalState already carries them and skips this.
+    if (!failed && mode !== 'in_group' && finalState && !Array.isArray(finalState.messages)) {
+      try {
+        finalState.messages = await this.refreshMessagesFromDB(finalState);
+      } catch (error) {
+        console.error(
+          '[%s] group-member bridge: failed to refresh messages from DB: %O',
+          operationId,
+          error,
+        );
+      }
+    }
     const messages = Array.isArray(finalState?.messages) ? finalState.messages : [];
     const lastAssistant = [...messages]
       .reverse()
@@ -2163,6 +2375,14 @@ export class AgentRuntimeService {
         model: finalState?.modelRuntimeConfig?.model,
         status: failed ? 'error' : 'completed',
         threadId,
+        // The child's spend rides on this anchor row so the parent's usage tray can
+        // account for it. The tray sums per-MESSAGE usage, and the child's own
+        // assistant messages live in an isolation thread the parent never loads —
+        // this row is the only place the child's cost surfaces in the parent's own
+        // message list.
+        totalCost: finalState?.cost?.total,
+        totalInputTokens: finalState?.usage?.llm?.tokens?.input,
+        totalOutputTokens: finalState?.usage?.llm?.tokens?.output,
         totalToolCalls: finalState?.usage?.tools?.totalCalls,
         totalTokens: finalState?.usage?.llm?.tokens?.total,
       },
@@ -2325,6 +2545,40 @@ export class AgentRuntimeService {
     return flatList as AgentState['messages'];
   }
 
+  /**
+   * Overwrite `state.messages` in place with the canonical DB conversation at
+   * step entry, making the DB the single source of truth for messages.
+   *
+   * Guarded against regressions:
+   * - Ops carrying a non-persisted (ephemeral / suppressed) message — e.g. the
+   *   group-member supervisor instruction, which has no DB row — keep their
+   *   full working set in Redis (see `AgentStateManager.serializeStateForPersist`),
+   *   so leave the loaded array intact instead of clobbering it with a DB-only
+   *   view that would drop the prompt.
+   * - `state.messages` is guaranteed to end up an array, so a missing-identifier
+   *   early return or an empty/failed read never hands `undefined` to downstream
+   *   consumers (e.g. `shouldCompress(state.messages)`).
+   * - A populated working set is never replaced with an empty one or on a DB
+   *   error, so a transient read miss can't blank the conversation mid-op.
+   */
+  private async rehydrateStateMessagesFromDB(state: AgentState): Promise<void> {
+    if (hasNonPersistedMessage(state.messages)) return;
+
+    if (!Array.isArray(state.messages)) state.messages = [];
+
+    if (!state.metadata?.agentId || !state.metadata?.topicId) return;
+
+    try {
+      const refreshed = await this.refreshMessagesFromDB(state);
+      if (refreshed.length > 0) state.messages = refreshed;
+    } catch (error) {
+      console.error(
+        '[rehydrateStateMessagesFromDB] failed, keeping Redis state snapshot: %O',
+        error,
+      );
+    }
+  }
+
   private resolveAsyncToolResumeParentMessageId(
     messages: AgentState['messages'],
     pendingTools: ChatToolPayload[],
@@ -2424,6 +2678,10 @@ export class AgentRuntimeService {
     // Create streaming executor context
     const executorContext: RuntimeExecutorContext = {
       agentConfig: metadata?.agentConfig,
+      // The factory may be a Graph-aware dispatcher that still returns the
+      // default agent for ordinary conversations. Keep the early visible
+      // output end behavior tied to the actual agent, not factory presence.
+      allowEarlyFinalAnswerVisibleOutputEnd: agent instanceof GeneralChatAgent,
       botContext: metadata?.botContext,
       botPlatformContext: metadata?.botPlatformContext,
       discordContext: metadata?.discordContext,
@@ -2479,8 +2737,7 @@ export class AgentRuntimeService {
               activeDeviceId,
               devicePlatform: msg.pluginState?.metadata?.devicePlatform as string | undefined,
               deviceSystemInfo: msg.pluginState?.metadata?.deviceSystemInfo as
-                | Record<string, string>
-                | undefined,
+                Record<string, string> | undefined,
             };
           }
         },

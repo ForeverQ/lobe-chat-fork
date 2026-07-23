@@ -1,5 +1,7 @@
 import type { TaskDetailData, TaskVerifyConfig } from '@lobechat/types';
 
+import type { SaveStatus } from '@/types/saveState';
+
 import type { TaskStoreState } from '../initialState';
 
 const activeTaskId = (s: TaskStoreState) => s.activeTaskId;
@@ -17,6 +19,11 @@ const activeTaskName = (s: TaskStoreState) => activeTaskDetail(s)?.name;
 const activeTaskStatus = (s: TaskStoreState) => activeTaskDetail(s)?.status;
 
 const activeTaskPriority = (s: TaskStoreState) => activeTaskDetail(s)?.priority ?? 0;
+
+const activeTaskVisibility = (s: TaskStoreState): 'private' | 'public' =>
+  activeTaskDetail(s)?.visibility ?? 'public';
+
+const activeTaskCreatedByUserId = (s: TaskStoreState) => activeTaskDetail(s)?.createdByUserId;
 
 const activeTaskInstruction = (s: TaskStoreState) => activeTaskDetail(s)?.instruction;
 
@@ -93,14 +100,28 @@ const canCancelActiveTask = (s: TaskStoreState): boolean => {
   return ['backlog', 'paused', 'running', 'scheduled'].includes(detail.status);
 };
 
-const taskSaveStatus = (s: TaskStoreState) => s.taskSaveStatus;
+// Save status is keyed per task, so switching tasks reads the target task's own
+// status (defaulting to 'idle') instead of a stale 'failed' from a prior task.
+const taskSaveStatus = (s: TaskStoreState): SaveStatus =>
+  (s.activeTaskId ? s.taskSaveStatusMap[s.activeTaskId] : undefined) ?? 'idle';
 
 const activeTopicDrawerTopicId = (s: TaskStoreState) => s.activeTopicDrawerTopicId;
+
+/**
+ * Which agent the open run drawer talks to. A run opened from a task detail
+ * inherits the task's agent; one opened from the home inbox carries its own,
+ * since the topic may have no parent task.
+ */
+const topicDrawerAgentId = (s: TaskStoreState) =>
+  s.activeTopicDrawerAgentId ?? activeTaskAgentId(s);
+
+const topicDrawerTitle = (s: TaskStoreState) => s.activeTopicDrawerTitle;
 
 export const taskDetailSelectors = {
   activeTaskAgentId,
   activeTaskAutomationMode,
   activeTaskCheckpoint,
+  activeTaskCreatedByUserId,
   activeTaskModel,
   activeTaskDependencies,
   activeTaskDescription,
@@ -122,6 +143,7 @@ export const taskDetailSelectors = {
   activeTaskSubtasks,
   activeTaskTopicCount,
   activeTaskVerifyConfig,
+  activeTaskVisibility,
   activeTaskWorkspace,
   activeTaskWorkspaceId,
   activeTopicDrawerTopicId,
@@ -131,4 +153,6 @@ export const taskDetailSelectors = {
   isTaskDetailLoading,
   taskDetailById,
   taskSaveStatus,
+  topicDrawerAgentId,
+  topicDrawerTitle,
 };

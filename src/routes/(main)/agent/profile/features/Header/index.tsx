@@ -1,22 +1,39 @@
 import { isDesktop } from '@lobechat/const';
+import { getActivePluginIds } from '@lobechat/types';
 import { ActionIcon, DropdownMenu, Flexbox, Icon } from '@lobehub/ui';
 import { confirmModal, type ModalInstance } from '@lobehub/ui/base-ui';
+import { cssVar } from 'antd-style';
 import isEqual from 'fast-deep-equal';
 import type { TFunction } from 'i18next';
-import { BotMessageSquareIcon, Download, MoreHorizontal, Settings2Icon, Trash } from 'lucide-react';
+import {
+  BarChart3,
+  BotMessageSquareIcon,
+  Download,
+  MoreHorizontal,
+  Settings2Icon,
+  Trash,
+  UserRound,
+} from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAgentTransferMenuItem } from '@/business/client/hooks/useAgentTransferMenuItem';
+import { useAuthorInfo } from '@/business/client/hooks/useAuthorInfo';
 import { useBusinessAgentImportMenuItem } from '@/business/client/hooks/useBusinessAgentImportMenuItem';
+import { useHasActiveWorkspace } from '@/business/client/hooks/useHasActiveWorkspace';
 import { message } from '@/components/AntdStaticMethods';
 import { DESKTOP_HEADER_ICON_SMALL_SIZE } from '@/const/layoutTokens';
+import AgentBreadcrumb from '@/features/AgentBreadcrumb';
 import NavHeader from '@/features/NavHeader';
+import { formatPageEditorInfoTime } from '@/features/PageEditor/formatPageEditorInfoTime';
+import AccessLevelTag from '@/features/ResourcePermission/AccessLevelTag';
+import { useResourceAccess } from '@/features/ResourcePermission/useResourceAccess';
+import { useResourcePermissionMenuItem } from '@/features/ResourcePermission/useResourcePermissionMenuItem';
 import ToggleRightPanelButton from '@/features/RightPanel/ToggleRightPanelButton';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { usePermission } from '@/hooks/usePermission';
 import { useAgentStore } from '@/store/agent';
-import { agentSelectors } from '@/store/agent/selectors';
+import { agentSelectors, builtinAgentSelectors } from '@/store/agent/selectors';
 import { useGlobalStore } from '@/store/global';
 import { systemStatusSelectors } from '@/store/global/selectors';
 import { useHomeStore } from '@/store/home';
@@ -27,9 +44,11 @@ import { selectors as profileSelectors, useProfileStore } from '../store';
 import AgentForkTag from './AgentForkTag';
 import AgentStatusTag from './AgentStatusTag';
 import AgentVersionReviewTag from './AgentVersionReviewTag';
-import AutoSaveHint from './AutoSaveHint';
 
-type HeaderTranslation = TFunction<readonly ['setting', 'chat', 'file', 'common'], undefined>;
+type HeaderTranslation = TFunction<
+  readonly ['setting', 'chat', 'file', 'common', 'spend'],
+  undefined
+>;
 
 const buildAgentProfileMarkdown = (params: {
   description?: string;
@@ -81,7 +100,8 @@ const buildAgentProfileMarkdown = (params: {
 };
 
 const Header = memo(() => {
-  const { t } = useTranslation(['setting', 'chat', 'file', 'common']);
+  const { i18n, t } = useTranslation(['setting', 'chat', 'file', 'common', 'spend']);
+  const dateLocale = i18n?.resolvedLanguage || i18n?.language;
   const navigate = useWorkspaceAwareNavigate();
 
   const meta = useAgentStore(agentSelectors.currentAgentMeta, isEqual);
@@ -89,6 +109,16 @@ const Header = memo(() => {
   const systemRole = useAgentStore(agentSelectors.currentAgentSystemRole);
   const activeAgentId = useAgentStore((s) => s.activeAgentId);
   const isHeterogeneous = useAgentStore(agentSelectors.isCurrentAgentHeterogeneous);
+  const isInbox = useAgentStore(builtinAgentSelectors.isInboxAgent);
+  const visibility = useAgentStore(agentSelectors.currentAgentVisibility);
+  const authorId = useAgentStore(agentSelectors.currentAgentAuthorId);
+  const createdAt = useAgentStore(agentSelectors.currentAgentCreatedAt);
+  const authorName = useAuthorInfo(authorId)?.fullName;
+  const hasActiveWorkspace = useHasActiveWorkspace();
+  // Resource permissions apply to every public workspace agent, including the
+  // workspace-scoped LobeAI row. Builtin restrictions only prevent visibility
+  // changes; they must not hide the independent General-access control.
+  const showPermissionsEntry = hasActiveWorkspace && !!activeAgentId && visibility !== 'private';
   const [showAgentBuilderPanel, toggleAgentBuilderPanel, isStatusInit] = useGlobalStore((s) => [
     systemStatusSelectors.showAgentBuilderPanel(s),
     s.toggleAgentBuilderPanel,
@@ -98,10 +128,17 @@ const Header = memo(() => {
   const editor = useProfileStore((s) => s.editor);
   const lockedByOther = useProfileStore(profileSelectors.lockedByOther);
   const lockPending = useProfileStore(profileSelectors.lockPending);
-  const { allowed: canEdit } = usePermission('edit_own_content');
+  const { allowed: hasEditPermission } = usePermission('edit_own_content');
+  // A workspace member without edit-level General access on this agent gets the
+  // same disabled-with-tooltip treatment as a role viewer (server enforces).
+  const { canEditResource, canManageResource } = useResourceAccess(
+    'agent',
+    showPermissionsEntry ? activeAgentId : undefined,
+  );
+  const canManage = hasEditPermission && canManageResource;
 
   const handleDelete = useCallback(() => {
-    if (!canEdit || !activeAgentId) return;
+    if (!canManage || !activeAgentId) return;
     confirmModal({
       okButtonProps: { danger: true },
       onOk: async () => {
@@ -111,7 +148,7 @@ const Header = memo(() => {
       },
       title: t('confirmRemoveSessionItemAlert', { ns: 'chat' }),
     });
-  }, [activeAgentId, canEdit, navigate, removeAgent, t]);
+  }, [activeAgentId, canManage, navigate, removeAgent, t]);
 
   const handleExportMarkdown = useCallback(async () => {
     try {
@@ -121,7 +158,9 @@ const Header = memo(() => {
       const profileMarkdown = buildAgentProfileMarkdown({
         description: meta?.description,
         model: config.model,
-        plugins: config.plugins,
+        // Pinned identifiers only — a disabled plugin shouldn't be advertised
+        // as "enabled" in the exported markdown.
+        plugins: getActivePluginIds(config.plugins),
         provider: config.provider,
         systemRole: editorMarkdown ?? systemRole,
         t,
@@ -162,6 +201,10 @@ const Header = memo(() => {
 
   const importMenuItem = useBusinessAgentImportMenuItem(activeAgentId ?? undefined);
   const transferMenuItems = useAgentTransferMenuItem(activeAgentId ?? undefined, meta);
+  const memberPermissionMenuItem = useResourcePermissionMenuItem(
+    'agent',
+    showPermissionsEntry ? activeAgentId : undefined,
+  );
 
   const settingsModalRef = useRef<ModalInstance | null>(null);
   useEffect(
@@ -177,14 +220,27 @@ const Header = memo(() => {
 
     return [
       {
+        // View/use-level members can't edit the agent config — keep the entry
+        // visible but disabled (project convention: disabled, not hidden).
+        disabled: !canEditResource,
         icon: <Icon icon={Settings2Icon} />,
         key: 'advanced-settings',
         label: t('advancedSettings', { ns: 'setting' }),
         onClick: () => {
+          if (!canEditResource) return;
           settingsModalRef.current?.close();
           settingsModalRef.current = openAgentSettingsModal();
         },
       },
+      {
+        icon: <Icon icon={BarChart3} />,
+        key: 'usage-stats',
+        label: t('usageStats.entry', { ns: 'spend' }),
+        onClick: () => {
+          if (activeAgentId) navigate(`/agent/${activeAgentId}/stats`);
+        },
+      },
+      memberPermissionMenuItem,
       { type: 'divider' as const },
       {
         children: [
@@ -202,26 +258,74 @@ const Header = memo(() => {
       importMenuItem,
       businessTransferMenuItems.length > 0 ? { type: 'divider' as const } : null,
       ...businessTransferMenuItems,
-      { type: 'divider' as const },
-      {
-        danger: true,
-        disabled: !canEdit,
-        icon: <Icon icon={Trash} />,
-        key: 'delete',
-        label: t('delete', { ns: 'common' }),
-        onClick: handleDelete,
-      },
+      canManage ? { type: 'divider' as const } : null,
+      canManage
+        ? {
+            danger: true,
+            icon: <Icon icon={Trash} />,
+            key: 'delete',
+            label: t('delete', { ns: 'common' }),
+            onClick: handleDelete,
+          }
+        : null,
+      // Author / creation info footer, mirroring the page editor menu.
+      ...(!isInbox && (authorName || createdAt)
+        ? [
+            { type: 'divider' as const },
+            {
+              disabled: true,
+              icon: authorName ? <Icon icon={UserRound} /> : undefined,
+              key: 'agent-info',
+              label: (
+                <span style={{ color: cssVar.colorTextTertiary, fontSize: 12, lineHeight: 1.6 }}>
+                  {[
+                    authorName,
+                    createdAt
+                      ? t('createdAt', {
+                          ns: 'common',
+                          time: formatPageEditorInfoTime(createdAt, dateLocale),
+                        })
+                      : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+              ),
+            },
+          ]
+        : []),
     ].filter(Boolean);
-  }, [canEdit, handleExportMarkdown, handleDelete, t, importMenuItem, transferMenuItems]);
+  }, [
+    activeAgentId,
+    authorName,
+    canEditResource,
+    canManage,
+    createdAt,
+    dateLocale,
+    handleExportMarkdown,
+    handleDelete,
+    isInbox,
+    memberPermissionMenuItem,
+    navigate,
+    t,
+    importMenuItem,
+    transferMenuItems,
+  ]);
 
   return (
     <NavHeader
       left={
         <Flexbox horizontal align={'center'} gap={8}>
-          <AutoSaveHint />
+          {activeAgentId && (
+            <AgentBreadcrumb agentId={activeAgentId} title={t('tab.profile', { ns: 'chat' })} />
+          )}
           <AgentStatusTag />
           <AgentVersionReviewTag />
           <AgentForkTag />
+          <AccessLevelTag
+            resourceId={showPermissionsEntry ? (activeAgentId ?? undefined) : undefined}
+            resourceType={'agent'}
+          />
         </Flexbox>
       }
       right={
@@ -239,6 +343,11 @@ const Header = memo(() => {
           )}
         </Flexbox>
       }
+      styles={{
+        left: {
+          paddingInlineStart: 8,
+        },
+      }}
     />
   );
 });

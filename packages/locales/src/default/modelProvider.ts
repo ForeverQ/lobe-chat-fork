@@ -196,6 +196,8 @@ export default {
   'providerModels.config.baseURL.invalid': 'Please enter a valid URL',
   'providerModels.config.baseURL.placeholder': 'https://your-proxy-url.com/v1',
   'providerModels.config.baseURL.title': 'API Proxy URL',
+  'providerModels.config.builtinNotice':
+    'Built-in providers cannot be removed from the list. If you don’t use this provider, just disable it.',
   'providerModels.config.checker.button': 'Check',
   'providerModels.config.checker.desc': 'Test if the API Key and proxy URL are correctly filled',
   'providerModels.config.checker.pass': 'Check passed',
@@ -273,12 +275,16 @@ export default {
     'For GPT-5.2 Pro series; controls reasoning intensity.',
   'providerModels.item.modelConfig.extendParams.options.gpt5_2ReasoningEffort.hint':
     'For GPT-5.2 series; controls reasoning intensity.',
+  'providerModels.item.modelConfig.extendParams.options.gpt5_6ReasoningEffort.hint':
+    'For GPT-5.6 series; controls reasoning intensity from None through Max.',
   'providerModels.item.modelConfig.extendParams.options.glm5_2ReasoningEffort.hint':
     'For GLM-5.2; controls reasoning effort with High and Max levels.',
   'providerModels.item.modelConfig.extendParams.options.grok4_20ReasoningEffort.hint':
     'For Grok 4.20 series; controls reasoning intensity. Low/Medium uses 4 agents, High/XHigh uses 16 agents.',
   'providerModels.item.modelConfig.extendParams.options.grok4_3ReasoningEffort.hint':
     'For Grok 4.3 series; controls reasoning intensity.',
+  'providerModels.item.modelConfig.extendParams.options.grok4_5ReasoningEffort.hint':
+    'For Grok 4.5 series; controls reasoning intensity (low/medium/high, default high).',
   'providerModels.item.modelConfig.extendParams.options.hy3ReasoningEffort.hint':
     'For Hy3 models; controls reasoning intensity. no_think (ultra-fast response), low (quick reasoning), and high (deep reasoning)—to accommodate varying latency and depth requirements, from high-frequency interactions to complex engineering tasks.',
   'providerModels.item.modelConfig.extendParams.options.ring2_6ReasoningEffort.hint':
@@ -305,6 +311,8 @@ export default {
     'For Qwen3 series; controls token budget for reasoning (max 80k).',
   'providerModels.item.modelConfig.extendParams.options.reasoningEffort.hint':
     'For OpenAI and other reasoning-capable models; controls reasoning effort.',
+  'providerModels.item.modelConfig.extendParams.options.reasoningMode.hint':
+    'For GPT-5.6 Responses API; switches between Standard and Pro reasoning modes.',
   'providerModels.item.modelConfig.extendParams.options.step3_5ReasoningEffort.hint':
     'For Step 3.5 series; controls reasoning intensity.',
   'providerModels.item.modelConfig.extendParams.options.textVerbosity.hint':
@@ -396,6 +404,9 @@ export default {
   'providerModels.list.enabledEmpty':
     'No enabled models available. Please enable your preferred models from the list below~',
   'providerModels.list.fetcher.clear': 'Clear fetched models',
+  'providerModels.list.fetcher.duplicatesRemoved': 'Duplicate entries removed ({{count}}): {{ids}}',
+  'providerModels.list.fetcher.duplicatesRemovedWithMore':
+    'Duplicate entries removed ({{count}}): {{ids}} (+{{remainingCount}} more IDs)',
   'providerModels.list.fetcher.error': 'Failed to fetch models: {{message}}',
   'providerModels.list.fetcher.errorFallback': 'Unknown error',
   'providerModels.list.fetcher.fetch': 'Fetch models',

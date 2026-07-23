@@ -17,6 +17,7 @@ class TaskService {
     parentTaskId?: string | null;
     priorities?: number[];
     statuses?: TaskStatus[];
+    visibility?: 'private' | 'public';
   }) => lambdaClient.task.list.query(params);
 
   groupList = async (params: {
@@ -28,6 +29,7 @@ class TaskService {
       statuses: string[];
     }>;
     parentTaskId?: string | null;
+    visibility?: 'private' | 'public';
   }) => lambdaClient.task.groupList.query(params);
 
   getSubtasks = async (id: string) => lambdaClient.task.getSubtasks.query({ id });
@@ -62,7 +64,11 @@ class TaskService {
     priority?: number;
     schedulePattern?: string;
     scheduleTimezone?: string;
+    visibility?: 'private' | 'public';
   }) => lambdaClient.task.create.mutate(params);
+
+  updateVisibility = async (id: string, visibility: 'private' | 'public') =>
+    lambdaClient.task.updateVisibility.mutate({ id, visibility });
 
   update = async (
     id: string,
@@ -167,13 +173,14 @@ class TaskService {
 
   markBriefRead = async (id: string) => lambdaClient.brief.markRead.mutate({ id });
 
-  // ── Transfer / Copy ──
+  // ── Copy ──
 
-  transferTask = async (taskId: string, targetWorkspaceId: string | null) =>
-    lambdaClient.task.transferTask.mutate({ targetWorkspaceId, taskId });
-
-  copyTaskToWorkspace = async (taskId: string, targetWorkspaceId: string | null) =>
-    lambdaClient.task.copyTaskToWorkspace.mutate({ targetWorkspaceId, taskId });
+  copyTaskToWorkspace = async (
+    taskId: string,
+    targetWorkspaceId: string | null,
+    targetVisibility?: 'private' | 'public',
+  ) =>
+    lambdaClient.task.copyTaskToWorkspace.mutate({ targetVisibility, targetWorkspaceId, taskId });
 }
 
 export const taskService = new TaskService();

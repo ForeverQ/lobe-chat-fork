@@ -1,7 +1,7 @@
+import { ModelEmptyError } from '@lobechat/model-runtime';
 import { describe, expect, it } from 'vitest';
 
 import { classifyLLMError } from '../llmErrorClassification';
-import { ModelEmptyError } from '../ModelEmptyError';
 
 describe('classifyLLMError', () => {
   it('should classify rate limit errors as retry', () => {
@@ -72,6 +72,7 @@ describe('classifyLLMError', () => {
       ['CapabilityNotSupported', 'The model is not a VLM'],
       ['LocationNotSupportError', 'service unavailable in this region'],
       ['ExceededToolLimit', 'tools array exceeds limit'],
+      ['ModelEmptyCompletion', 'model returned an empty completion'],
     ])('classifies %s as stop (no HTTP status)', (errorType, message) => {
       expect(classifyLLMError({ errorType, message }).kind).toBe('stop');
     });
@@ -82,13 +83,12 @@ describe('classifyLLMError', () => {
       ['ProviderServiceUnavailable', 'upstream temporarily overloaded'],
       ['ProviderNetworkError', 'connection timed out'],
       ['RateLimitExceeded', 'tokens per minute (TPM)'],
-      ['ModelEmptyCompletion', 'model returned an empty completion'],
     ])('classifies %s as retry (no HTTP status)', (errorType, message) => {
       expect(classifyLLMError({ errorType, message }).kind).toBe('retry');
     });
 
-    it('classifies a thrown ModelEmptyError instance as retry', () => {
-      expect(classifyLLMError(new ModelEmptyError()).kind).toBe('retry');
+    it('classifies a thrown ModelEmptyError instance as stop', () => {
+      expect(classifyLLMError(new ModelEmptyError()).kind).toBe('stop');
     });
   });
 

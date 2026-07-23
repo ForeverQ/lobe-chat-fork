@@ -1,11 +1,16 @@
 import { isParkedStatus } from '@lobechat/agent-runtime';
+import type { MessageContentPart } from '@lobechat/types';
+import { deserializeParts } from '@lobechat/utils';
+import { isRecord } from '@lobechat/utils/object';
 import debug from 'debug';
 
 import {
   AgentOperationModel,
+  type ChildUsageRollup,
   type RecordOperationStartParams,
 } from '@/database/models/agentOperation';
 import { MessageModel } from '@/database/models/message';
+import { recomputeTopicUsage } from '@/database/models/topicUsage';
 import { VerifyRunModel } from '@/database/models/verifyRun';
 import { type LobeChatDatabase } from '@/database/type';
 import { formatErrorForState } from '@/server/modules/AgentRuntime/formatErrorForState';
@@ -15,11 +20,66 @@ import { toAgentSignalTraceEvents } from '@/server/services/agentSignal/observab
 import { extractSelfIterationCompletionPayload } from '@/server/services/agentSignal/services/selfIteration/completion';
 import { instantiateVerifyPlanOnStart, runVerifyOnCompletion } from '@/server/services/verify';
 
-import { hookDispatcher } from './hooks';
+import { hookDispatcher, type SerializedHook } from './hooks';
 
 const log = debug('lobe-server:completion-lifecycle');
 
 type SignalEvent = { [key: string]: unknown; type: string };
+
+/**
+ * Normalized terminal-completion input for {@link CompletionLifecycle.completeOperation}.
+ *
+ * This is the single typed shape every NON-in-process terminal path passes in —
+ * heterogeneous CLI exit (`heteroFinish`), remote-agent done signal
+ * (`agentNotify`), and synchronous dispatch failure
+ * (`finalizeHeteroDispatchError`). `completeOperation` expands it into the
+ * runtime `state` shape `dispatchHooks` consumes via one builder, so there is
+ * exactly ONE place that mirrors the runtime state — no per-caller hand-rolled
+ * synthetic state to drift.
+ *
+ * The in-process runtime keeps calling `dispatchHooks` with its real, rich
+ * `state` directly (full message array, interruption, …) — it needs no synthesis.
+ */
+export interface OperationCompletionInput {
+  /** Owning agent id — trace snapshot key + the lifecycle event's `agentId`. */
+  agentId?: string;
+  /** Final assistant message row id — anchors the verify card / error bubble. */
+  assistantMessageId?: string;
+  cost?: { total?: number | null } | null;
+  /** Final assistant deliverable text — the verify gate's input + bot rendering. */
+  deliverable?: string;
+  /** Terminal error payload (error path only). */
+  error?: unknown;
+  /**
+   * The user goal (first user turn) — the verify gate judges against it. Typed
+   * `unknown` because message content is polymorphic (string or multimodal part
+   * array); `dispatchHooks` normalizes it to text the same way it does the
+   * in-process path's user turn.
+   */
+  goal?: unknown;
+  /** Executed model — the verify gate keys off `op.model`, so hetero backfills it. */
+  model?: string | null;
+  operationId: string;
+  /** Executed provider — see {@link OperationCompletionInput.model}. */
+  provider?: string | null;
+  /** Serialized webhook hooks (queue mode); ignored in local in-memory mode. */
+  serializedHooks?: SerializedHook[];
+  stepCount?: number | null;
+  topicId?: string;
+  /** Trace / usage aggregates (llm calls, tokens, tool calls). */
+  usage?: unknown;
+  userId?: string;
+}
+
+/** Options shared by {@link CompletionLifecycle.completeOperation} / `dispatchHooks`. */
+export interface CompleteOperationOptions {
+  /**
+   * Skip writing the terminal error onto the assistant message row. Set by callers
+   * that already wrote a bespoke error bubble before delegating (e.g. the hetero
+   * dispatch-failure path, which surfaces a device-specific `detail`).
+   */
+  skipErrorMessageWrite?: boolean;
+}
 
 const toAgentSignalSnapshotEvents = (
   emission: Awaited<ReturnType<typeof emitAgentSignalSourceEvent>> | undefined,
@@ -154,6 +214,26 @@ export class CompletionLifecycle {
     // dispatchHooks call (when the op resumes and truly ends) overwrites both.
     const completedAt = isParkedStatus(status) ? undefined : new Date();
 
+    // Fold every child operation's spend (callSubAgent children, isolated group
+    // members) into the parent's totals, so an op's row accounts for the whole
+    // tree it forked rather than only the tokens its own turns burned.
+    //
+    // Re-derived from the child rows on every write instead of accumulated onto
+    // this one: `recordCompletion` is a wholesale SET, and this method runs again
+    // each time the op parks and resumes — an additive rollup would multiply. The
+    // SUM is exact however often it re-runs.
+    //
+    // Skipped for sub-agents and group members themselves: nested sub-agents are
+    // rejected up front, so a child never has children of its own and the query
+    // would always return zero.
+    const rollup =
+      metadata?.isSubAgent === true ? undefined : await this.sumChildUsage(operationId);
+
+    const add = (own: number | null | undefined, child: number): number | null => {
+      if (!child) return own ?? null;
+      return (own ?? 0) + child;
+    };
+
     try {
       await this.agentOperationModel.recordCompletion(operationId, {
         completedAt,
@@ -161,7 +241,7 @@ export class CompletionLifecycle {
         cost: state?.cost ?? null,
         error: state?.error ?? null,
         interruption: state?.interruption ?? null,
-        llmCalls: state?.usage?.llm?.apiCalls ?? null,
+        llmCalls: add(state?.usage?.llm?.apiCalls, rollup?.llmCalls ?? 0),
         // Backfill the executed model/provider when the terminal state carries
         // them. The in-process runtime sets neither on `state` (the op already
         // holds them from recordStart) so these stay undefined and recordCompletion
@@ -174,16 +254,46 @@ export class CompletionLifecycle {
         provider: state?.provider,
         status,
         stepCount: state?.stepCount ?? null,
-        toolCalls: state?.usage?.tools?.totalCalls ?? null,
-        totalCost: state?.cost?.total ?? null,
-        totalInputTokens: state?.usage?.llm?.tokens?.input ?? null,
-        totalOutputTokens: state?.usage?.llm?.tokens?.output ?? null,
-        totalTokens: state?.usage?.llm?.tokens?.total ?? null,
+        toolCalls: add(state?.usage?.tools?.totalCalls, rollup?.toolCalls ?? 0),
+        totalCost: add(state?.cost?.total, rollup?.totalCost ?? 0),
+        totalInputTokens: add(state?.usage?.llm?.tokens?.input, rollup?.totalInputTokens ?? 0),
+        totalOutputTokens: add(state?.usage?.llm?.tokens?.output, rollup?.totalOutputTokens ?? 0),
+        totalTokens: add(state?.usage?.llm?.tokens?.total, rollup?.totalTokens ?? 0),
         traceS3Key,
+        // The `usage` / `cost` blobs stay the op's OWN accumulator, un-rolled-up:
+        // they are the runtime's counter, and the executor reads them back as state
+        // (the cost-limit gate compares `state.cost.total` against the budget). Only
+        // the scalar columns — the reporting surface — carry the whole tree.
         usage: state?.usage ?? null,
       });
     } catch (error) {
       log('[%s] Failed to persist operation completion (non-fatal): %O', operationId, error);
+    }
+
+    // The topic rollup's tool / human-interaction stats derive from the
+    // operation rows written above (`recomputeTopicUsage` reads their usage/cost
+    // blobs), but its usual trigger is the assistant message's usage write,
+    // which can land BEFORE this terminal persist. Refresh here so this op's
+    // tool spend shows up without waiting for the next message mutation.
+    // Idempotent (pure derived projection) and non-fatal.
+    if (topicId) {
+      try {
+        await this.serverDB.transaction((trx) =>
+          recomputeTopicUsage(trx, this.userId, topicId, this.workspaceId),
+        );
+      } catch (error) {
+        log('[%s] Failed to recompute topic usage rollup (non-fatal): %O', operationId, error);
+      }
+    }
+  }
+
+  /** Best-effort child-usage rollup — a DB hiccup must not fail the completion write. */
+  private async sumChildUsage(operationId: string): Promise<ChildUsageRollup | undefined> {
+    try {
+      return await this.agentOperationModel.sumChildUsage(operationId);
+    } catch (error) {
+      log('[%s] Failed to sum child operation usage (non-fatal): %O', operationId, error);
+      return undefined;
     }
   }
 
@@ -269,9 +379,10 @@ export class CompletionLifecycle {
                 payload: {
                   agentId: metadata?.agentId,
                   // Anchor the deferred skill synthesis to the completed assistant
-                  // turn (LOBE-10802): the completion-stage skill handler walks
-                  // this id back to the user message to read the parked candidate
-                  // and seeds the skill under the assistant group. Resolved from
+                  // turn: the completion-stage skill handler walks this id back
+                  // to the user message to read the parked candidate and seeds
+                  // the skill under the assistant group — instead of synthesizing
+                  // from the user prompt alone at inbound time. Resolved from
                   // the final assistant message row when operation metadata omits
                   // it (the server execAgent path).
                   anchorMessageId: assistantMessageId,
@@ -352,12 +463,65 @@ export class CompletionLifecycle {
   }
 
   /**
+   * Expand a normalized {@link OperationCompletionInput} into the runtime `state`
+   * shape `dispatchHooks` consumes. The SINGLE place that mirrors the runtime
+   * state for non-in-process paths — goal/deliverable become the user/assistant
+   * turns the gate reads, model/provider backfill the op row, hooks ride on
+   * `metadata._hooks`. Replaces the per-caller hand-rolled synthetic state that
+   * previously drifted (e.g. a verify field added here was missed by heteroFinish).
+   */
+  private buildStateFromInput(input: OperationCompletionInput) {
+    return {
+      cost: input.cost ?? { total: null },
+      error: input.error ?? undefined,
+      messages: [
+        { content: input.goal ?? '', role: 'user' },
+        { content: input.deliverable ?? '', role: 'assistant' },
+      ],
+      metadata: {
+        _hooks: input.serializedHooks,
+        agentId: input.agentId,
+        assistantMessageId: input.assistantMessageId,
+        topicId: input.topicId,
+        userId: input.userId ?? this.userId,
+      },
+      model: input.model ?? undefined,
+      provider: input.provider ?? undefined,
+      stepCount: input.stepCount ?? null,
+      usage: input.usage ?? undefined,
+    };
+  }
+
+  /**
+   * The single terminal-completion entry for every path that does NOT have the
+   * in-process runtime's rich `state` in hand: heterogeneous CLI exit
+   * (`heteroFinish`), remote-agent done signal (`agentNotify`), and synchronous
+   * dispatch failure (`finalizeHeteroDispatchError`). Builds the synthetic state
+   * once and runs the SAME pipeline the in-process runtime uses — persist the
+   * terminal op row, fire onComplete/onError hooks, and (on `done`) run the
+   * delivery-checker verify gate. This is what makes those paths true lifecycle
+   * peers instead of firing a stripped-down hooks-only funnel.
+   */
+  async completeOperation(
+    input: OperationCompletionInput,
+    reason: 'done' | 'error',
+    options?: CompleteOperationOptions,
+  ): Promise<void> {
+    await this.dispatchHooks(input.operationId, this.buildStateFromInput(input), reason, options);
+  }
+
+  /**
    * Dispatch `onComplete` (and `onError` for `reason='error'`) hooks via
    * the global `hookDispatcher`. On the error path, also writes the error
    * back onto the assistant message row so the frontend can render it.
    * Fire-and-forget; always unregisters the operation from the dispatcher.
    */
-  async dispatchHooks(operationId: string, state: any, reason: string): Promise<void> {
+  async dispatchHooks(
+    operationId: string,
+    state: any,
+    reason: string,
+    options?: CompleteOperationOptions,
+  ): Promise<void> {
     // `waiting_for_async_tool` parks the SAME operation: it persists the parked
     // status (the async-tool resume CAS reads it) but must NOT fire `onComplete`
     // or unregister hooks — the op resumes under this same id and reaches its
@@ -367,13 +531,37 @@ export class CompletionLifecycle {
     const isAsyncToolPark = reason === 'waiting_for_async_tool';
 
     try {
-      const { event, metadata } = this.buildLifecycleEvent(operationId, state, reason);
+      const { assistantMessageId, event, metadata } = this.buildLifecycleEvent(
+        operationId,
+        state,
+        reason,
+      );
 
       // Finalize the agent_operations row before user hooks fire so
       // downstream consumers see the row in its terminal shape.
       await this.persistCompletion(operationId, state, reason);
 
       if (isAsyncToolPark) return;
+
+      // `lastAssistantContent` comes off the Redis-backed `state.messages`,
+      // while the assistant message row is persisted through a separate
+      // `messageModel.update` path. When the two diverge (state entry empty
+      // but the DB row holds the full reply — LOBE-11632: bot completions
+      // arrived with no content while the app showed the reply), consumers
+      // like the IM bot callback silently drop the reply. Recover from the DB
+      // row — the same source of truth the app UI renders — before dispatch.
+      if (
+        (reason === 'done' || reason === 'max_steps' || reason === 'cost_limit') &&
+        !event.lastAssistantContent?.trim() &&
+        !event.attachments?.length
+      ) {
+        const recovered = await this.recoverLastAssistantContent(
+          operationId,
+          assistantMessageId,
+          metadata?.userId || this.userId,
+        );
+        if (recovered) event.lastAssistantContent = recovered;
+      }
 
       await hookDispatcher.dispatch(operationId, 'onComplete', event, metadata._hooks);
 
@@ -418,7 +606,7 @@ export class CompletionLifecycle {
         await hookDispatcher.dispatch(operationId, 'onError', event, metadata._hooks);
 
         const assistantMessageId = metadata?.assistantMessageId;
-        if (assistantMessageId && state?.error) {
+        if (assistantMessageId && state?.error && !options?.skipErrorMessageWrite) {
           // Preserve the semantic error type written by the runtime. Rebuilding
           // this as a generic AgentRuntimeError would lose UI routing data such
           // as quota context and force the client into the fallback card.
@@ -459,9 +647,64 @@ export class CompletionLifecycle {
     }
   }
 
+  /**
+   * Load the final assistant message row from the DB and return its text
+   * content, for completions whose Redis-side state carried no assistant
+   * text (see the LOBE-11632 note in {@link dispatchHooks}). Non-fatal: any
+   * failure just leaves the event as-built.
+   */
+  private async recoverLastAssistantContent(
+    operationId: string,
+    assistantMessageId: string | undefined,
+    userId: string,
+  ): Promise<string | undefined> {
+    if (!assistantMessageId) return undefined;
+
+    try {
+      const messageModel =
+        userId === this.userId
+          ? this.messageModel
+          : new MessageModel(this.serverDB, userId, this.workspaceId);
+      const row = await messageModel.findById(assistantMessageId);
+      const raw = typeof row?.content === 'string' ? row.content : undefined;
+      if (!raw?.trim()) return undefined;
+
+      // Multimodal rows store `content` as serialized MessageContentPart[]
+      // (see callLlmFinalizer / serializePartsForStorage) — sending
+      // that verbatim would deliver raw JSON to the bot channel. Gate on the
+      // row's `metadata.isMultimodal` flag (the same signal the app UI uses
+      // in DisplayContent) rather than sniffing the string, so a legitimate
+      // plain-text reply that happens to be a JSON array is preserved as-is.
+      // Extract only the text parts; an image-only row recovers nothing.
+      const isMultimodal =
+        (row?.metadata as { isMultimodal?: boolean } | null | undefined)?.isMultimodal === true;
+      const parts = isMultimodal ? deserializeParts(raw) : null;
+      const content = parts
+        ? parts
+            .filter((p): p is Extract<MessageContentPart, { type: 'text' }> => p.type === 'text')
+            .map((p) => p.text)
+            .join('')
+        : raw;
+      if (!content.trim()) return undefined;
+
+      // console (not debug) so state/DB divergence stays visible in
+      // production logs — the silent variant of this is what made
+      // LOBE-11632 hard to diagnose.
+      console.warn(
+        `[CompletionLifecycle][${operationId}] completion event had no assistant text; recovered ${content.length} chars from message ${assistantMessageId}`,
+      );
+      return content;
+    } catch (error) {
+      log('[%s] recoverLastAssistantContent failed (non-fatal): %O', operationId, error);
+      return undefined;
+    }
+  }
+
   private buildLifecycleEvent(operationId: string, state: any, reason: string) {
     const metadata = state?.metadata || {};
-    const messages: any[] = Array.isArray(state?.messages) ? state.messages : [];
+    const messages = normalizeCompletionMessages(
+      Array.isArray(state?.messages) ? state.messages : [],
+    );
 
     // Pull text content off the **final** assistant turn. Content may be a
     // plain string or an OpenAI-style multimodal part array; for the array
@@ -474,7 +717,7 @@ export class CompletionLifecycle {
     const lastAssistantMessage = messages
       .slice()
       .reverse()
-      .find((m: { content?: unknown; id?: string; role: string }) => m.role === 'assistant');
+      .find((message) => message.role === 'assistant');
     const lastAssistantContent = lastAssistantMessage
       ? extractTextFromMessageContent(lastAssistantMessage.content)
       : undefined;
@@ -482,8 +725,10 @@ export class CompletionLifecycle {
     // Operation-level metadata only carries `assistantMessageId` on the client
     // runtime path; a server `execAgent` turn leaves it unset (`{}` in DB). Fall
     // back to the persisted id on the final assistant message row in state so the
-    // completion event can anchor deferred skill synthesis to this turn
-    // (LOBE-10802). A metadata value, when present, still wins.
+    // completion event can anchor deferred skill synthesis to this turn (skill
+    // synthesis deferred from inbound to turn completion so it uses the full
+    // trajectory — tool sequence + final product — not just the user prompt).
+    // A metadata value, when present, still wins.
     const assistantMessageId =
       metadata?.assistantMessageId ?? (lastAssistantMessage as { id?: string } | undefined)?.id;
 
@@ -594,6 +839,64 @@ const extractTextFromMessageContent = (content: unknown): string | undefined => 
   }
   const joined = parts.join('');
   return joined || undefined;
+};
+
+/**
+ * Expand display-only assistant groups back into the assistant/tool sequence
+ * expected by terminal lifecycle consumers.
+ *
+ * DB rehydration runs conversation-flow parsing, which folds an entire tool
+ * chain — including its final toolless assistant turn — into one
+ * `assistantGroup` whose own content is empty. Completion hooks must inspect
+ * the persisted leaf turns rather than that virtual wrapper, otherwise they
+ * lose both the final text and the message id used by DB recovery.
+ */
+const normalizeCompletionMessages = (messages: unknown[]): Record<PropertyKey, unknown>[] => {
+  const normalized: Record<PropertyKey, unknown>[] = [];
+
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+
+    const isAssistantGroup = message.role === 'assistantGroup' || message.role === 'supervisor';
+    if (!isAssistantGroup) {
+      normalized.push(message);
+      continue;
+    }
+
+    if (!Array.isArray(message.children) || message.children.length === 0) {
+      normalized.push({ ...message, role: 'assistant' });
+      continue;
+    }
+
+    const groupStartIndex = normalized.length;
+    for (const child of message.children) {
+      if (!isRecord(child) || child.council) continue;
+
+      normalized.push({ ...child, role: 'assistant' });
+
+      if (!Array.isArray(child.tools)) continue;
+      for (const tool of child.tools) {
+        if (!isRecord(tool) || !isRecord(tool.result)) continue;
+
+        normalized.push({
+          content: tool.result.content,
+          id: tool.result.id,
+          role: 'tool',
+          tool_call_id: tool.id,
+        });
+      }
+    }
+
+    // A virtual group containing only non-message blocks (for example a
+    // council block) still marks the latest assistant boundary. Preserve an
+    // empty leaf so completion never falls back to stale text from an older
+    // turn.
+    if (normalized.length === groupStartIndex) {
+      normalized.push({ ...message, role: 'assistant' });
+    }
+  }
+
+  return normalized;
 };
 
 /**

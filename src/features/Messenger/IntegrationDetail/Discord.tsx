@@ -1,10 +1,12 @@
 'use client';
 
-import { Button, Icon, Text } from '@lobehub/ui';
+import { Icon, Text } from '@lobehub/ui';
+import { Button } from '@lobehub/ui/base-ui';
 import { LinkIcon, ServerIcon, Trash2Icon, UserIcon } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import AsyncError from '@/components/AsyncError';
 import { usePermission } from '@/hooks/usePermission';
 
 import { buildDiscordOpenBotUrl } from '../constants';
@@ -58,6 +60,8 @@ const DiscordDetail = memo<DiscordDetailProps>(({ appId, botUsername, name, onBa
       title: t('messenger.discord.connections.disconnectTitle'),
     });
 
+  if (data.error && data.isInitialLoading)
+    return <AsyncError error={data.error} variant={'block'} onRetry={data.mutate} />;
   if (data.isInitialLoading) return <IntegrationDetailSkeleton withNestedContent />;
 
   const { installations, links } = data;

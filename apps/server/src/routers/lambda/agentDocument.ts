@@ -17,6 +17,7 @@ import { TopicDocumentModel } from '@/database/models/topicDocument';
 import { router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { AgentDocumentsService } from '@/server/services/agentDocuments';
+import { createDocumentWorkRegistrar } from '@/server/services/agentDocuments/documentWork';
 import { emitAgentDocumentToolOutcomeSafely } from '@/server/services/agentDocuments/toolOutcome';
 import { AgentDocumentVfsService } from '@/server/services/agentDocumentVfs';
 import { AgentDocumentVfsError } from '@/server/services/agentDocumentVfs/errors';
@@ -95,8 +96,11 @@ const mountedSkillNamespaceSchema = z.literal('agent');
 const agentDocumentToolContextSchema = z.object({
   messageId: z.string(),
   operationId: z.string().optional(),
+  rootOperationId: z.string().optional(),
   taskId: z.string().nullish(),
+  threadId: z.string().nullish(),
   toolCallId: z.string(),
+  toolMessageId: z.string().optional(),
   topicId: z.string().optional(),
 });
 const agentDocumentToolTriggerSchema = z
@@ -166,6 +170,12 @@ const agentDocumentProcedure = wsCompatProcedure.use(serverDatabase).use(async (
       agentDocumentVfsService: new AgentDocumentVfsService(ctx.serverDB, ctx.userId, wsId),
       skillManagementService: new SkillManagementDocumentService(ctx.serverDB, ctx.userId, wsId),
       systemAgentService: new SystemAgentService(ctx.serverDB, ctx.userId, wsId),
+      documentWorkRegistrar: createDocumentWorkRegistrar({
+        db: ctx.serverDB,
+        logPrefix: '[agentDocumentRouter]',
+        userId: ctx.userId,
+        workspaceId: wsId,
+      }),
       topicModel: new TopicModel(ctx.serverDB, ctx.userId, wsId),
       topicDocumentModel: new TopicDocumentModel(ctx.serverDB, ctx.userId, wsId),
     },
@@ -499,29 +509,42 @@ export const agentDocumentRouter = router({
     .input(
       z.object({
         agentId: z.string(),
+        // Drop `sourceType: 'web'` docs (saved web-clips / articles). These grow
+        // unbounded and dominate the payload, but only the working-sidebar "web"
+        // tab renders them. Hot-path consumers (slash menu, skills) pass this so
+        // the list stays small. Ignored for `currentTopic` scope.
+        excludeWeb: z.boolean().optional().default(false),
         // Reveal the auto-created `.tool-results` archive. Off by default so
         // user-facing lists stay clean; the agent document-listing tool opts in.
         includeArchivedToolResults: z.boolean().optional().default(false),
+        // Restrict the listing to the direct children of this folder so the model
+        // can expand a folder collapsed in the progressive index.
+        parentId: z.string().optional(),
         scope: z.enum(['agent', 'currentTopic']).optional().default('agent'),
         sourceType: z.enum(['all', 'file', 'web']).optional().default('all'),
         topicId: z.string().optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
-      const { includeArchivedToolResults } = input;
+      const { excludeWeb, includeArchivedToolResults, parentId } = input;
       if (input.scope === 'currentTopic') {
         if (!input.topicId) throw new Error('topicId is required to list current topic documents');
 
-        return ctx.agentDocumentService.listDocumentsForTopic(
+        const docs = await ctx.agentDocumentService.listDocumentsForTopic(
           input.agentId,
           input.topicId,
           input.sourceType,
           { includeArchivedToolResults },
         );
+        // Topic listing joins through topic associations rather than the agent
+        // folder tree, so the folder filter is applied in-memory here.
+        return parentId ? docs.filter((d) => d.parentId === parentId) : docs;
       }
 
       return ctx.agentDocumentService.listDocuments(input.agentId, input.sourceType, {
+        excludeWeb,
         includeArchivedToolResults,
+        parentId,
       });
     }),
 
@@ -1084,18 +1107,22 @@ export const agentDocumentRouter = router({
    */
   modifyNodes: agentDocumentProcedureWrite
     .input(
-      z.object({
-        agentId: z.string(),
-        id: z.string(),
-        operations: z.array(liteXMLOperationSchema).min(1),
-      }),
+      z
+        .object({
+          agentId: z.string(),
+          id: z.string(),
+          operations: z.array(liteXMLOperationSchema).min(1),
+        })
+        .and(agentDocumentToolTriggerSchema),
     )
     .mutation(async ({ ctx, input }) => {
-      return ctx.agentDocumentService.modifyDocumentNodesById(
+      const doc = await ctx.agentDocumentService.modifyDocumentNodesById(
         input.id,
         input.operations,
         input.agentId,
       );
+
+      return doc;
     }),
 
   /**
@@ -1103,18 +1130,22 @@ export const agentDocumentRouter = router({
    */
   replaceDocumentContent: agentDocumentProcedureWrite
     .input(
-      z.object({
-        agentId: z.string(),
-        content: z.string(),
-        id: z.string(),
-      }),
+      z
+        .object({
+          agentId: z.string(),
+          content: z.string(),
+          id: z.string(),
+        })
+        .and(agentDocumentToolTriggerSchema),
     )
     .mutation(async ({ ctx, input }) => {
-      return ctx.agentDocumentService.replaceDocumentContentById(
+      const doc = await ctx.agentDocumentService.replaceDocumentContentById(
         input.id,
         input.content,
         input.agentId,
       );
+
+      return doc;
     }),
 
   /**
@@ -1122,13 +1153,24 @@ export const agentDocumentRouter = router({
    */
   removeDocument: agentDocumentProcedureWrite
     .input(
-      z.object({
-        agentId: z.string(),
-        id: z.string(),
-      }),
+      z
+        .object({
+          agentId: z.string(),
+          id: z.string(),
+        })
+        .and(agentDocumentToolTriggerSchema),
     )
     .mutation(async ({ ctx, input }) => {
+      const doc = await ctx.agentDocumentService.getDocumentById(input.id, input.agentId);
       const deleted = await ctx.agentDocumentService.removeDocumentById(input.id, input.agentId);
+      if (deleted && input.trigger === 'tool') {
+        await ctx.documentWorkRegistrar.deleteDocumentWork({
+          agentDocumentId: input.id,
+          agentId: input.agentId,
+          documentId: doc?.documentId,
+        });
+      }
+
       return { deleted, id: input.id };
     }),
 
@@ -1137,19 +1179,23 @@ export const agentDocumentRouter = router({
    */
   copyDocument: agentDocumentProcedureWrite
     .input(
-      z.object({
-        agentId: z.string(),
-        id: z.string(),
-        newTitle: z.string().optional(),
-      }),
+      z
+        .object({
+          agentId: z.string(),
+          id: z.string(),
+          newTitle: z.string().optional(),
+        })
+        .and(agentDocumentToolTriggerSchema),
     )
     .mutation(async ({ ctx, input }) => {
       try {
-        return await ctx.agentDocumentService.copyDocumentById(
+        const doc = await ctx.agentDocumentService.copyDocumentById(
           input.id,
           input.newTitle,
           input.agentId,
         );
+
+        return doc;
       } catch (error) {
         handleAgentDocumentVfsError(error);
       }
@@ -1160,19 +1206,23 @@ export const agentDocumentRouter = router({
    */
   renameDocument: agentDocumentProcedureWrite
     .input(
-      z.object({
-        agentId: z.string(),
-        id: z.string(),
-        newTitle: z.string(),
-      }),
+      z
+        .object({
+          agentId: z.string(),
+          id: z.string(),
+          newTitle: z.string(),
+        })
+        .and(agentDocumentToolTriggerSchema),
     )
     .mutation(async ({ ctx, input }) => {
       try {
-        return await ctx.agentDocumentService.renameDocumentById(
+        const doc = await ctx.agentDocumentService.renameDocumentById(
           input.id,
           input.newTitle,
           input.agentId,
         );
+
+        return doc;
       } catch (error) {
         handleAgentDocumentVfsError(error);
       }

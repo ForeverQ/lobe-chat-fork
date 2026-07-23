@@ -35,7 +35,7 @@ const PendingSkillSynthesisSchema = z.object({
     .optional(),
   evidence: z.array(z.object({ cue: z.string(), excerpt: z.string() })).optional(),
   message: z.string(),
-  sourceHints: z.record(z.unknown()).optional(),
+  sourceHints: z.record(z.string(), z.unknown()).optional(),
   threadId: z.string().optional(),
   topicId: z.string().optional(),
 });
@@ -94,9 +94,11 @@ export interface RecordedSkillIntent {
   feedbackMessageId: string;
   /**
    * Synthesis payload for the deferred completion-stage skill run. Present when
-   * a server execAgent inbound turn parked a candidate to synthesize after
-   * `agent.execution.completed` (LOBE-10802); absent for the client-runtime
-   * lane, which re-derives the source at `client.runtime.complete`.
+   * a server execAgent inbound turn parked a candidate to synthesize at
+   * `agent.execution.completed` (skill synthesis deferred to turn completion so
+   * the evidence carries the full trajectory, not just the user prompt); absent
+   * for the client-runtime lane, which re-derives the source at
+   * `client.runtime.complete`.
    */
   pendingSynthesis?: PendingSkillSynthesis;
   /** Optional private-safe reason suitable for traces and eval assertions. */

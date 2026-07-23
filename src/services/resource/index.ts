@@ -57,8 +57,14 @@ const mapToResourceItem = (item: FileListItem): ResourceItem => {
 
     updatedAt: item.updatedAt,
 
+    uploader: item.uploader ?? null,
+
     // File-specific fields
     url: item.url,
+
+    userId: item.userId,
+
+    visibility: item.visibility,
   };
 };
 
@@ -128,9 +134,13 @@ export class ResourceService {
     return fileService.resolveKnowledgeItemIds(backendParams);
   }
 
-  async deleteResourcesByQuery(params: ResourceQueryParams): Promise<{ count: number }> {
+  async deleteResourcesByQuery(
+    params: ResourceQueryParams,
+    excludedIds?: string[],
+  ): Promise<{ count: number }> {
     const backendParams = {
       ...params,
+      excludedIds,
       knowledgeBaseId: params.libraryId,
       libraryId: undefined,
     };

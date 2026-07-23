@@ -100,7 +100,6 @@ vi.mock('@lobehub/editor/react', () => {
 
   return {
     Editor,
-    FloatMenu: vi.fn(() => null),
     useEditorState: vi.fn(() => ({ isEmpty: true })),
   };
 });
@@ -152,6 +151,9 @@ vi.mock('@/store/chat', () => ({
 vi.mock('../hooks/useChatInputDraft', () => ({
   useChatInputDraft: () => ({ restoreDraft: vi.fn(), saveDraftDebounced: vi.fn() }),
 }));
+vi.mock('../hooks/useChatInputResourceAccess', () => ({
+  useChatInputResourceAccess: () => ({ canUseResource: true, isGroupContext: false }),
+}));
 vi.mock('@/store/agent', () => ({
   useAgentStore: <T,>(selector: StoreSelector<T>) => selector({}),
 }));
@@ -175,6 +177,7 @@ vi.mock('@/store/user/selectors', () => ({
   systemAgentSelectors: {
     inputCompletion: () => mocks.inputCompletionConfig,
   },
+  userProfileSelectors: { userId: () => 'user-id' },
 }));
 
 vi.mock('../hooks/useAgentId', () => ({ useAgentId: () => 'agent-id' }));
@@ -214,9 +217,12 @@ vi.mock('./plugins', () => ({
   createChatInputRichPlugins: () => [],
 }));
 vi.mock('./ReferTopic', () => ({ INSERT_REFER_TOPIC_COMMAND: 'insert-refer-topic' }));
-vi.mock('./useLocalFileMention', () => ({
-  useLocalFileMention: () => ({
-    enableLocalFileMention: false,
+vi.mock('./LocalFileTag', () => ({
+  INSERT_LOCAL_FILE_TAG_COMMAND: 'insert-local-file-tag',
+}));
+vi.mock('./useLocalFileTag', () => ({
+  useLocalFileTag: () => ({
+    enableLocalFileTag: false,
     searchLocalFiles: vi.fn(async () => []),
   }),
 }));

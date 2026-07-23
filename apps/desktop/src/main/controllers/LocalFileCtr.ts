@@ -1,7 +1,12 @@
 import { constants } from 'node:fs';
-import { access, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { access, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+  defaultSearchProjectFiles,
+  prepareSkillDirectory,
+  type SkillDirectoryDeps,
+} from '@lobechat/device-control';
 import {
   type AuditSafePathsParams,
   type AuditSafePathsResult,
@@ -30,6 +35,8 @@ import {
   type ProjectFileIndexEntry,
   type ProjectFileIndexParams,
   type ProjectFileIndexResult,
+  type ProjectFileSearchParams,
+  type ProjectFileSearchResult,
   type RenameLocalFileResult,
   type ResolveSkillResourcePathParams,
   type ResolveSkillResourcePathResult,
@@ -47,15 +54,16 @@ import {
   moveLocalFiles,
   readLocalFile,
   renameLocalFile,
+  resolveAgainstCwd,
   type SearchOptions,
   writeLocalFile,
 } from '@lobechat/local-file-shell';
 import { dialog, shell } from 'electron';
 import { execa } from 'execa';
-import { unzipSync } from 'fflate';
 
 import ContentSearchService from '@/services/contentSearchSrv';
 import FileSearchService from '@/services/fileSearchSrv';
+import RemoteFileUploadService from '@/services/remoteFileUploadSrv';
 import { createLogger } from '@/utils/logger';
 import { netFetch } from '@/utils/net-fetch';
 
@@ -65,6 +73,29 @@ import { ControllerModule, IpcMethod } from './index';
 const logger = createLogger('controllers:LocalFileCtr');
 
 const SAFE_PATH_PREFIXES = ['/tmp', '/var/tmp'] as const;
+const PROJECT_FILE_GLOB_LIMIT = 5000;
+
+/**
+ * Image extensions `readFile` uploads to file storage instead of refusing as
+ * binary. The agent then sees the image (vision) via an `image_url` part,
+ * rather than hitting "Unsupported binary file".
+ *
+ * Limited to the formats vision providers accept (Anthropic/OpenAI:
+ * png/jpeg/gif/webp) — anything else would be silently dropped by the
+ * model-runtime builders, which is worse than the binary refusal. SVG is
+ * intentionally absent: it's text, and reading the source is more useful to
+ * the model than a rasterization we can't produce here.
+ */
+const LOCAL_IMAGE_EXT_TO_MIME: Record<string, string> = {
+  gif: 'image/gif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
+
+/** Refuse to load image bytes beyond this size — providers reject them anyway. */
+const MAX_IMAGE_READ_BYTES = 10 * 1024 * 1024;
 
 const TEXT_PREVIEW_MIME_TYPES = new Set([
   'application/graphql',
@@ -388,6 +419,79 @@ export default class LocalFileCtr extends ControllerModule {
       fullContent: params.fullContent,
       loc: params.loc,
     });
+
+    // Image files: `local-file-shell` refuses binary, and the agent should be
+    // able to actually *see* the image (vision) rather than hit "Unsupported
+    // binary file type". Delegate the upload to the embedded CLI
+    // (`lh file upload`) and return a durable { fileId, url } — bytes never
+    // cross IPC and never reach the DB; the MessageContent processor turns
+    // the uploaded URL into an `image_url` part for the LLM.
+    const ext = path.extname(params.path).toLowerCase().replace('.', '');
+    const imageMimeType = LOCAL_IMAGE_EXT_TO_MIME[ext];
+    if (imageMimeType) {
+      const filePath = resolveAgainstCwd(params.path, params.cwd) ?? params.path;
+      const filename = path.basename(filePath);
+
+      const buildImageResult = (
+        content: string,
+        extra: Partial<LocalReadFileResult> = {},
+      ): LocalReadFileResult => ({
+        charCount: 0,
+        content,
+        createdTime: new Date(),
+        fileType: imageMimeType,
+        filename,
+        isImage: true,
+        lineCount: 0,
+        loc: [0, 0],
+        modifiedTime: new Date(),
+        totalCharCount: 0,
+        totalLineCount: 0,
+        ...extra,
+      });
+
+      let fileStat;
+      try {
+        fileStat = await stat(filePath);
+      } catch (error) {
+        return buildImageResult(`Error accessing or processing file: ${(error as Error).message}`);
+      }
+
+      if (!fileStat.isFile()) {
+        return buildImageResult(`Error: Not a regular file: ${filePath}`);
+      }
+
+      if (fileStat.size > MAX_IMAGE_READ_BYTES) {
+        return buildImageResult(
+          `Error: Image file is too large to preview (${fileStat.size} bytes, limit ${MAX_IMAGE_READ_BYTES}).`,
+        );
+      }
+
+      try {
+        const record = await this.app.getService(RemoteFileUploadService).uploadLocalFile(filePath);
+
+        if (record?.url) {
+          return buildImageResult(`[Image: ${filename}]`, {
+            createdTime: fileStat.birthtime,
+            imageFileId: record.id,
+            imageUrl: record.url,
+            modifiedTime: fileStat.mtime,
+          });
+        }
+
+        logger.warn('Image upload returned no record:', { filePath });
+      } catch (error) {
+        logger.warn('Image upload failed:', { error, filePath });
+      }
+
+      // Degrade: the placeholder tells the model an image exists that it
+      // cannot inspect, instead of failing the read outright.
+      return buildImageResult(
+        `[Image: ${filename}] (upload unavailable — the model cannot view this image)`,
+        { createdTime: fileStat.birthtime, modifiedTime: fileStat.mtime },
+      );
+    }
+
     return readLocalFile(params);
   }
 
@@ -490,66 +594,25 @@ export default class LocalFileCtr extends ControllerModule {
     }
   }
 
+  /**
+   * Host deps for the shared skill-archive cache: this keeps the renderer-IPC
+   * path (here) and the gateway RPC path (`GatewayConnectionCtr` →
+   * `@lobechat/device-control`) on ONE cache directory and one proxy-aware
+   * fetch, so a skill prepared by either entry point is a cache hit for the
+   * other.
+   */
+  getSkillDirectoryDeps(): SkillDirectoryDeps {
+    return {
+      fetchSkillArchive: netFetch,
+      skillCacheRoot: path.join(this.app.appStoragePath, 'file-storage', 'skills'),
+    };
+  }
+
   @IpcMethod()
-  async handlePrepareSkillDirectory({
-    forceRefresh,
-    url,
-    zipHash,
-  }: PrepareSkillDirectoryParams): Promise<PrepareSkillDirectoryResult> {
-    const cacheRoot = path.join(this.app.appStoragePath, 'file-storage', 'skills');
-    const extractedDir = path.join(cacheRoot, 'extracted', zipHash);
-    const markerPath = path.join(extractedDir, '.prepared');
-    const zipPath = path.join(cacheRoot, 'archives', `${zipHash}.zip`);
-
-    try {
-      if (!forceRefresh) {
-        await access(markerPath, constants.F_OK);
-        return { extractedDir, success: true, zipPath };
-      }
-    } catch {
-      // Cache miss, continue preparing the local copy.
-    }
-
-    try {
-      const response = await netFetch(url);
-      if (!response.ok) {
-        throw new Error(
-          `Failed to download skill package: ${response.status} ${response.statusText}`,
-        );
-      }
-
-      const buffer = Buffer.from(await response.arrayBuffer());
-      const extractedFiles = unzipSync(new Uint8Array(buffer));
-
-      await rm(extractedDir, { force: true, recursive: true });
-      await mkdir(path.dirname(zipPath), { recursive: true });
-      await mkdir(extractedDir, { recursive: true });
-      await writeFile(zipPath, buffer);
-
-      for (const [relativePath, fileContent] of Object.entries(extractedFiles)) {
-        if (relativePath.endsWith('/')) continue;
-
-        const targetPath = path.resolve(extractedDir, relativePath);
-        const normalizedRoot = `${path.resolve(extractedDir)}${path.sep}`;
-        if (targetPath !== path.resolve(extractedDir) && !targetPath.startsWith(normalizedRoot)) {
-          throw new Error(`Unsafe file path in skill archive: ${relativePath}`);
-        }
-
-        await mkdir(path.dirname(targetPath), { recursive: true });
-        await writeFile(targetPath, Buffer.from(fileContent as Uint8Array));
-      }
-
-      await writeFile(markerPath, JSON.stringify({ preparedAt: Date.now(), url, zipHash }), 'utf8');
-
-      return { extractedDir, success: true, zipPath };
-    } catch (error) {
-      return {
-        error: (error as Error).message,
-        extractedDir,
-        success: false,
-        zipPath,
-      };
-    }
+  async handlePrepareSkillDirectory(
+    params: PrepareSkillDirectoryParams,
+  ): Promise<PrepareSkillDirectoryResult> {
+    return prepareSkillDirectory(params, this.getSkillDirectoryDeps());
   }
 
   @IpcMethod()
@@ -659,7 +722,6 @@ export default class LocalFileCtr extends ControllerModule {
           indexedAt: new Date().toISOString(),
           root,
           source: 'git',
-          totalCount: entries.length,
         };
       }
     } catch (error) {
@@ -669,7 +731,11 @@ export default class LocalFileCtr extends ControllerModule {
       });
     }
 
-    const fallback = await this.searchService.glob({ pattern: '**/*', scope: requestedScope });
+    const fallback = await this.searchService.glob({
+      limit: PROJECT_FILE_GLOB_LIMIT,
+      pattern: '**/*',
+      scope: requestedScope,
+    });
     const files = fallback.files.map((filePath) => path.resolve(filePath));
     const entries = await Promise.all(
       files.map((filePath) => createDetectedProjectFileEntry(requestedScope, filePath)),
@@ -688,8 +754,25 @@ export default class LocalFileCtr extends ControllerModule {
       indexedAt: new Date().toISOString(),
       root: requestedScope,
       source: 'glob',
-      totalCount: entries.length,
     };
+  }
+
+  @IpcMethod()
+  async searchProjectFiles(params: ProjectFileSearchParams): Promise<ProjectFileSearchResult> {
+    const startedAt = Date.now();
+    const result = await defaultSearchProjectFiles(params);
+
+    logger.debug('Project file search completed', {
+      duration: Date.now() - startedAt,
+      entries: result.entries.length,
+      query: params.query,
+      requestedScope: params.scope,
+      root: result.root,
+      source: result.source,
+    });
+    await this.approveProjectRootForPreview(result.root);
+
+    return result;
   }
 
   /**

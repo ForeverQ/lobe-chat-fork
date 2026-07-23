@@ -7,8 +7,11 @@ import { agentByIdSelectors } from '@/store/agent/selectors';
 
 import ContextWindow from '../ActionBar/Token';
 import { useAgentId } from '../hooks/useAgentId';
+import { useChatInputResourceAccess } from '../hooks/useChatInputResourceAccess';
+import { useEffectiveAgentMode } from '../hooks/useEffectiveAgentMode';
 import { useChatInputStore } from '../store';
 import ApprovalMode from './ApprovalMode';
+import HeteroDeviceSwitcher from './HeteroDeviceSwitcher';
 import ModeSelector from './ModeSelector';
 import WorkspaceControls from './WorkspaceControls';
 
@@ -40,14 +43,15 @@ const styles = createStaticStyles(({ css }) => ({
 
 const ControlBar = memo(() => {
   const agentId = useAgentId();
+  const { canConfigureResource, isAccessLoading } = useChatInputResourceAccess();
   const showContextWindow = useChatInputStore((s) =>
     s.rightActions.flat().includes('contextWindow'),
   );
 
-  const [isLoading, enableAgentMode] = useAgentStore((s) => [
-    agentByIdSelectors.isAgentConfigLoadingById(agentId)(s),
-    agentByIdSelectors.getAgentEnableModeById(agentId)(s),
-  ]);
+  const isLoading = useAgentStore((s) => agentByIdSelectors.isAgentConfigLoadingById(agentId)(s));
+  const { isAgentRuntimeMode } = useEffectiveAgentMode(agentId);
+
+  if (isAccessLoading) return null;
 
   // Skeleton placeholder to prevent layout jump during loading
   if (!agentId || isLoading) {
@@ -59,16 +63,28 @@ const ControlBar = memo(() => {
     );
   }
 
+  // Can-use members (and viewers, whose chat input is already disabled) see
+  // only the execution device. It is a per-member usage choice, not shared
+  // AgentConfig; fixed agents keep the same chip visible but disabled.
+  if (!canConfigureResource) {
+    if (!isAgentRuntimeMode) return null;
+    return (
+      <Flexbox horizontal align={'center'} className={styles.bar}>
+        <HeteroDeviceSwitcher agentId={agentId} />
+      </Flexbox>
+    );
+  }
+
   return (
     <Flexbox horizontal align={'center'} className={styles.bar} justify={'space-between'}>
       {/* Left: chat-mode switcher + (agent-only) execution device + working directory */}
       <Flexbox horizontal align={'center'} className={styles.leftGroup} gap={4}>
         <ModeSelector />
-        {enableAgentMode && <WorkspaceControls agentId={agentId} />}
+        {isAgentRuntimeMode && <WorkspaceControls agentId={agentId} />}
       </Flexbox>
 
       <Flexbox horizontal align={'center'} className={styles.rightGroup} gap={4}>
-        {enableAgentMode && <ApprovalMode />}
+        {isAgentRuntimeMode && <ApprovalMode />}
         {showContextWindow && <ContextWindow />}
       </Flexbox>
     </Flexbox>

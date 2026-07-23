@@ -146,6 +146,7 @@ vi.mock('electron', () => ({
   app: {
     getAppPath: vi.fn(() => '/mock/app'),
     getPath: vi.fn((name: string) => `/mock/${name}`),
+    getVersion: vi.fn(() => '1.2.3'),
   },
   ipcMain: { handle: ipcMainHandleMock },
   powerSaveBlocker: {
@@ -192,7 +193,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 vi.mock('node:os', () => ({
-  default: { hostname: vi.fn(() => 'mock-hostname') },
+  default: { hostname: vi.fn(() => 'mock-hostname'), tmpdir: vi.fn(() => '/tmp') },
 }));
 
 vi.mock('@lobechat/device-gateway-client', () => ({
@@ -243,7 +244,7 @@ const mockShellCommandCtr = {
 
 const mockHeterogeneousAgentCtr = {
   sendPrompt: vi.fn().mockResolvedValue(undefined),
-  spawnLhHeteroExec: vi.fn(),
+  spawnLhHeteroExec: vi.fn().mockResolvedValue({ status: 'accepted' }),
   startSession: vi.fn().mockResolvedValue({ sessionId: 'mock-session-id' }),
 } as unknown as HeterogeneousAgentCtr;
 
@@ -332,6 +333,7 @@ describe('GatewayConnectionCtr', () => {
       expect(options.deviceId).toBe('stored-device-id');
       expect(options.gatewayUrl).toBe('https://device-gateway.lobehub.com');
       expect(options.logger).toBeDefined();
+      expect(options.userAgent).toBe('LobeHub Desktop/1.2.3');
     });
 
     it('should use custom gateway URL from store when set', async () => {
@@ -832,7 +834,7 @@ describe('GatewayConnectionCtr', () => {
       vi.mocked(mockHeterogeneousAgentCtr.spawnLhHeteroExec).mockClear();
     });
 
-    it.each(['openclaw', 'hermes', 'codex', 'claude-code'] as const)(
+    it.each(['openclaw', 'hermes', 'codex', 'claude-code', 'opencode'] as const)(
       'forwards agentType "%s" to spawnLhHeteroExec',
       async (agentType) => {
         const client = await connectAndOpen();
@@ -953,6 +955,23 @@ describe('GatewayConnectionCtr', () => {
       expect(client.sendAgentRunAck).toHaveBeenCalledWith({
         operationId: 'op-fail',
         reason: 'binary not found',
+        status: 'rejected',
+      });
+    });
+
+    it('forwards an asynchronous spawn rejection instead of acknowledging accepted', async () => {
+      vi.mocked(mockHeterogeneousAgentCtr.spawnLhHeteroExec).mockResolvedValueOnce({
+        reason: 'spawn EACCES',
+        status: 'rejected',
+      });
+
+      const client = await connectAndOpen();
+      client.simulateAgentRunRequest('opencode', 'op-spawn-fail');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(client.sendAgentRunAck).toHaveBeenCalledWith({
+        operationId: 'op-spawn-fail',
+        reason: 'spawn EACCES',
         status: 'rejected',
       });
     });

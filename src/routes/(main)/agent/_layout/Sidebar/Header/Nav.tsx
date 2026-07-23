@@ -14,6 +14,7 @@ import { useParams } from 'react-router';
 import urlJoin from 'url-join';
 
 import NavItem from '@/features/NavPanel/components/NavItem';
+import { useResourceAccess } from '@/features/ResourcePermission/useResourceAccess';
 import { usePermission } from '@/hooks/usePermission';
 import { useQueryRoute } from '@/hooks/useQueryRoute';
 import { usePathname } from '@/libs/router/navigation';
@@ -22,6 +23,7 @@ import { topicActionKeys } from '@/libs/swr/keys';
 import { useAgentStore } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
 import { useChatStore } from '@/store/chat';
+import { topicSelectors } from '@/store/chat/selectors';
 import { useGlobalStore } from '@/store/global';
 import { featureFlagsSelectors, useServerConfigStore } from '@/store/serverConfig';
 
@@ -38,21 +40,24 @@ const Nav = memo(() => {
   const isTopicsActive = pathname.endsWith('/topics');
   const router = useQueryRoute();
   const { allowed: canCreateTopic } = usePermission('create_content');
+  const { allowed: canEditContent } = usePermission('edit_own_content');
+  const { canEditResource, isAccessResolved } = useResourceAccess('agent', agentId);
   const { isAgentEditable } = useServerConfigStore(featureFlagsSelectors);
   const toggleCommandMenu = useGlobalStore((s) => s.toggleCommandMenu);
   const heterogeneousProviderType = useAgentStore(
     agentSelectors.currentAgentHeterogeneousProviderType,
   );
-  const hideProfile = !isAgentEditable;
+  const hideProfile = !isAgentEditable || !isAccessResolved || !canEditContent || !canEditResource;
   // Claude Code agents can use message channels; other hetero providers (e.g. codex) still hide it.
   const hideChannel =
     hideProfile || (!!heterogeneousProviderType && heterogeneousProviderType !== 'claude-code');
   const switchTopic = useChatStore((s) => s.switchTopic);
   const [openNewTopicOrSaveTopic] = useChatStore((s) => [s.openNewTopicOrSaveTopic]);
+  const isNewTopicSendInFlight = useChatStore(topicSelectors.isNewTopicSendInFlight);
 
   const { mutate } = useActionSWR(topicActionKeys.openNewOrSave(), openNewTopicOrSaveTopic);
   const handleNewTopic = () => {
-    if (!canCreateTopic) return;
+    if (!canCreateTopic || isNewTopicSendInFlight) return;
     // Always navigate to the bare agent chat URL — drops any sub-route
     // (/profile, /channel, /page, /cron/:cronId, …) and any `:topicId`
     // segment so the new topic isn't conflated with the previous URL.
@@ -65,7 +70,7 @@ const Nav = memo(() => {
   return (
     <Flexbox gap={1} paddingInline={4}>
       <NavItem
-        disabled={!canCreateTopic}
+        disabled={!canCreateTopic || isNewTopicSendInFlight}
         icon={MessageSquarePlusIcon}
         title={tTopic('actions.addNewTopic')}
         onClick={handleNewTopic}

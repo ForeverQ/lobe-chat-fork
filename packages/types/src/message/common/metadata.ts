@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 import { RequestTrigger } from '../../agentRuntime';
+import type { ContextSelection } from './contextSelection';
+import { ContextSelectionSchema } from './contextSelection';
 import type { PageSelection } from './pageSelection';
 import { PageSelectionSchema } from './pageSelection';
 
@@ -178,8 +180,23 @@ export const MessageTaskCallbackSchema = z.object({
   topicId: z.string().optional(),
 });
 
+export const MessageWorkMetadataSchema = z.object({
+  rootOperationId: z.string().min(1),
+  userMessageId: z.string().optional(),
+});
+
 export const MessageMetadataSchema = ModelUsageSchema.merge(ModelPerformanceSchema).extend({
   collapsed: z.boolean().optional(),
+  contextSelections: z.array(ContextSelectionSchema).optional(),
+  // Hetero-agent (Claude Code) per-message provenance. Listed here so zod does
+  // NOT strip them from writes going through UpdateMessageParamsSchema /
+  // CreateMessageParamsSchema (the renderer executor's `messageService` path).
+  heteroMessageId: z.string().optional(),
+  heteroSessionId: z.string().optional(),
+  // Durable watermark for replace-only heterogeneous tool-state snapshots.
+  // The pair is scoped by operation so a later run may restart seq at 1.
+  heterogeneousToolStateOperationId: z.string().optional(),
+  heterogeneousToolStateSeq: z.number().int().positive().optional(),
   inspectExpanded: z.boolean().optional(),
   isMultimodal: z.boolean().optional(),
   isSupervisor: z.boolean().optional(),
@@ -203,6 +220,7 @@ export const MessageMetadataSchema = ModelUsageSchema.merge(ModelPerformanceSche
   // role='verify' card: which Agent Run (agent_operations.id) it renders.
   verifyOperationId: z.string().optional(),
   verifyRound: z.number().optional(),
+  work: MessageWorkMetadataSchema.optional(),
   // @deprecated token usage moved to the top-level `usage` column. Still listed
   // so zod doesn't strip `metadata.usage` from legacy writes during migration.
   usage: ModelUsageSchema.optional(),
@@ -257,11 +275,38 @@ export interface MessageMetadata {
    */
   collapsed?: boolean;
   compare?: boolean;
+  /**
+   * Generic context selections attached to user messages.
+   * Page selections remain mirrored in `pageSelections` for compatibility.
+   */
+  contextSelections?: ContextSelection[];
   /** @deprecated use the top-level message `usage` field instead */
   cost?: number;
   /** @deprecated use `metadata.performance` instead */
   duration?: number;
   finishType?: string;
+  /** Operation owning the durable heterogeneous tool-state watermark. */
+  heterogeneousToolStateOperationId?: string;
+  /** Last persisted replace-snapshot sequence for this tool message. */
+  heterogeneousToolStateSeq?: number;
+  /**
+   * The native id of this message inside the hetero agent (Claude Code /
+   * Codex) that produced it — forensic provenance tying a row back to its
+   * source.
+   *
+   * - live runs: the CC API `message.id` of the turn (all the stream exposes),
+   *   stamped by the server persistence handler and the renderer executor
+   * - imported transcripts: the record's own id in the source file (CC session
+   *   record `uuid`; codex call item `fc_...` / `ctc_...` id)
+   */
+  heteroMessageId?: string;
+  /**
+   * The CC-native session id this hetero-agent message was produced under.
+   * `topic.metadata.heteroSessionId` keeps only the single latest value (written
+   * at run end); this per-message copy lets a diff pinpoint the exact row where
+   * CC forked to a new session — the signal for a lost-`--resume` "session break".
+   */
+  heteroSessionId?: string;
   /** @deprecated use the top-level message `usage` field instead */
   inputAudioTokens?: number;
   /** @deprecated use the top-level message `usage` field instead */
@@ -419,6 +464,17 @@ export interface MessageMetadata {
   verifyOperationId?: string;
   /** Display round number for the verify card (1-based; repair rounds are separate). */
   verifyRound?: number;
+  /**
+   * Final assistant message marker for Work artifacts produced during one root
+   * operation. Work ownership stays on `work_versions.root_operation_id`; this
+   * metadata only tells refreshed chat history where to render the cards.
+   */
+  work?: MessageWorkMetadata;
+}
+
+export interface MessageWorkMetadata {
+  rootOperationId: string;
+  userMessageId?: string;
 }
 
 /**

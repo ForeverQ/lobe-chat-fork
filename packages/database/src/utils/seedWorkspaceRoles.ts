@@ -6,10 +6,12 @@ import {
   WORKSPACE_SYSTEM_ROLES,
   type WorkspaceSystemRoleName,
 } from '@lobechat/const/rbac';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, notInArray } from 'drizzle-orm';
 
 import { permissions, rolePermissions, roles, userRoles } from '../schemas/rbac';
-import type { LobeChatDatabase } from '../type';
+import type { LobeChatDatabase, Transaction } from '../type';
+
+type WorkspaceRoleMutationDb = LobeChatDatabase | Transaction;
 
 /**
  * Map a permission code (e.g. `agent:create`) to the category column —
@@ -45,7 +47,9 @@ const codeToName = (code: string): string => {
  * linkage step. Permissions live in the global table (no workspaceId) — only
  * the *roles* are workspace-scoped.
  */
-const ensurePermissionsExist = async (db: LobeChatDatabase): Promise<Map<string, string>> => {
+const ensurePermissionsExist = async (
+  db: WorkspaceRoleMutationDb,
+): Promise<Map<string, string>> => {
   const requiredCodes = new Set<string>();
   for (const codes of Object.values(WORKSPACE_ROLE_PERMISSIONS)) {
     for (const code of codes) requiredCodes.add(code);
@@ -92,7 +96,7 @@ const ensurePermissionsExist = async (db: LobeChatDatabase): Promise<Map<string,
  * insert idempotent.
  */
 const upsertWorkspaceRole = async (
-  db: LobeChatDatabase,
+  db: WorkspaceRoleMutationDb,
   workspaceId: string,
   roleName: WorkspaceSystemRoleName,
   permissionIdByCode: Map<string, string>,
@@ -124,9 +128,19 @@ const upsertWorkspaceRole = async (
     .map((code) => permissionIdByCode.get(code))
     .filter((id): id is string => !!id);
 
+  const staleLinkWhere =
+    targetIds.length === 0
+      ? eq(rolePermissions.roleId, roleId)
+      : and(
+          eq(rolePermissions.roleId, roleId),
+          notInArray(rolePermissions.permissionId, targetIds),
+        );
+
+  await db.delete(rolePermissions).where(staleLinkWhere);
+
   if (targetIds.length === 0) return roleId;
 
-  // Insert missing links; ON CONFLICT DO NOTHING handles re-seed.
+  // Insert missing links after stale grants are removed; ON CONFLICT DO NOTHING handles re-seed.
   await db
     .insert(rolePermissions)
     .values(targetIds.map((permissionId) => ({ permissionId, roleId })))
@@ -151,7 +165,7 @@ export interface SeededWorkspaceRoles {
  * - Re-run on the same workspace (no-op after the first run)
  */
 export const seedWorkspaceRoles = async (
-  db: LobeChatDatabase,
+  db: WorkspaceRoleMutationDb,
   workspaceId: string,
 ): Promise<SeededWorkspaceRoles> => {
   const permissionIdByCode = await ensurePermissionsExist(db);
@@ -188,7 +202,7 @@ export const seedWorkspaceRoles = async (
  *   matching `rbac_user_roles` row
  */
 export const assignWorkspaceRoleToUser = async (
-  db: LobeChatDatabase,
+  db: WorkspaceRoleMutationDb,
   params: {
     roleName: WorkspaceSystemRoleName;
     userId: string;
@@ -218,7 +232,7 @@ export const assignWorkspaceRoleToUser = async (
  * by a fresh `assignWorkspaceRoleToUser` call).
  */
 export const revokeWorkspaceRolesForUser = async (
-  db: LobeChatDatabase,
+  db: WorkspaceRoleMutationDb,
   params: { userId: string; workspaceId: string },
 ): Promise<void> => {
   await db

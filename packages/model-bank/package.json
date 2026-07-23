@@ -71,6 +71,7 @@
     "./stepfun": "./src/aiModels/stepfun.ts",
     "./straico": "./src/aiModels/straico.ts",
     "./streamlake": "./src/aiModels/streamlake.ts",
+    "./superGrok": "./src/aiModels/superGrok.ts",
     "./taichu": "./src/aiModels/taichu.ts",
     "./tencentcloud": "./src/aiModels/tencentcloud.ts",
     "./togetherai": "./src/aiModels/togetherai.ts",
@@ -97,13 +98,13 @@
   },
   "dependencies": {
     "@lobechat/business-const": "workspace:*",
-    "type-fest": "^5.2.0"
+    "type-fest": "^5.7.0"
   },
   "devDependencies": {
-    "tsdown": "^0.21.4",
+    "tsdown": "^0.21.10",
     "typescript": "^6.0.3"
   },
   "peerDependencies": {
-    "zod": "^3.25.76"
+    "zod": "^4.4.3"
   }
 }

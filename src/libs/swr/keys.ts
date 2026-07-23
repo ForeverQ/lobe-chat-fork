@@ -18,6 +18,8 @@
  * `@/services/document/swrKeys` (already a factory, widely imported) and
  * re-exported here so the whole set is reachable from one place.
  */
+import { type ConversationContext } from '@lobechat/types';
+
 import {
   agentDocumentSWRKeys,
   documentSWRKeys,
@@ -41,13 +43,47 @@ interface LocalFilePreviewKeyParams {
 }
 
 // ---- message ------------------------------------------------------------
+export interface MessageListQueryContext {
+  agentId?: string | null;
+  groupId?: string | null;
+  threadId?: string | null;
+  topicId?: string | null;
+  topicShareId?: string;
+}
+
+export interface CanonicalMessageListContext {
+  agentId: string | null;
+  groupId: string | null;
+  threadId: string | null;
+  topicId: string | null;
+  topicShareId?: string;
+}
+
 /**
- * Message cache schema version. Baked into the message list key so a bump
- * invalidates every persisted message cache entry (e.g. after a message shape
- * change), without touching other domains. Increment when the cached
- * `UIChatMessage[]` shape changes incompatibly.
+ * Reduce every UI conversation variant to the fields understood by the
+ * message-list server query. Keeping normalization beside the key definition
+ * makes key equivalence a property of the registry rather than a caller
+ * convention.
  */
-export const MESSAGE_CACHE_VERSION = 1;
+export const normalizeMessageListQueryContext = (
+  context: MessageListQueryContext,
+): CanonicalMessageListContext => ({
+  agentId: context.agentId ?? null,
+  groupId: context.groupId ?? null,
+  threadId: context.threadId ?? null,
+  topicId: context.topicId ?? null,
+  ...(context.topicShareId === undefined ? {} : { topicShareId: context.topicShareId }),
+});
+
+/** Previous persisted key schema, used only by the targeted v1 → v2 migration. */
+export const LEGACY_MESSAGE_CACHE_VERSION = 1;
+
+/**
+ * Message cache key schema version. Version 2 canonicalizes query context, so
+ * it requires a persisted-key migration even though `UIChatMessage[]` itself
+ * did not change.
+ */
+export const MESSAGE_CACHE_VERSION = 2;
 
 export const messageKeys = {
   /**
@@ -55,7 +91,27 @@ export const messageKeys = {
    * Shared by the conversation store and the chat store so a single fetch
    * serves both.
    */
-  list: def('message:list', (context: unknown) => ['message:list', context, MESSAGE_CACHE_VERSION]),
+  list: def('message:list', (context: MessageListQueryContext) => [
+    'message:list',
+    normalizeMessageListQueryContext(context),
+    MESSAGE_CACHE_VERSION,
+  ]),
+};
+
+/**
+ * SWR `mutate` matcher for `message:list` keys. The key shape is
+ * `[message:list, ConversationContext, version]`, so this guards `key[0]` and
+ * hands the resolved context to an optional predicate (omit it to match every
+ * message list, any scope / thread / page-size / version variant). Shared by
+ * every message-list invalidation site so the key-shape knowledge lives once.
+ */
+export const isMessageListKey = (
+  key: unknown,
+  predicate?: (context: ConversationContext) => boolean,
+): boolean => {
+  if (!Array.isArray(key) || key[0] !== messageKeys.list.root) return false;
+  const context = key[1] as ConversationContext | undefined;
+  return !!context && (predicate ? predicate(context) : true);
 };
 
 // ---- topic --------------------------------------------------------------
@@ -78,16 +134,27 @@ export const topicKeys = {
   ]),
 };
 
-// ---- fleet (Observation Mode board) -------------------------------------
-export const fleetKeys = {
-  /** Account-wide set of actively-running topics powering the Observation board. */
-  runningTopics: def('fleet:runningTopics', () => ['fleet:runningTopics']),
-};
-
 // ---- agent --------------------------------------------------------------
 export const agentKeys = {
   /** Sidebar agent list. */
   list: def('agent:list', (isLogin: boolean) => ['agent:list', isLogin]),
+};
+
+// ---- agent builder (opening-suggestion chips) ---------------------------
+// Kept off `CACHE_TIERS` on purpose — these are ephemeral LLM-generated chips.
+// `contextSummary` is intentionally NOT part of the key so config autosaves for
+// the same target don't refetch; `nonce` bumps on manual refresh.
+export const agentBuilderKeys = {
+  suggestions: def(
+    'agentBuilder:suggestions',
+    (mode: string, builderAgentId: string, targetId: string | undefined, nonce: number) => [
+      'agentBuilder:suggestions',
+      mode,
+      builderAgentId,
+      targetId,
+      nonce,
+    ],
+  ),
 };
 
 // ---- group --------------------------------------------------------------
@@ -117,22 +184,75 @@ export const threadKeys = {
 
 // ---- recent -------------------------------------------------------------
 export const recentKeys = {
-  /** Home "all recents" drawer list, keyed by open state. */
-  allDrawer: def('recent:allDrawer', (open: boolean) => ['recent:allDrawer', open]),
-  /** Home recents list, keyed by login + limit. */
-  list: def('recent:list', (isLogin: boolean, limit: number) => ['recent:list', isLogin, limit]),
+  /** Home "all recents" drawer list, keyed by open state and identity scope. */
+  allDrawer: def('recent:allDrawer', (open: boolean, scope: string) => [
+    'recent:allDrawer',
+    open,
+    scope,
+  ]),
+  /** Home recents list, keyed by login + limit + identity scope. */
+  list: def('recent:list', (isLogin: boolean, limit: number, scope: string) => [
+    'recent:list',
+    isLogin,
+    limit,
+    scope,
+  ]),
 };
 
 // ---- task ---------------------------------------------------------------
 export const taskKeys = {
   detail: def('task:detail', (taskId: string) => ['task:detail', taskId]),
-  groupList: def('task:groupList', (agentKey: string | undefined) => ['task:groupList', agentKey]),
-  list: def('task:list', (agentKey: string | undefined) => ['task:list', agentKey]),
+  groupList: def(
+    'task:groupList',
+    (agentKey: string | undefined, visibility: 'all' | 'private' | 'workspace' = 'all') => [
+      'task:groupList',
+      agentKey,
+      visibility,
+    ],
+  ),
+  list: def(
+    'task:list',
+    (agentKey: string | undefined, visibility: 'all' | 'private' | 'workspace' = 'all') => [
+      'task:list',
+      agentKey,
+      visibility,
+    ],
+  ),
+};
+
+// ---- work ---------------------------------------------------------------
+export const workKeys = {
+  conversation: def('work:conversation', (topicId: string, threadId?: string | null) => [
+    'work:conversation',
+    topicId,
+    threadId ?? null,
+  ]),
+  versions: def('work:versions', (workId: string) => ['work:versions', workId]),
+  // Cross-topic Work gallery on the resource page: keyed by owner scope + the
+  // gallery filter key (type OR provider tab, e.g. `all` / `task` / `linear`) +
+  // keyset cursor (one entry per infinite-scroll page). The filter key (not the
+  // Work type) is the discriminator so the per-provider linear/github tabs,
+  // which share the `external` Work type, get distinct cache entries.
+  workspace: def(
+    'work:workspace',
+    (workspaceId: string | null | undefined, filterKey: string, cursor?: string | null) => [
+      'work:workspace',
+      workspaceId ?? null,
+      filterKey,
+      cursor ?? null,
+    ],
+  ),
 };
 
 // ---- brief --------------------------------------------------------------
 export const briefKeys = {
   list: def('brief:list', (isLogin: boolean) => ['brief:list', isLogin]),
+};
+
+// ---- home inbox ---------------------------------------------------------
+export const homeInboxKeys = {
+  /** Account-wide topics powering the home inbox (running + unread + needs-input). */
+  topics: def('home:inboxTopics', (isLogin: boolean) => ['home:inboxTopics', isLogin]),
 };
 
 // ---- agent config / available / search ----------------------------------
@@ -322,6 +442,11 @@ export const discoverKeys = {
     locale,
     params,
   ]),
+  skillComments: def('discover:skillComments', (identifier: string, params: unknown) => [
+    'discover:skillComments',
+    identifier,
+    params,
+  ]),
   skillDetail: def(
     'discover:skillDetail',
     (locale: string, identifier: string, version?: string) => [
@@ -336,6 +461,19 @@ export const discoverKeys = {
     locale,
     params,
   ]),
+  skillRatingDistribution: def('discover:skillRatingDistribution', (identifier: string) => [
+    'discover:skillRatingDistribution',
+    identifier,
+  ]),
+  skillRelated: def(
+    'discover:skillRelated',
+    (locale: string, category: string, identifier: string) => [
+      'discover:skillRelated',
+      locale,
+      category,
+      identifier,
+    ],
+  ),
   userProfile: def('discover:userProfile', (locale: string, username: string) => [
     'discover:userProfile',
     locale,
@@ -370,6 +508,8 @@ export const evalKeys = {
   datasetDetail: def('eval:datasetDetail', (id: string) => ['eval:datasetDetail', id]),
   datasetRuns: def('eval:datasetRuns', (datasetId: string) => ['eval:datasetRuns', datasetId]),
   datasets: def('eval:datasets', (benchmarkId: string) => ['eval:datasets', benchmarkId]),
+  experimentDetail: def('eval:experimentDetail', (id: string) => ['eval:experimentDetail', id]),
+  experiments: def('eval:experiments', () => ['eval:experiments']),
   runDetail: def('eval:runDetail', (id: string) => ['eval:runDetail', id]),
   runResults: def('eval:runResults', (id: string) => ['eval:runResults', id]),
   runs: def('eval:runs', (benchmarkId?: string) => ['eval:runs', benchmarkId]),
@@ -400,8 +540,12 @@ export const ragEvalKeys = {
 // ---- knowledge base -----------------------------------------------------
 export const knowledgeBaseKeys = {
   item: def('knowledgeBase:item', (id: string) => ['knowledgeBase:item', id]),
-  list: def('knowledgeBase:list', (workspaceId?: string | null) =>
-    workspaceId ? ['knowledgeBase:list', workspaceId] : ['knowledgeBase:list'],
+  list: def(
+    'knowledgeBase:list',
+    (workspaceId?: string | null, visibility?: 'private' | 'public') => {
+      const base = workspaceId ? ['knowledgeBase:list', workspaceId] : ['knowledgeBase:list'];
+      return visibility ? [...base, visibility] : base;
+    },
   ),
 };
 
@@ -422,12 +566,16 @@ export const deviceKeys = {
     deviceId,
     path,
   ]),
-  gitLinkedPR: def('device:gitLinkedPR', (deviceId: string, path: string, branch: string) => [
+  gitLinkedPR: def(
     'device:gitLinkedPR',
-    deviceId,
-    path,
-    branch,
-  ]),
+    (deviceId: string, path: string, branch: string, pullRequestNumber?: number) => [
+      'device:gitLinkedPR',
+      deviceId,
+      path,
+      branch,
+      ...(pullRequestNumber === undefined ? [] : [pullRequestNumber]),
+    ],
+  ),
   gitRemoteBranches: def('device:gitRemoteBranches', (deviceId: string, dirPath: string) => [
     'device:gitRemoteBranches',
     deviceId,
@@ -445,6 +593,11 @@ export const deviceKeys = {
   ),
   gitWorkingTreeStatus: def('device:gitWorkingTreeStatus', (deviceId: string, path: string) => [
     'device:gitWorkingTreeStatus',
+    deviceId,
+    path,
+  ]),
+  gitWorktrees: def('device:gitWorktrees', (deviceId: string, path: string) => [
+    'device:gitWorktrees',
     deviceId,
     path,
   ]),
@@ -529,10 +682,13 @@ export const globalKeys = {
 
 // ---- agent knowledge (kept off the `agent:` idb tier on purpose) --------
 export const agentKnowledgeKeys = {
-  list: def('agentKnowledge:list', (agentId: string | undefined) => [
+  list: def(
     'agentKnowledge:list',
-    agentId,
-  ]),
+    (agentId: string | undefined, visibility?: 'private' | 'public') => {
+      const base = ['agentKnowledge:list', agentId] as const;
+      return visibility ? [...base, visibility] : base;
+    },
+  ),
 };
 
 // ---- agent bot ----------------------------------------------------------
@@ -561,6 +717,18 @@ export const chatToolKeys = {
 
 // ---- stats (settings/stats + user header counts) ------------------------
 export const statsKeys = {
+  agentUsageStat: def(
+    'stats:agentUsageStat',
+    (agentId: string, startAt: string, endAt: string, granularity: string) => [
+      'stats:agentUsageStat',
+      agentId,
+      startAt,
+      endAt,
+      granularity,
+    ],
+  ),
+  agents: def('stats:agents', () => ['stats:agents']),
+  countAgents: def('stats:countAgents', () => ['stats:countAgents']),
   countMessages: def('stats:countMessages', () => ['stats:countMessages']),
   countSessions: def('stats:countSessions', () => ['stats:countSessions']),
   countTopics: def('stats:countTopics', () => ['stats:countTopics']),
@@ -599,6 +767,19 @@ export const messengerKeys = {
 
 // ---- verify (deliverable judging) ---------------------------------------
 export const verifyKeys = {
+  acceptanceBundle: def('verify:acceptanceBundle', (acceptanceId: string) => [
+    'verify:acceptanceBundle',
+    acceptanceId,
+  ]),
+  acceptanceBySubject: def(
+    'verify:acceptanceBySubject',
+    (subjectType: string, subjectId: string) => [
+      'verify:acceptanceBySubject',
+      subjectType,
+      subjectId,
+    ],
+  ),
+  acceptances: def('verify:acceptances', () => ['verify:acceptances']),
   criteria: def('verify:criteria', () => ['verify:criteria']),
   instruction: def('verify:instruction', (documentId: string) => [
     'verify:instruction',
@@ -608,6 +789,15 @@ export const verifyKeys = {
     'verify:reportBundle',
     verifyRunId,
   ]),
+  reportSummaries: def(
+    'verify:reportSummaries',
+    (workspaceId?: string | null, q?: string, cursor?: string) => [
+      'verify:reportSummaries',
+      workspaceId ?? '',
+      q ?? '',
+      cursor ?? '',
+    ],
+  ),
   results: def('verify:results', (operationId: string) => ['verify:results', operationId]),
   rubric: def('verify:rubric', (rubricId: string) => ['verify:rubric', rubricId]),
   rubricCriteria: def('verify:rubricCriteria', (rubricId: string) => [
@@ -734,6 +924,12 @@ export const ollamaKeys = {
   downloadModel: def('ollama:downloadModel', (model: string) => ['ollama:downloadModel', model]),
 };
 export const authKeys = {
+  oauthAppById: def('auth:oauthAppById', (id: string) => ['auth:oauthAppById', id]),
+  oauthAppList: def('auth:oauthAppList', () => ['auth:oauthAppList']),
+  oidcClientMetadata: def('auth:oidcClientMetadata', (clientId: string) => [
+    'auth:oidcClientMetadata',
+    clientId,
+  ]),
   oidcInteraction: def('auth:oidcInteraction', (uid: string) => ['auth:oidcInteraction', uid]),
 };
 export const cronKeys = {
@@ -833,6 +1029,7 @@ export const matchDomain =
 export const swrKeys = {
   agent: { ...agentKeys, ...agentConfigKeys },
   agentBot: agentBotKeys,
+  agentBuilder: agentBuilderKeys,
   agentDocument: agentDocumentSWRKeys,
   agentHome: agentHomeKeys,
   agentKnowledge: agentKnowledgeKeys,
@@ -852,7 +1049,6 @@ export const swrKeys = {
   eval: evalKeys,
   favorite: favoriteKeys,
   file: fileKeys,
-  fleet: fleetKeys,
   fork: forkKeys,
   gateway: gatewayKeys,
   global: globalKeys,

@@ -3,8 +3,8 @@
 import { Flexbox } from '@lobehub/ui';
 import { memo } from 'react';
 
-import HomeFreeCreditBadge from '@/business/client/features/HomeFreeCreditBadge';
-import DailyBrief from '@/features/DailyBrief';
+import HomePromoBanner from '@/business/client/features/HomePromoBanner';
+import HomeInbox from '@/features/HomeInbox';
 import { useUserStore } from '@/store/user';
 import { authSelectors } from '@/store/user/slices/auth/selectors';
 
@@ -17,7 +17,7 @@ const Home = memo(() => {
 
   return (
     <Flexbox gap={40}>
-      <HomeFreeCreditBadge />
+      <HomePromoBanner />
       <Flexbox gap={24}>
         <Flexbox gap={8}>
           <AgentSelect />
@@ -26,7 +26,7 @@ const Home = memo(() => {
         <InputArea />
       </Flexbox>
 
-      {isLogin && <DailyBrief />}
+      {isLogin && <HomeInbox />}
     </Flexbox>
   );
 });

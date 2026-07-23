@@ -1,10 +1,12 @@
 'use client';
 
-import { Button, Icon } from '@lobehub/ui';
+import { Icon } from '@lobehub/ui';
+import { Button } from '@lobehub/ui/base-ui';
 import { BriefcaseIcon, LinkIcon, Trash2Icon } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import AsyncError from '@/components/AsyncError';
 import { usePermission } from '@/hooks/usePermission';
 
 import { createMessengerLinkModal } from '../LinkModal';
@@ -55,6 +57,8 @@ const SlackDetail = memo<SlackDetailProps>(({ appId, botUsername, name, onBack }
       title: t('messenger.slack.connections.disconnectTitle'),
     });
 
+  if (data.error && data.isInitialLoading)
+    return <AsyncError error={data.error} variant={'block'} onRetry={data.mutate} />;
   if (data.isInitialLoading) return <IntegrationDetailSkeleton />;
 
   const { installations, links, tenantNameByTenantId } = data;

@@ -138,6 +138,23 @@ export class LocalSystemExecutionRuntime extends ComputerRuntime {
         };
       }
 
+      case 'grepContent': {
+        // Forward the FULL param set. The desktop content-search reads
+        // `path`/`scope`/`cwd` for the search root and
+        // `glob`/`type`/`-i`/`-n`/`-A`/`-B`/`-C`/`multiline`/`head_limit`/`output_mode`
+        // for filtering. Collapsing to a stripped `{cwd, filePattern, output_mode,
+        // pattern}` shape here silently dropped every filter flag and renamed
+        // `glob`→`filePattern` (a field the desktop `buildGrepArgs` never reads),
+        // so case-insensitive / typed / glob-scoped searches returned wrong or
+        // empty results — defeating the executor-level forwarding fix. Keep every
+        // field; only normalize the legacy search-root alias so `cwd`-only callers
+        // still work without shadowing an explicit `path`/`scope`.
+        return {
+          ...params,
+          cwd: params.cwd ?? params.directory ?? params.path ?? params.scope,
+        };
+      }
+
       default: {
         return params;
       }
@@ -176,6 +193,8 @@ export class LocalSystemExecutionRuntime extends ComputerRuntime {
             exitCode: raw.exit_code,
             output: raw.output,
             commandId: raw.shell_id,
+            durationMs: raw.duration_ms,
+            outputFiles: raw.output_files,
             stderr: raw.stderr,
             stdout: raw.stdout,
             success: raw.success,
@@ -190,7 +209,9 @@ export class LocalSystemExecutionRuntime extends ComputerRuntime {
             durationMs: raw.duration_ms,
             exitCode: raw.exit_code,
             error: raw.error,
-            newOutput: raw.output,
+            outputFiles: raw.output_files,
+            stderr: raw.stderr,
+            stdout: raw.stdout,
             success: raw.success,
           },
           success: raw.success,
@@ -248,6 +269,12 @@ export class LocalSystemExecutionRuntime extends ComputerRuntime {
             content: raw.content,
             fileType: raw.fileType,
             filename: raw.filename,
+            // Image results: set by LocalFileCtr when the path resolves to an
+            // image (uploaded in main), so ComputerRuntime can route them to
+            // `state.images`.
+            imageFileId: raw.imageFileId,
+            imageUrl: raw.imageUrl,
+            isImage: raw.isImage,
             loc: raw.loc,
             totalCharCount: raw.totalCharCount,
             totalLineCount: raw.totalLineCount,

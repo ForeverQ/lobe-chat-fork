@@ -2,14 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import { type AssistantContentBlock } from '@/types/index';
 
-import { POST_TOOL_FINAL_ANSWER_SCORE_THRESHOLD } from './constants';
 import {
   getPostToolAnswerSplitIndex,
   getToolDisplayName,
   getWorkflowStreamingHeadlineState,
   getWorkflowSummaryText,
-  scoreBlockContentAsAnswerLike,
-  scorePostToolBlockAsFinalAnswer,
+  isFoldableStatusLine,
   shapeProseForWorkflowHeadline,
 } from './toolDisplayNames';
 
@@ -86,6 +84,20 @@ describe('tool display names', () => {
     expect(getToolDisplayName('mcp__claude_ai_Linear__save_issue')).toBe('Linear · Save issue');
     expect(getToolDisplayName('mcp__linear-server__get_issue')).toBe('Linear · Get issue');
   });
+
+  it('uses friendly labels for the in-app browser MCP tool names', () => {
+    // Title-casing the wire name yields "Mcp  lobe cc  browser navigate".
+    // Past tense: the summary reports what already ran, not an offer to run it.
+    expect(getToolDisplayName('mcp__lobe_cc__browser_navigate')).toBe('Opened page');
+    expect(getToolDisplayName('mcp__lobe_cc__browser_screenshot')).toBe('Captured screenshot');
+    expect(getToolDisplayName('mcp__lobe_cc__browser_read_page')).toBe('Read page text');
+    // `snapshot` returns the a11y tree — say what the agent got, not the wire name.
+    expect(getToolDisplayName('mcp__lobe_cc__browser_snapshot')).toBe('Read page elements');
+  });
+
+  it('leaves unknown MCP tools on the title-case fallback', () => {
+    expect(getToolDisplayName('mcp__lobe_cc__something_else')).toBe('Mcp__lobe_cc__something_else');
+  });
 });
 
 describe('shapeProseForWorkflowHeadline', () => {
@@ -107,21 +119,32 @@ describe('shapeProseForWorkflowHeadline', () => {
   });
 });
 
-describe('post-tool final answer split', () => {
-  it('scores long structured content as answer-like even when tools share the block', () => {
-    const score = scoreBlockContentAsAnswerLike(
-      blk({
-        id: 'mixed',
-        content:
-          '先总结当前结论。\n\n## 下一步\n\n- 对比方案 A\n- 对比方案 B\n- 给出推荐与风险说明。',
-        tools: [{ apiName: 'search', id: 't1' } as any],
-      }),
-    );
-
-    expect(score).toBeGreaterThanOrEqual(POST_TOOL_FINAL_ANSWER_SCORE_THRESHOLD);
+describe('isFoldableStatusLine', () => {
+  it('keeps a single short status line folded', () => {
+    expect(isFoldableStatusLine(blk({ id: '0', content: '先重建 worktree:' }))).toBe(true);
+    expect(isFoldableStatusLine(blk({ id: '1', content: '现在我来搜索资料。' }))).toBe(true);
   });
 
-  it('returns split index for long structured prose-only block after last tool', () => {
+  it('keeps a single sentence with a dotted token folded', () => {
+    // "src/a.ts" and "Node.js" must not be counted as extra sentence boundaries.
+    expect(isFoldableStatusLine(blk({ id: '0', content: '已更新 src/a.ts 完成。' }))).toBe(true);
+    expect(isFoldableStatusLine(blk({ id: '1', content: '升级到 Node.js 24。' }))).toBe(true);
+  });
+
+  it('treats multi-sentence, multi-line, markdown or long lines as prose', () => {
+    expect(isFoldableStatusLine(blk({ id: '0', content: '第一句话。第二句话。' }))).toBe(false);
+    expect(isFoldableStatusLine(blk({ id: '1', content: '先总结。\n\n## 下一步' }))).toBe(false);
+    expect(isFoldableStatusLine(blk({ id: '2', content: '- 对比方案 A' }))).toBe(false);
+    expect(isFoldableStatusLine(blk({ id: '3', content: 'x'.repeat(120) }))).toBe(false);
+  });
+
+  it('treats empty / loading content as foldable (nothing to lift out)', () => {
+    expect(isFoldableStatusLine(blk({ id: '0', content: '' }))).toBe(true);
+  });
+});
+
+describe('post-tool answer split', () => {
+  it('returns split index for real prose block after last tool', () => {
     const long =
       'Direct summary - Node.js 24 (released May 6, 2025) is a major platform update that upgrades V8 to a newer track, ships notable HTTP and fetch-related changes, and introduces practical migration items for native addons and tooling.\n\n## Checklist\n\n- Rebuild native modules';
     const blocks = [
@@ -132,14 +155,19 @@ describe('post-tool final answer split', () => {
     expect(ix).toBe(1);
   });
 
-  it('does not split short step line after tools', () => {
+  it('splits on a multi-sentence prose block after tools', () => {
+    const blocks = [
+      blk({ id: '0', content: 'x', tools: [{ apiName: 'search', id: 't1' } as any] }),
+      blk({ id: '1', content: '先跑测试。全部通过了。' }),
+    ];
+    expect(getPostToolAnswerSplitIndex(blocks, 0, true, true)).toBe(1);
+  });
+
+  it('does not split a short single-line step after tools', () => {
     const blocks = [
       blk({ id: '0', content: 'x', tools: [{ apiName: 'search', id: 't1' } as any] }),
       blk({ id: '1', content: '现在我来搜索资料。' }),
     ];
-    expect(scorePostToolBlockAsFinalAnswer(blocks[1]!)).toBeLessThan(
-      POST_TOOL_FINAL_ANSWER_SCORE_THRESHOLD,
-    );
     expect(getPostToolAnswerSplitIndex(blocks, 0, true, true)).toBeNull();
   });
 });

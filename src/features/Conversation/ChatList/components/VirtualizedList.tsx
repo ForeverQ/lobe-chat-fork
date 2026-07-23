@@ -10,6 +10,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 
 import WideScreenContainer from '../../../WideScreenContainer';
+import { MessageForwardSelectToHere } from '../../MessageForward';
 import {
   dataSelectors,
   inputSelectors,
@@ -52,6 +53,14 @@ const VirtualizedList = memo<VirtualizedListProps>(
     const scrollEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastUserScrollIntentAtRef = useRef(0);
 
+    // A header slot prepends one synthetic row to the VList, shifting every
+    // virtua row index off the message index. All index-based APIs exposed to
+    // the store (and the hooks that talk to virtua directly) work in MESSAGE
+    // index space; this offset translates at the virtua boundary.
+    const headerOffset = headerSlot ? 1 : 0;
+    const headerOffsetRef = useRef(headerOffset);
+    headerOffsetRef.current = headerOffset;
+
     // Per-topic scroll restoration. Provider does not remount on topic switch,
     // so we key the scroll snapshot by the message-map key derived from
     // ConversationStore's `context`.
@@ -59,6 +68,7 @@ const VirtualizedList = memo<VirtualizedListProps>(
     const { recordScroll } = useTopicScrollPersist({
       contextKey,
       dataSourceLength: dataSource.length,
+      headerOffset,
       virtuaRef,
     });
 
@@ -77,11 +87,17 @@ const VirtualizedList = memo<VirtualizedListProps>(
       spacerHeight,
     } = useConversationScroll({
       dataSource,
+      headerOffset,
       isSecondLastMessageFromUser,
       virtuaRef,
     });
 
     const isAutoScrollEnabled = useAutoScrollEnabled();
+
+    // While multi-selecting, let message rows span the full stream width so the
+    // clickable/highlight band fills the available space instead of the centered
+    // reading column.
+    const isSelectionMode = useConversationStore(messageStateSelectors.isSelectionMode);
 
     // Store actions
     const registerVirtuaScrollMethods = useConversationStore((s) => s.registerVirtuaScrollMethods);
@@ -131,8 +147,12 @@ const VirtualizedList = memo<VirtualizedListProps>(
         refForActive && typeof refForActive.findItemIndex === 'function'
           ? refForActive.findItemIndex(refForActive.scrollOffset + refForActive.viewportSize * 0.25)
           : null;
+      // findItemIndex returns a virtua row index — translate to message space
+      // (the header row clamps to the first message).
       const activeFromFind =
-        typeof activeFromFindRaw === 'number' && activeFromFindRaw >= 0 ? activeFromFindRaw : null;
+        typeof activeFromFindRaw === 'number' && activeFromFindRaw >= 0
+          ? Math.max(0, activeFromFindRaw - headerOffsetRef.current)
+          : null;
 
       if (activeFromFind !== activeIndex) setActiveIndex(activeFromFind);
 
@@ -173,21 +193,26 @@ const VirtualizedList = memo<VirtualizedListProps>(
     useEffect(() => {
       const ref = virtuaRef.current;
       if (ref) {
+        // Index-based methods accept MESSAGE indices; the header slot row is a
+        // private implementation detail translated away right here.
         registerVirtuaScrollMethods({
-          getItemOffset: (index) => ref.getItemOffset(index),
-          getItemSize: (index) => ref.getItemSize(index),
+          getItemOffset: (index) => ref.getItemOffset(index + headerOffsetRef.current),
+          getItemSize: (index) => ref.getItemSize(index + headerOffsetRef.current),
           getScrollOffset: () => ref.scrollOffset,
           getScrollSize: () => ref.scrollSize,
           getTotalCount: () => totalCountRef.current,
           getViewportSize: () => ref.viewportSize,
           scrollTo: (offset) => ref.scrollTo(offset),
-          scrollToIndex: (index, options) => ref.scrollToIndex(index, options),
+          scrollToIndex: (index, options) =>
+            ref.scrollToIndex(index + headerOffsetRef.current, options),
         });
 
         // Seed active index once on mount (avoid requiring user scroll)
         const initialActiveRaw = ref.findItemIndex(ref.scrollOffset + ref.viewportSize * 0.25);
         const initialActive =
-          typeof initialActiveRaw === 'number' && initialActiveRaw >= 0 ? initialActiveRaw : null;
+          typeof initialActiveRaw === 'number' && initialActiveRaw >= 0
+            ? Math.max(0, initialActiveRaw - headerOffsetRef.current)
+            : null;
         setActiveIndex(initialActive);
       }
 
@@ -262,10 +287,12 @@ const VirtualizedList = memo<VirtualizedListProps>(
     );
 
     // Mirror the latest data length into a ref so the scroll-methods registered
-    // once on mount can read the current total count (including spacer/footer)
-    // without re-registering on every render.
-    const totalCountRef = useRef(dataWithSlots.length);
-    totalCountRef.current = dataWithSlots.length;
+    // once on mount can read the current total count (including spacer/footer,
+    // but excluding the leading header row — the count stays in the same
+    // message-index space as the registered scrollToIndex) without
+    // re-registering on every render.
+    const totalCountRef = useRef(dataWithSlots.length - headerOffset);
+    totalCountRef.current = dataWithSlots.length - headerOffset;
 
     return (
       <div
@@ -276,6 +303,8 @@ const VirtualizedList = memo<VirtualizedListProps>(
         onTouchMoveCapture={markUserScrollIntent}
         onWheelCapture={markUserScrollIntent}
       >
+        {/* Pinned to the list viewport top; only renders while multi-selecting */}
+        <MessageForwardSelectToHere />
         {/* Debug Inspector - placed outside VList so it won't be recycled by the virtual list */}
         {OPEN_DEV_INSPECTOR && <DebugInspector />}
         <VList
@@ -344,7 +373,11 @@ const VirtualizedList = memo<VirtualizedListProps>(
             }
 
             return (
-              <WideScreenContainer key={messageId} style={{ position: 'relative' }}>
+              <WideScreenContainer
+                fullWidth={isSelectionMode}
+                key={messageId}
+                style={{ position: 'relative' }}
+              >
                 {content}
                 {isLastItem && isAutoScrollEnabled && !spacerActive && <AutoScroll />}
               </WideScreenContainer>

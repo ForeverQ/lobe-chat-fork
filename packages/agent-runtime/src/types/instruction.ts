@@ -45,6 +45,7 @@ export interface AgentRuntimeContext {
 
   /** Session info (kept for backward compatibility, will be optional in the future) */
   session?: {
+    eventCount?: number;
     messageCount: number;
     sessionId: string;
     status: AgentState['status'];
@@ -115,6 +116,7 @@ export interface Agent {
 // ── Payloads ──────────────────────────────────────────────
 
 export interface CallLLMPayload {
+  allowedToolNames?: string[];
   isFirstMessage?: boolean;
   messages: any[];
   model: string;
@@ -172,6 +174,8 @@ export interface SubAgentTask {
    * run on the server.
    */
   runInClient?: boolean;
+  /** Agent selected by callAgent; defaults to the current runtime agent when omitted */
+  targetAgentId?: string;
   /** Timeout in milliseconds (optional, default 30 minutes) */
   timeout?: number;
 }
@@ -190,8 +194,6 @@ export interface SubAgentResultPayload {
     result?: string;
     /** Whether the sub-agent completed successfully */
     success: boolean;
-    /** Sub-agent message ID */
-    taskMessageId: string;
     /** Thread ID where the sub-agent was executed */
     threadId: string;
   };
@@ -211,8 +213,6 @@ export interface SubAgentsBatchResultPayload {
     result?: string;
     /** Whether the sub-agent completed successfully */
     success: boolean;
-    /** Sub-agent message ID */
-    taskMessageId: string;
     /** Thread ID where the sub-agent was executed */
     threadId: string;
   }>;
@@ -275,6 +275,10 @@ export interface AgentInstructionResolveAbortedTools extends AgentInstructionBas
 
 export interface AgentInstructionResolveBlockedTools extends AgentInstructionBase {
   payload: {
+    /** Optional message to write into blocked tool result content */
+    blockedContent?: string;
+    /** Optional machine-readable blocked reason */
+    blockedReason?: string;
     /** Parent message ID (assistant message) */
     parentMessageId: string;
     /** Tool calls that were blocked and need tool results */
@@ -303,26 +307,6 @@ export interface AgentInstructionExecSubAgents extends AgentInstructionBase {
     tasks: SubAgentTask[];
   };
   type: 'exec_sub_agents';
-}
-
-export interface AgentInstructionExecClientSubAgent extends AgentInstructionBase {
-  payload: {
-    /** Parent message ID (tool message that dispatched the sub-agent) */
-    parentMessageId: string;
-    /** Sub-agent to execute */
-    task: SubAgentTask;
-  };
-  type: 'exec_client_sub_agent';
-}
-
-export interface AgentInstructionExecClientSubAgents extends AgentInstructionBase {
-  payload: {
-    /** Parent message ID (tool message that dispatched the sub-agents) */
-    parentMessageId: string;
-    /** Array of sub-agents to execute */
-    tasks: SubAgentTask[];
-  };
-  type: 'exec_client_sub_agents';
 }
 
 // ─ Human Interaction ─────────────────────────────────────
@@ -387,8 +371,6 @@ export type AgentInstruction =
   // Sub-Agent
   | AgentInstructionExecSubAgent
   | AgentInstructionExecSubAgents
-  | AgentInstructionExecClientSubAgent
-  | AgentInstructionExecClientSubAgents
   // Human Interaction
   | AgentInstructionRequestHumanPrompt
   | AgentInstructionRequestHumanSelect

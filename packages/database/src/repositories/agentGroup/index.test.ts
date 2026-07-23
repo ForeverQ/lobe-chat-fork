@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { BUILTIN_AGENT_SLUGS } from '@lobechat/builtin-agents';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { getTestDB } from '../../core/getTestDB';
@@ -350,6 +351,123 @@ describe('AgentGroupRepository', () => {
       expect(result!.agents).toEqual([
         expect.objectContaining({ isSupervisor: true, title: 'Supervisor', virtual: true }),
       ]);
+    });
+
+    describe('member agent demoted to private (LOBE-11772)', () => {
+      const workspaceId = 'agent-group-demotion-ws';
+
+      beforeEach(async () => {
+        await serverDB.insert(workspaces).values({
+          id: workspaceId,
+          name: 'Demotion WS',
+          primaryOwnerId: userId,
+          slug: workspaceId,
+        });
+        await serverDB.insert(chatGroups).values({
+          id: 'ws-demotion-group',
+          title: 'WS demotion group',
+          userId,
+          visibility: 'public',
+          workspaceId,
+        });
+        await serverDB.insert(agents).values([
+          {
+            id: 'ws-supervisor',
+            title: 'Supervisor',
+            userId,
+            virtual: true,
+            visibility: 'public',
+            workspaceId,
+          },
+          {
+            id: 'ws-public-member',
+            title: 'Public member',
+            userId,
+            visibility: 'public',
+            workspaceId,
+          },
+          {
+            id: 'ws-demoted-member',
+            systemRole: 'secret prompt',
+            title: 'Demoted member',
+            userId,
+            visibility: 'private',
+            workspaceId,
+          },
+        ]);
+        await serverDB.insert(chatGroupsAgents).values([
+          {
+            agentId: 'ws-supervisor',
+            chatGroupId: 'ws-demotion-group',
+            order: -1,
+            role: 'supervisor',
+            userId,
+            workspaceId,
+          },
+          {
+            agentId: 'ws-public-member',
+            chatGroupId: 'ws-demotion-group',
+            order: 0,
+            role: 'participant',
+            userId,
+            workspaceId,
+          },
+          {
+            agentId: 'ws-demoted-member',
+            chatGroupId: 'ws-demotion-group',
+            order: 1,
+            role: 'participant',
+            userId,
+            workspaceId,
+          },
+        ]);
+      });
+
+      it('hides the private member config from another workspace member', async () => {
+        const viewerRepo = new AgentGroupRepository(serverDB, otherUserId, workspaceId);
+
+        const result = await viewerRepo.findByIdWithAgents('ws-demotion-group');
+
+        expect(result!.agents.map((a) => a.id)).toEqual(['ws-supervisor', 'ws-public-member']);
+        expect(JSON.stringify(result)).not.toContain('secret prompt');
+        expect(result!.supervisorAgentId).toBe('ws-supervisor');
+      });
+
+      it('keeps the private member visible to its owner', async () => {
+        const ownerRepo = new AgentGroupRepository(serverDB, userId, workspaceId);
+
+        const result = await ownerRepo.findByIdWithAgents('ws-demotion-group');
+
+        expect(result!.agents.map((a) => a.id)).toEqual([
+          'ws-supervisor',
+          'ws-public-member',
+          'ws-demoted-member',
+        ]);
+      });
+
+      it('does not auto-create a duplicate supervisor when the supervisor row is not visible', async () => {
+        // Out-of-sync legacy data: a group published while its supervisor row
+        // stayed private (publishToWorkspace now keeps them in sync).
+        await serverDB
+          .update(agents)
+          .set({ visibility: 'private' })
+          .where(eq(agents.id, 'ws-supervisor'));
+
+        const viewerRepo = new AgentGroupRepository(serverDB, otherUserId, workspaceId);
+        const result = await viewerRepo.findByIdWithAgents('ws-demotion-group');
+
+        // Supervisor existence is judged on raw rows: no duplicate is created,
+        // and the group-owned supervisor stays in the roster so that
+        // `supervisorAgentId` always resolves to a member entry.
+        expect(result!.supervisorAgentId).toBe('ws-supervisor');
+        expect(result!.agents.map((a) => a.id)).toEqual(['ws-supervisor', 'ws-public-member']);
+
+        const supervisorRows = await serverDB
+          .select()
+          .from(chatGroupsAgents)
+          .where(eq(chatGroupsAgents.chatGroupId, 'ws-demotion-group'));
+        expect(supervisorRows.filter((r) => r.role === 'supervisor')).toHaveLength(1);
+      });
     });
 
     it('should inject group-supervisor slug for supervisor agent', async () => {
@@ -729,6 +847,32 @@ describe('AgentGroupRepository', () => {
         where: (a, { eq }) => eq(a.id, 'remove-regular'),
       });
       expect(agent).toBeDefined();
+    });
+
+    it('should not remove agents from another user’s group (IDOR)', async () => {
+      // Attacker scoped to a different user targets the victim's group + agents.
+      const attackerRepo = new AgentGroupRepository(serverDB, otherUserId);
+
+      const result = await attackerRepo.removeAgentsFromGroup('remove-group', [
+        'remove-virtual',
+        'remove-regular',
+      ]);
+
+      // Nothing removed: junction rows belong to the victim, not the attacker.
+      expect(result.removedFromGroup).toBe(0);
+      expect(result.deletedVirtualAgentIds).toEqual([]);
+
+      // Victim's group membership is untouched.
+      const groupAgents = await serverDB.query.chatGroupsAgents.findMany({
+        where: (cga, { eq }) => eq(cga.chatGroupId, 'remove-group'),
+      });
+      expect(groupAgents).toHaveLength(3);
+
+      // Victim's virtual agent is not deleted.
+      const virtualAgent = await serverDB.query.agents.findFirst({
+        where: (a, { eq }) => eq(a.id, 'remove-virtual'),
+      });
+      expect(virtualAgent).toBeDefined();
     });
 
     it('should handle multiple virtual agents', async () => {

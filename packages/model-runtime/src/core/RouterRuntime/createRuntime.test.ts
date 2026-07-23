@@ -1,5 +1,5 @@
 import { AgentRuntimeErrorType, RequestTrigger } from '@lobechat/types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LobeRuntimeAI } from '../BaseAI';
 import { createRouterRuntime } from './createRuntime';
@@ -7,6 +7,11 @@ import { createRouterRuntime } from './createRuntime';
 describe('createRouterRuntime', () => {
   beforeEach(() => {
     vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   describe('initialization', () => {
@@ -138,7 +143,7 @@ describe('createRouterRuntime', () => {
         ],
       });
 
-      const runtime = new Runtime();
+      const runtime = new Runtime({ userId: 'user-1' });
       const metadata: Record<string, unknown> = { traceId: 'trace-1', trigger: 'chat' };
 
       await runtime.chat({ messages: [], model: 'gpt-4', temperature: 0.7 }, { metadata });
@@ -153,6 +158,133 @@ describe('createRouterRuntime', () => {
           totalOptions: 1,
         }),
       );
+    });
+
+    it('should throw in development when lobehub route attempt is missing trigger', async () => {
+      vi.stubEnv('NODE_ENV', 'development');
+      const mockChat = vi.fn().mockResolvedValue('chat-response');
+
+      class MockRuntime implements LobeRuntimeAI {
+        chat = mockChat;
+      }
+
+      const Runtime = createRouterRuntime({
+        id: 'lobehub',
+        routers: [
+          {
+            apiType: 'openai',
+            models: ['gpt-4'],
+            options: { id: 'channel-1' },
+            runtime: MockRuntime as any,
+          },
+        ],
+      });
+
+      const runtime = new Runtime({ userId: 'user-1' });
+
+      await expect(
+        runtime.chat({ messages: [], model: 'gpt-4', temperature: 0.7 }),
+      ).rejects.toThrow('"missingTrigger":true');
+      expect(mockChat).not.toHaveBeenCalled();
+    });
+
+    it('should throw in development when lobehub route attempt is missing user', async () => {
+      vi.stubEnv('NODE_ENV', 'development');
+      const mockChat = vi.fn().mockResolvedValue('chat-response');
+
+      class MockRuntime implements LobeRuntimeAI {
+        chat = mockChat;
+      }
+
+      const Runtime = createRouterRuntime({
+        id: 'lobehub',
+        routers: [
+          {
+            apiType: 'openai',
+            models: ['gpt-4'],
+            options: { id: 'channel-1' },
+            runtime: MockRuntime as any,
+          },
+        ],
+      });
+
+      const runtime = new Runtime();
+      const metadata = { trigger: RequestTrigger.Chat };
+
+      await expect(
+        runtime.chat({ messages: [], model: 'gpt-4', temperature: 0.7 }, { metadata }),
+      ).rejects.toThrow('"missingUser":true');
+      expect(mockChat).not.toHaveBeenCalled();
+    });
+
+    it('should accept per-call user as the route attempt user in development', async () => {
+      vi.stubEnv('NODE_ENV', 'development');
+      const mockChat = vi.fn().mockResolvedValue('chat-response');
+      const onRouteAttempt = vi.fn().mockResolvedValue(undefined);
+
+      class MockRuntime implements LobeRuntimeAI {
+        chat = mockChat;
+      }
+
+      const Runtime = createRouterRuntime({
+        id: 'lobehub',
+        onRouteAttempt,
+        routers: [
+          {
+            apiType: 'openai',
+            models: ['gpt-4'],
+            options: { id: 'channel-1' },
+            runtime: MockRuntime as any,
+          },
+        ],
+      });
+
+      const runtime = new Runtime();
+      const metadata = { trigger: RequestTrigger.Chat };
+
+      await runtime.chat(
+        { messages: [], model: 'gpt-4', temperature: 0.7 },
+        { metadata, user: 'user-1' },
+      );
+
+      expect(mockChat).toHaveBeenCalled();
+      expect(onRouteAttempt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-1',
+        }),
+      );
+    });
+
+    it('should not log missing route attempt context outside development', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const mockChat = vi.fn().mockResolvedValue('chat-response');
+
+      class MockRuntime implements LobeRuntimeAI {
+        chat = mockChat;
+      }
+
+      const Runtime = createRouterRuntime({
+        id: 'lobehub',
+        routers: [
+          {
+            apiType: 'openai',
+            models: ['claude-3-sonnet'],
+            options: { id: 'channel-1' },
+            runtime: MockRuntime as any,
+          },
+        ],
+      });
+
+      const runtime = new Runtime();
+      const result = await runtime.chat({
+        messages: [{ content: 'do-not-log', role: 'user' }],
+        model: 'claude-3-sonnet',
+        temperature: 0.7,
+        tools: [{ function: { name: 'secret_tool' }, type: 'function' }],
+      });
+
+      expect(result).toBe('chat-response');
+      expect(consoleError).not.toHaveBeenCalled();
     });
 
     it('should not attach route attempt metadata for non-lobehub runtime', async () => {
@@ -1339,10 +1471,215 @@ describe('createRouterRuntime', () => {
         ],
       });
 
-      const runtime = new OuterRuntime();
-      await runtime.chat({ messages: [], model: 'deepseek-v4-pro', temperature: 0.7 });
+      const runtime = new OuterRuntime({ userId: 'user-1' });
+      await runtime.chat(
+        { messages: [], model: 'deepseek-v4-pro', temperature: 0.7 },
+        { metadata: { trigger: RequestTrigger.Chat } },
+      );
 
       expect(constructorOptions[0]).toEqual(expect.objectContaining({ id: 'lobehub' }));
+    });
+  });
+
+  describe('sortRouterOptions hook', () => {
+    const createRecordingRuntime = (attemptedKeys: string[], failKeys: Set<string> = new Set()) =>
+      class RecordingRuntime implements LobeRuntimeAI {
+        private apiKey: string;
+
+        constructor(options: any) {
+          this.apiKey = options.apiKey;
+        }
+
+        chat = vi.fn().mockImplementation(async () => {
+          attemptedKeys.push(this.apiKey);
+          if (failKeys.has(this.apiKey)) throw new Error(`${this.apiKey} failed`);
+          return 'ok';
+        });
+      };
+
+    it('should try options in the order returned by the hook', async () => {
+      const attemptedKeys: string[] = [];
+      const sortRouterOptions = vi.fn().mockImplementation(({ options }) => [...options].reverse());
+
+      const Runtime = createRouterRuntime({
+        id: 'test-runtime',
+        routers: [
+          {
+            apiType: 'openai',
+            id: 'router-a',
+            models: ['gpt-4'],
+            options: [
+              { apiKey: 'key-1', id: 'channel-a' },
+              { apiKey: 'key-2', id: 'channel-b' },
+            ],
+            runtime: createRecordingRuntime(attemptedKeys) as any,
+          },
+        ],
+        sortRouterOptions,
+      });
+
+      const runtime = new Runtime();
+      await runtime.chat({ messages: [], model: 'gpt-4', temperature: 0.7 });
+
+      expect(sortRouterOptions).toHaveBeenCalledWith({
+        model: 'gpt-4',
+        options: [
+          expect.objectContaining({ id: 'channel-a' }),
+          expect.objectContaining({ id: 'channel-b' }),
+        ],
+        routerId: 'router-a',
+      });
+      // Reversed order: channel-b is tried first and succeeds
+      expect(attemptedKeys).toEqual(['key-2']);
+    });
+
+    it('should still fall back through all options after reordering', async () => {
+      const attemptedKeys: string[] = [];
+
+      const Runtime = createRouterRuntime({
+        id: 'test-runtime',
+        routers: [
+          {
+            apiType: 'openai',
+            models: ['gpt-4'],
+            options: [{ apiKey: 'key-1' }, { apiKey: 'key-2' }],
+            runtime: createRecordingRuntime(attemptedKeys, new Set(['key-2'])) as any,
+          },
+        ],
+        sortRouterOptions: ({ options }) => [...options].reverse(),
+      });
+
+      const runtime = new Runtime();
+      await runtime.chat({ messages: [], model: 'gpt-4', temperature: 0.7 });
+
+      expect(attemptedKeys).toEqual(['key-2', 'key-1']);
+    });
+
+    it('should keep original order when the hook throws', async () => {
+      const attemptedKeys: string[] = [];
+
+      const Runtime = createRouterRuntime({
+        id: 'test-runtime',
+        routers: [
+          {
+            apiType: 'openai',
+            models: ['gpt-4'],
+            options: [{ apiKey: 'key-1' }, { apiKey: 'key-2' }],
+            runtime: createRecordingRuntime(attemptedKeys) as any,
+          },
+        ],
+        sortRouterOptions: () => {
+          throw new Error('hook failed');
+        },
+      });
+
+      const runtime = new Runtime();
+      await runtime.chat({ messages: [], model: 'gpt-4', temperature: 0.7 });
+
+      expect(attemptedKeys).toEqual(['key-1']);
+    });
+
+    it('should ignore results that are not a permutation of the input', async () => {
+      const attemptedKeys: string[] = [];
+
+      const Runtime = createRouterRuntime({
+        id: 'test-runtime',
+        routers: [
+          {
+            apiType: 'openai',
+            models: ['gpt-4'],
+            options: [{ apiKey: 'key-1' }, { apiKey: 'key-2' }],
+            runtime: createRecordingRuntime(attemptedKeys) as any,
+          },
+        ],
+        // Dropping options and returning copies must both be rejected
+        sortRouterOptions: ({ options }) => [{ ...options[1] }],
+      });
+
+      const runtime = new Runtime();
+      await runtime.chat({ messages: [], model: 'gpt-4', temperature: 0.7 });
+
+      expect(attemptedKeys).toEqual(['key-1']);
+    });
+
+    it('should not let an in-place sorting hook mutate the shared options array', async () => {
+      const attemptedKeys: string[] = [];
+      const sharedOptions = [
+        { apiKey: 'key-1', id: 'channel-a' },
+        { apiKey: 'key-2', id: 'channel-b' },
+      ];
+
+      const Runtime = createRouterRuntime({
+        id: 'test-runtime',
+        routers: [
+          {
+            apiType: 'openai',
+            models: ['gpt-4'],
+            options: sharedOptions,
+            runtime: createRecordingRuntime(attemptedKeys) as any,
+          },
+        ],
+        // Natural in-place usage: sort the received array and return it
+        sortRouterOptions: ({ options }) => options.reverse(),
+      });
+
+      const runtime = new Runtime();
+      await runtime.chat({ messages: [], model: 'gpt-4', temperature: 0.7 });
+
+      // Reorder applies to this request...
+      expect(attemptedKeys).toEqual(['key-2']);
+      // ...but the shared config array stays untouched for concurrent requests
+      expect(sharedOptions.map((o) => o.id)).toEqual(['channel-a', 'channel-b']);
+    });
+
+    it('should reject a hook that shrinks and returns the received array', async () => {
+      const attemptedKeys: string[] = [];
+
+      const Runtime = createRouterRuntime({
+        id: 'test-runtime',
+        routers: [
+          {
+            apiType: 'openai',
+            models: ['gpt-4'],
+            options: [{ apiKey: 'key-1' }, { apiKey: 'key-2' }],
+            runtime: createRecordingRuntime(attemptedKeys) as any,
+          },
+        ],
+        // Mutating the received array must not fool the permutation check
+        sortRouterOptions: ({ options }) => {
+          options.pop();
+          return options;
+        },
+      });
+
+      const runtime = new Runtime();
+      await runtime.chat({ messages: [], model: 'gpt-4', temperature: 0.7 });
+
+      expect(attemptedKeys).toEqual(['key-1']);
+    });
+
+    it('should not invoke the hook for a single option', async () => {
+      const attemptedKeys: string[] = [];
+      const sortRouterOptions = vi.fn();
+
+      const Runtime = createRouterRuntime({
+        id: 'test-runtime',
+        routers: [
+          {
+            apiType: 'openai',
+            models: ['gpt-4'],
+            options: { apiKey: 'key-1' },
+            runtime: createRecordingRuntime(attemptedKeys) as any,
+          },
+        ],
+        sortRouterOptions,
+      });
+
+      const runtime = new Runtime();
+      await runtime.chat({ messages: [], model: 'gpt-4', temperature: 0.7 });
+
+      expect(sortRouterOptions).not.toHaveBeenCalled();
+      expect(attemptedKeys).toEqual(['key-1']);
     });
   });
 });

@@ -7,8 +7,13 @@ import {
   BusinessMobileRoutesWithoutMainLayout,
 } from '@/business/client/BusinessMobileRoutes';
 import { mobileAgentSettingsRouteMeta } from '@/features/RouteMeta/mobileRouteMeta';
-import { verifyRouteMeta } from '@/features/Verify/routeMeta';
+import {
+  acceptanceRouteMeta,
+  verifyReportsRouteMeta,
+  verifyRouteMeta,
+} from '@/features/Verify/routeMeta';
 import { agentRouteMeta } from '@/routes/(main)/agent/features/routeMeta';
+import { sharePageRouteMeta } from '@/routes/share/page/[id]/routeMeta';
 import { shareTopicRouteMeta } from '@/routes/share/t/[id]/routeMeta';
 import { dynamicElement, dynamicLayout, ErrorBoundary, redirectElement } from '@/utils/router';
 
@@ -264,6 +269,13 @@ export const mobileRoutes: RouteObject[] = [
     children: [
       ...sharedMainAreaChildren,
 
+      // Downloads page (personal-only — never mirrored under /:workspaceSlug)
+      {
+        element: dynamicElement(() => import('@/routes/(main)/downloads'), 'Mobile > Downloads'),
+        errorElement: <ErrorBoundary />,
+        path: 'downloads',
+      },
+
       // Settings routes (personal-only — never mirrored under /:workspaceSlug)
       {
         children: [
@@ -296,6 +308,10 @@ export const mobileRoutes: RouteObject[] = [
             ),
             path: 'provider',
           },
+          {
+            element: redirectElement('/settings/credential'),
+            path: 'creds',
+          },
           // Other settings tabs (common, agent, memory, tts, about, etc.)
           {
             element: dynamicElement(
@@ -303,6 +319,13 @@ export const mobileRoutes: RouteObject[] = [
               'Mobile > Settings > Tab',
             ),
             path: ':tab',
+          },
+          {
+            element: dynamicElement(
+              () => import('@/routes/(main)/settings'),
+              'Mobile > Settings > Tab > Sub',
+            ),
+            path: ':tab/:sub',
           },
         ],
         element: dynamicLayout(
@@ -438,6 +461,27 @@ export const mobileRoutes: RouteObject[] = [
                 ),
                 path: 'usage',
               },
+              {
+                element: dynamicElement(
+                  () => import('@/routes/(main)/[workspaceSlug]/settings/audit-log'),
+                  'Mobile > Workspace > Settings > Audit Log',
+                ),
+                path: 'audit-log',
+              },
+              {
+                element: dynamicElement(
+                  () => import('@/routes/(main)/[workspaceSlug]/settings/oauth-apps'),
+                  'Mobile > Workspace > Settings > OAuth Apps',
+                ),
+                path: 'oauth-apps',
+              },
+              {
+                element: dynamicElement(
+                  () => import('@/routes/(main)/[workspaceSlug]/settings/oauth-apps'),
+                  'Mobile > Workspace > Settings > OAuth App Detail',
+                ),
+                path: 'oauth-apps/:sub',
+              },
             ],
             element: dynamicLayout(
               () => import('@/routes/(mobile)/settings/_layout'),
@@ -520,6 +564,7 @@ export const mobileRoutes: RouteObject[] = [
     children: [
       {
         element: dynamicElement(() => import('@/routes/share/page/[id]'), 'Mobile > Share > Page'),
+        handle: { meta: sharePageRouteMeta },
         path: ':id',
       },
     ],
@@ -533,11 +578,34 @@ export const mobileRoutes: RouteObject[] = [
     path: '/verify-im',
   },
 
-  // Standalone verification-report viewer (outside main layout)
+  // Verify report workspace — standalone master-detail (outside main layout)
   {
-    element: dynamicElement(() => import('@/routes/verify/[runId]'), 'Mobile > VerifyReport'),
+    children: [
+      {
+        element: dynamicElement(
+          () => import('@/routes/(main)/verify/empty'),
+          'Mobile > Verify Empty',
+        ),
+        index: true,
+      },
+      {
+        element: dynamicElement(() => import('@/routes/verify/[runId]'), 'Mobile > VerifyReport'),
+        handle: { meta: verifyRouteMeta },
+        path: ':runId',
+      },
+    ],
+    element: dynamicElement(() => import('@/routes/(main)/verify'), 'Mobile > Verify'),
     errorElement: <ErrorBoundary />,
-    handle: { meta: verifyRouteMeta },
-    path: '/verify/:runId',
+    handle: { meta: verifyReportsRouteMeta },
+    path: '/verify',
+  },
+  {
+    element: dynamicElement(
+      () => import('@/routes/acceptance/[acceptanceId]'),
+      'Mobile > AcceptanceReport',
+    ),
+    errorElement: <ErrorBoundary />,
+    handle: { meta: acceptanceRouteMeta },
+    path: '/acceptance/:acceptanceId',
   },
 ];

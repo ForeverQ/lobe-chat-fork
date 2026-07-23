@@ -5,15 +5,21 @@ import { TaskIdentifier } from '@lobechat/builtin-tool-task';
 import { type LobeToolManifest } from '@lobechat/context-engine';
 import {
   type ChatCompletionTool,
+  getActivePluginIds,
   type LobeAgentChatConfig,
   type LobeAgentConfig,
   type MessageMapScope,
+  resolveAgentModelConfig,
 } from '@lobechat/types';
 import debug from 'debug';
 import { produce } from 'immer';
 
 import { getAgentStoreState } from '@/store/agent';
-import { agentSelectors, chatConfigByIdSelectors } from '@/store/agent/selectors';
+import {
+  agentByIdSelectors,
+  agentSelectors,
+  chatConfigByIdSelectors,
+} from '@/store/agent/selectors';
 import { getChatGroupStoreState } from '@/store/agentGroup';
 import { agentGroupByIdSelectors, agentGroupSelectors } from '@/store/agentGroup/selectors';
 import { useUserStore } from '@/store/user';
@@ -182,11 +188,23 @@ export const resolveAgentConfig = (ctx: AgentConfigResolverContext): ResolvedAge
   const agentStoreState = getAgentStoreState();
 
   // Get base config from store
-  const agentConfig = agentSelectors.getAgentConfigById(agentId)(agentStoreState);
+  const sharedAgentConfig = agentSelectors.getAgentConfigById(agentId)(agentStoreState);
+  const agent = agentByIdSelectors.getAgentById(agentId)(agentStoreState);
+  const usesWorkspaceMemberSelection = !!agent?.workspaceId && agent.visibility !== 'private';
+  const memberModelOverride = usesWorkspaceMemberSelection
+    ? useUserStore.getState().workspaceUserPreference.agentModelOverrides?.[agentId]
+    : undefined;
+  const agentConfig = {
+    ...sharedAgentConfig,
+    ...resolveAgentModelConfig(
+      { ...sharedAgentConfig, visibility: agent?.visibility },
+      memberModelOverride,
+    ),
+  };
   const chatConfig = chatConfigByIdSelectors.getChatConfigById(agentId)(agentStoreState);
 
-  // Base plugins from agent config
-  const basePlugins = agentConfig?.plugins ?? [];
+  // Base plugins from agent config (pinned identifiers only — disabled entries excluded)
+  const basePlugins = getActivePluginIds(agentConfig?.plugins);
 
   // Check if this is a builtin agent
   // Priority: supervisor check (when in group scope) > agent store slug

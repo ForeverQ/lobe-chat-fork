@@ -99,7 +99,8 @@ export const setOpenAIChatCompletionUsageMissingDiagnostics = (
 export interface StreamProtocolChunk {
   data: any;
   id?: string;
-  type: // pure text
+  type:
+    // pure text
     | 'text'
     // base64 format image
     | 'base64_image'
@@ -339,7 +340,7 @@ export const convertIterableToStream = <T>(
 
   // copy from https://github.com/vercel/ai/blob/d3aa5486529e3d1a38b30e3972b4f4c63ea4ae9a/packages/ai/streams/ai-stream.ts#L284
   // and add an error handle
-  const it = iterable[Symbol.asyncIterator]();
+  const it: AsyncIterator<T> = iterable[Symbol.asyncIterator]();
 
   return new ReadableStream<T>({
     async cancel(reason) {
@@ -487,7 +488,15 @@ export function createCallbacksTransformer(
       }
       // if the message is a data chunk, handle the callback
       else if (chunk.startsWith('data:')) {
-        const content = chunk.split('data:')[1].trim();
+        // `base64_image` payloads are raw data-URIs (`data:image/png;base64,...`)
+        // that contain `data:` themselves, which the legacy `split('data:')[1]`
+        // corrupts (it splits on the embedded marker too). Strip only the leading
+        // field marker for that type; every other event type keeps the original
+        // split path unchanged for compatibility.
+        const content =
+          currentType === 'base64_image'
+            ? chunk.slice('data:'.length).trim()
+            : chunk.split('data:')[1].trim();
 
         const data = safeParseJSON(content) as any;
 
@@ -511,11 +520,18 @@ export function createCallbacksTransformer(
           }
 
           case 'base64_image': {
-            // data format: { image: { id, data }, images: [...] }
-            const imageData = data as { image: { data: string; id: string }; images: any[] };
-            base64Images.push(imageData.image);
+            // Real providers (google/openai image streams) serialize `data` as a
+            // raw data-URI string; wrap it into an image item, mirroring
+            // fetch-sse's client-side parser so both paths share one contract.
+            // Tolerate the legacy `{ image, images }` object shape too, so any
+            // existing consumer keeps working.
+            const image =
+              typeof data === 'string'
+                ? { data, id: `tmp_img_${nanoid()}` }
+                : (data as { image: { data: string; id: string } }).image;
+            base64Images.push(image);
             await callbacks.onBase64Image?.({
-              image: imageData.image,
+              image,
               images: base64Images,
             });
             break;
