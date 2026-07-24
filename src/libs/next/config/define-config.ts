@@ -60,8 +60,6 @@ export function defineConfig(config: CustomNextConfig) {
 
   const nextConfig: NextConfig = {
     ...(isStandaloneMode ? standaloneConfig : {}),
-    // Stop `next dev` from auto-injecting the nextjs-agent-rules block into AGENTS.md.
-    agentRules: false,
     assetPrefix,
 
     compiler: {
